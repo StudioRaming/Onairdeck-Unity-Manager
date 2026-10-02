@@ -11,7 +11,10 @@ namespace OnAirDeck.UnityManager
         public const string FunctionsUrl = "https://sptkmcrpgdvoegbfzqqq.supabase.co/functions/v1";
         public const string PublishableKey = "sb_publishable_b7oL6JAwAWOSQS-B4a8JXA_NYO0bzw6";
 
-        /// <summary>Sent as ?client= so the consent page names this tool.</summary>
+        /// <summary>
+        /// Sent as ?client= on the sign-in URL for diagnostics only. The consent page deliberately
+        /// ignores it: a desktop tool can't prove its identity, so it shows generic plugin text.
+        /// </summary>
         public const string ClientId = "unity";
 
         public const string LogPrefix = "[OnAirDeck] ";
