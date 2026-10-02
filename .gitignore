@@ -1,0 +1,15 @@
+# Unity ignores dot-folders, so .claude/ needs no .meta
+
+# Local Unity test project used to compile/test the package (only its manifest is tracked)
+TestProject~/*
+!TestProject~/Packages/
+TestProject~/Packages/*
+!TestProject~/Packages/manifest.json
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vs/
+.idea/
+*.csproj
+*.sln
