@@ -24,7 +24,8 @@ git -c credential.helper= -c 'credential.helper=!f() { echo username=StudioRamin
   - No UniTask or Newtonsoft dependency. Use `JsonUtility` and editor-loop polling or `async`/`await` (the editor has a main-thread SynchronizationContext).
   - Zip: `System.IO.Compression.ZipArchive` over a `FileStream`, not `ZipFile`.
 - Editor-only code: everything lives under `Editor/` with an Editor-only asmdef.
-- Every file and folder in the package needs a committed `.meta` (git packages are immutable; Unity ignores assets without one). Generate them by opening `TestProject~`, which references this package by `file:` path.
+- Every file and folder in the package needs a committed `.meta` (git packages are immutable; Unity ignores assets without one). New files: write a `.meta` with a fresh random 32-hex `guid` (MonoImporter for .cs, AssemblyDefinitionImporter for .asmdef, folderAsset for folders, TextScriptImporter for .md) — or let Unity create them by adding the package from disk in a test project.
+- **Compile check without Unity:** `dotnet build` in `Tools~/CompileCheck` (C# 7.3 against the 2021.3.18f1 DLLs; both code paths documented in the .csproj). Unity batch mode does NOT work here unless Unity Hub is signed in ("Access token is unavailable" → license failure), so the dotnet check is the default; the user still tests interactively in Unity.
 - Sanitize every server-supplied file name or zip entry before writing under `Assets/` (no `..`, rooted, or drive paths).
 - Backend endpoints: `https://sptkmcrpgdvoegbfzqqq.supabase.co/functions/v1/plugin-*` with the public publishable key as `apikey`, and the opaque session token as `Authorization: Bearer`. Login page: `https://onairdeck.com/plugin-auth`.
 - Reference implementation: the Warudo plugin, `C:\Users\Darudayu\Desktop\3d_test\Warudo_sr_plugin_fix\Assets\StudioRaming\StudioRamingPlugin.cs` (sign-in) and `StudioRamingPlugin.Vdesk.Download.cs` (download).

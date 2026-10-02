@@ -13,3 +13,8 @@ Thumbs.db
 .idea/
 *.csproj
 *.sln
+
+# Compile-check build output (Tools~/CompileCheck)
+Tools~/**/obj/
+Tools~/**/bin/
+!Tools~/CompileCheck/CompileCheck.csproj
