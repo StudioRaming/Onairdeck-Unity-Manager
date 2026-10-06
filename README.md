@@ -6,7 +6,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - see your OnAirDeck purchase history,
 - download purchased assets straight into the open project.
 
-> Status: in development (Phase 1). Sign in / sign out is implemented and being tested; purchase history and downloads come next.
+> Status: Phase 1 feature-complete (sign in, purchase list, download); being tested before the first public release.
 
 ## Requirements
 
@@ -24,7 +24,12 @@ The repository is private during development, so this only works for accounts wi
 
 ## Use
 
-Open **Window ▸ OnAirDeck Unity Manager** and click **Sign in with browser**. Approve the request on onairdeck.com, and the window shows the account you signed in with. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
+1. Open **Window ▸ OnAirDeck Unity Manager** and click **Sign in with browser**. Approve the request on onairdeck.com. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
+2. Your purchases are listed with the files the seller made available for Unity. Items the seller has not enabled for Unity say "Not available in Unity".
+3. Click **Download**. The first download of an item makes the purchase non-refundable (the same rule as the website), so Unity asks you to confirm.
+   - `.unitypackage` files open Unity's normal import dialog.
+   - `.zip` files are extracted, and other files are copied, into `Assets/StudioRaming/<Product>/`.
+4. **Update available** appears when the seller replaced a file after your last download.
 
 ## Test a local copy (development)
 
