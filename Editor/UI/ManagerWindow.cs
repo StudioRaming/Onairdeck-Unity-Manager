@@ -242,7 +242,8 @@ namespace OnAirDeck.UnityManager
                     }
                     else
                     {
-                        EditorGUILayout.LabelField("Not available in Unity", EditorStyles.centeredGreyMiniLabel, RowButtonWidth);
+                        // Auto-sized: a fixed-width LabelField clipped this text on both sides.
+                        GUILayout.Label("Not available in Unity", EditorStyles.miniLabel);
                     }
                 }
 
