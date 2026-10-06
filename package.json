@@ -1,6 +1,6 @@
 {
   "name": "com.studioraming.manager",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "displayName": "OnAirDeck Unity Manager",
   "description": "Sign in to OnAirDeck, see your purchases, and download purchased assets straight into your Unity project.",
   "unity": "2019.4",
@@ -9,5 +9,14 @@
     "email": "studioraming@gmail.com",
     "url": "https://onairdeck.com"
   },
-  "keywords": ["onairdeck", "studioraming", "asset manager"]
+  "keywords": [
+    "onairdeck",
+    "studioraming",
+    "asset manager"
+  ],
+  "dependencies": {
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.imgui": "1.0.0"
+  }
 }
