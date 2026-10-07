@@ -7,14 +7,14 @@ namespace OnAirDeck.UnityManager
 {
     /// <summary>
     /// Puts downloaded files into the project: zips are extracted and loose files copied under
-    /// Assets/StudioRaming/&lt;Product&gt;/. .unitypackage files are handed to PackageImportQueue
+    /// Assets/StudioRaming_Onairdeck/&lt;Product&gt;/. .unitypackage files are handed to PackageImportQueue
     /// by the caller, because importing can trigger a domain reload.
     /// </summary>
     internal static class Installer
     {
-        public const string InstallRoot = "Assets/StudioRaming";
+        public const string InstallRoot = "Assets/StudioRaming_Onairdeck";
 
-        /// <summary>Project-relative folder for a product, e.g. Assets/StudioRaming/My Prop.</summary>
+        /// <summary>Project-relative folder for a product, e.g. Assets/StudioRaming_Onairdeck/My Prop.</summary>
         public static string ProductFolder(string productName)
         {
             return InstallRoot + "/" + PathSafety.SafeFolderName(productName, "Product");

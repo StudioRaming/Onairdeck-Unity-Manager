@@ -27,7 +27,8 @@ namespace OnAirDeck.UnityManager
         private string _message;
         private MessageType _messageType = MessageType.None;
 
-        private static readonly GUILayoutOption RowButtonWidth = GUILayout.Width(92);
+        private GUIStyle _purchaseTitleStyle;
+        private GUIStyle _detailsStyle;
 
         [MenuItem("Window/OnAirDeck Unity Manager")]
         public static void Open()
@@ -41,6 +42,8 @@ namespace OnAirDeck.UnityManager
         private void OnEnable()
         {
             _session = SessionStore.Load();
+            _purchaseTitleStyle = null;
+            _detailsStyle = null;
         }
 
         private void OnDisable()
@@ -52,6 +55,12 @@ namespace OnAirDeck.UnityManager
 
         private void OnGUI()
         {
+            // Create styles once, after Unity has made the current editor skin available.
+            if (_purchaseTitleStyle == null)
+                _purchaseTitleStyle = new GUIStyle(EditorStyles.boldLabel) { wordWrap = true };
+            if (_detailsStyle == null)
+                _detailsStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("OnAirDeck Unity Manager", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Download the assets you bought on OnAirDeck.", EditorStyles.wordWrappedMiniLabel);
@@ -68,8 +77,19 @@ namespace OnAirDeck.UnityManager
             }
 
             if (_session == null || _signingIn) GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Open onairdeck.com", EditorStyles.miniButton))
+            if (ActionButton("Open onairdeck.com", true))
                 Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
+        }
+
+        private static bool ActionButton(string label, bool expand = false)
+        {
+            var style = EditorStyles.miniButton;
+            var height = Mathf.Max(24f, EditorGUIUtility.singleLineHeight + 6f);
+            if (expand) return GUILayout.Button(label, style, GUILayout.Height(height));
+
+            // Measure the same style that draws the text; fixed pixel widths clip longer states.
+            var width = Mathf.Ceil(style.CalcSize(new GUIContent(label)).x) + 12f;
+            return GUILayout.Button(label, style, GUILayout.Width(width), GUILayout.Height(height));
         }
 
         // ---------- sign in / out ----------
@@ -77,7 +97,7 @@ namespace OnAirDeck.UnityManager
         private void DrawSignedOut()
         {
             EditorGUILayout.HelpBox("Sign in with your OnAirDeck account to see your purchases.", MessageType.Info);
-            if (GUILayout.Button("Sign in with browser", GUILayout.Height(28))) SignIn();
+            if (ActionButton("Sign in with browser", true)) SignIn();
         }
 
         private void DrawSigningIn()
@@ -88,9 +108,9 @@ namespace OnAirDeck.UnityManager
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUI.enabled = !string.IsNullOrEmpty(_signInUrl);
-                if (GUILayout.Button("Open sign-in page again")) Application.OpenURL(_signInUrl);
+                if (ActionButton("Open sign-in page again")) Application.OpenURL(_signInUrl);
                 GUI.enabled = true;
-                if (GUILayout.Button("Cancel")) CancelSignIn();
+                if (ActionButton("Cancel")) CancelSignIn();
             }
         }
 
@@ -99,10 +119,9 @@ namespace OnAirDeck.UnityManager
             using (new EditorGUILayout.HorizontalScope())
             {
                 var who = string.IsNullOrEmpty(_session.email) ? "your OnAirDeck account" : _session.email;
-                EditorGUILayout.LabelField("Signed in as " + who, EditorStyles.miniLabel);
-                GUILayout.FlexibleSpace();
+                GUILayout.Label("Signed in as " + who, _detailsStyle, GUILayout.ExpandWidth(true));
                 GUI.enabled = !_signingOut && _downloadingItemId == null;
-                if (GUILayout.Button(_signingOut ? "Signing out…" : "Sign out", EditorStyles.miniButton, GUILayout.Width(90))) SignOut();
+                if (ActionButton(_signingOut ? "Signing out…" : "Sign out")) SignOut();
                 GUI.enabled = true;
             }
 
@@ -185,10 +204,10 @@ namespace OnAirDeck.UnityManager
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Purchases", EditorStyles.boldLabel, GUILayout.Width(80));
-                _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField);
+                GUILayout.Label("Purchases", EditorStyles.boldLabel, GUILayout.ExpandWidth(false));
+                _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(40));
                 GUI.enabled = !_loadingPurchases && _downloadingItemId == null;
-                if (GUILayout.Button(_loadingPurchases ? "Loading…" : "Refresh", EditorStyles.miniButton, GUILayout.Width(70))) LoadPurchases();
+                if (ActionButton(_loadingPurchases ? "Loading…" : "Refresh")) LoadPurchases();
                 GUI.enabled = true;
             }
 
@@ -196,7 +215,7 @@ namespace OnAirDeck.UnityManager
             {
                 var rect = EditorGUILayout.GetControlRect(false, 18);
                 EditorGUI.ProgressBar(rect, _progress, _progressLabel);
-                if (GUILayout.Button("Cancel download", EditorStyles.miniButton)) CancelDownload();
+                if (ActionButton("Cancel download", true)) CancelDownload();
             }
 
             if (_purchases == null)
@@ -227,32 +246,31 @@ namespace OnAirDeck.UnityManager
         {
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.LabelField(item.name ?? "", EditorStyles.boldLabel);
-                    GUILayout.FlexibleSpace();
-                    if (item.CanDownload)
-                    {
-                        var busy = _downloadingItemId != null;
-                        var thisOne = _downloadingItemId == item.item_id;
-                        GUI.enabled = !busy;
-                        var label = thisOne ? "Downloading…" : item.downloaded ? "Download again" : "Download";
-                        if (GUILayout.Button(label, RowButtonWidth)) Download(item);
-                        GUI.enabled = true;
-                    }
-                    else
-                    {
-                        // Auto-sized: a fixed-width LabelField clipped this text on both sides.
-                        GUILayout.Label("Not available in Unity", EditorStyles.miniLabel);
-                    }
-                }
+                GUILayout.Label(item.name ?? "", _purchaseTitleStyle, GUILayout.ExpandWidth(true));
 
                 var details = item.date ?? "";
                 if (item.files != null && item.files.Length > 0)
                     details += "  ·  " + item.files.Length + " file" + (item.files.Length == 1 ? "" : "s");
                 if (item.update_available) details += "  ·  Update available";
                 else if (item.downloaded) details += "  ·  Downloaded";
-                EditorGUILayout.LabelField(details, EditorStyles.miniLabel);
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label(details, _detailsStyle, GUILayout.ExpandWidth(true));
+                    if (item.CanDownload)
+                    {
+                        var busy = _downloadingItemId != null;
+                        var thisOne = _downloadingItemId == item.item_id;
+                        GUI.enabled = !busy;
+                        var label = thisOne ? "Downloading…" : item.downloaded ? "Download again" : "Download";
+                        if (ActionButton(label)) Download(item);
+                        GUI.enabled = true;
+                    }
+                    else
+                    {
+                        GUILayout.Label("Not available in Unity", EditorStyles.miniLabel, GUILayout.ExpandWidth(false));
+                    }
+                }
             }
         }
 
@@ -290,7 +308,7 @@ namespace OnAirDeck.UnityManager
             // The first download makes the purchase non-refundable (same rule as the website).
             if (!item.downloaded && !EditorUtility.DisplayDialog(
                     "Download " + item.name,
-                    "Downloading makes this purchase non-refundable, the same as downloading on onairdeck.com.\n\nFiles will be placed in " + Installer.ProductFolder(item.name) + ".",
+                    "Downloading makes this purchase non-refundable, the same as downloading on onairdeck.com.\n\nLoose files and ZIPs will be placed in " + Installer.ProductFolder(item.name) + ".\nUnity packages open Unity's import dialog and use the paths stored in the package.",
                     "Download", "Cancel"))
             {
                 return;
