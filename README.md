@@ -86,7 +86,7 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 ## Release verification
 
 - [x] Browser sign-in and purchase listing tested by the owner in Unity 2021.3.18f1.
-- [x] `test_sell` image downloaded by the owner with the `darudayu123@gmail.com` account.
+- [x] `test_sell` image downloaded by the owner with a buyer account.
 - [x] Button labels checked by the owner at the minimum window width; `miku2018.jpg` downloaded again into `Assets/StudioRaming_Onairdeck/test_sell/` (2026-10-08).
 - [x] Verify ZIP extraction and request cancellation/failure cache cleanup with generated fixtures in the real Unity 2021.3.18f1 Editor.
 - [x] Import two generated `.unitypackage` files in Unity 2021.3.18f1, including a script that causes a domain reload; verify the second import completes and cached packages are removed.
