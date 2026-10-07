@@ -20,7 +20,7 @@ In Unity, open **Window ▸ Package Manager ▸ + ▸ Add package from git URL�
 https://github.com/StudioRaming/Onairdeck-Unity-Manager.git
 ```
 
-The repository is private during development, so this only works for accounts with access until the first public release.
+Package Manager fetches the package with Git, so Git must be installed. To pin a version, append a tag: `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<tag>`.
 
 ## Use
 
@@ -45,7 +45,7 @@ Unity에서 **Window ▸ Package Manager ▸ + ▸ Add package from git URL…**
 https://github.com/StudioRaming/Onairdeck-Unity-Manager.git
 ```
 
-개발 중에는 비공개 저장소에 접근할 수 있는 계정만 설치할 수 있습니다. 로컬 테스트는 **Add package from disk…**에서 이 저장소의 `package.json`을 선택하세요.
+Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어 있어야 합니다. 특정 버전을 고정하려면 주소 뒤에 태그를 붙이세요: `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<태그>`. 로컬 테스트는 **Add package from disk…**에서 이 저장소의 `package.json`을 선택하세요.
 
 ### 사용
 
@@ -66,7 +66,7 @@ Unityで **Window ▸ Package Manager ▸ + ▸ Add package from git URL…** �
 https://github.com/StudioRaming/Onairdeck-Unity-Manager.git
 ```
 
-開発中は非公開リポジトリにアクセスできるアカウントのみインストールできます。ローカルテストでは **Add package from disk…** から、このリポジトリの `package.json` を選択してください。
+Package Manager は Git でパッケージを取得するため、Git のインストールが必要です。バージョンを固定するには URL の末尾にタグを付けてください: `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<タグ>`。ローカルテストでは **Add package from disk…** から、このリポジトリの `package.json` を選択してください。
 
 ### 使い方
 
@@ -95,7 +95,8 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
 - [ ] Install the package **from the git URL** in a fresh Unity 2021.3.18f1 project (every test so far used "Add package from disk").
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
-- [ ] Choose the release tag and confirm repository visibility before public release.
+- [x] Repository made public (2026-10-08).
+- [ ] Choose and push the release tag.
 
 Once a release is tagged, install a fixed version with `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<release-tag>` rather than following a moving branch.
 
