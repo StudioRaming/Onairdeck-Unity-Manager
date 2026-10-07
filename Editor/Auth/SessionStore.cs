@@ -14,19 +14,23 @@ namespace OnAirDeck.UnityManager
     {
         internal const string DefaultKey = "OnAirDeck.UnityManager.Session";
 
-        // Verification points this at a throwaway key so tests never read or replace the real sign-in.
-        internal static string Key = DefaultKey;
-
         public static SavedSession Load()
+        {
+            return Load(DefaultKey);
+        }
+
+        // The key overloads exist so verification can use a throwaway EditorPrefs key without
+        // changing any shared state; the window and AuthService always use DefaultKey.
+        internal static SavedSession Load(string key)
         {
             try
             {
-                var json = EditorPrefs.GetString(Key, "");
+                var json = EditorPrefs.GetString(key, "");
                 if (string.IsNullOrEmpty(json)) return null;
                 var session = JsonUtility.FromJson<SavedSession>(json);
                 if (session == null || string.IsNullOrEmpty(session.token) || session.IsExpired)
                 {
-                    Clear();
+                    Clear(key);
                     return null;
                 }
                 return session;
@@ -48,13 +52,18 @@ namespace OnAirDeck.UnityManager
                 email = response.email ?? "",
                 expiresAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + lifetime,
             };
-            EditorPrefs.SetString(Key, JsonUtility.ToJson(session));
+            EditorPrefs.SetString(DefaultKey, JsonUtility.ToJson(session));
             return session;
         }
 
         public static void Clear()
         {
-            EditorPrefs.DeleteKey(Key);
+            Clear(DefaultKey);
+        }
+
+        internal static void Clear(string key)
+        {
+            EditorPrefs.DeleteKey(key);
         }
     }
 }

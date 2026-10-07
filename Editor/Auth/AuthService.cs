@@ -46,9 +46,15 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Revokes the token on the server (best effort) and always forgets it locally.
         /// </summary>
-        public static async Task SignOutAsync(SavedSession session)
+        public static Task SignOutAsync(SavedSession session)
         {
-            SessionStore.Clear();
+            return SignOutAsync(session, SessionStore.DefaultKey);
+        }
+
+        /// <summary>Same as above with an explicit EditorPrefs key (verification uses a throwaway key).</summary>
+        internal static async Task SignOutAsync(SavedSession session, string storeKey)
+        {
+            SessionStore.Clear(storeKey);
             if (session == null || string.IsNullOrEmpty(session.token)) return;
             try
             {
