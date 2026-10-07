@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] - 2026-10-08
+
+- Sign-in verification: 10 headless checks drive the real localhost listener (approved code, Deny, state mismatch, missing code, timeout, Cancel, favicon requests, port release) plus PKCE and session-expiry checks; the suite now has 24 checks and runs in CI.
+- The Editor runner also checks saved-session handling (expired, malformed and valid sign-ins, a rejected token, sign-out) against a throwaway EditorPrefs key and confirms the real sign-in is unchanged.
+- `SavedSession` moved to its own file so it can be tested outside Unity; `SessionStore` keeps the same EditorPrefs key for real use.
+
 ## [0.2.2] - 2026-10-07
 
 - Skip ZIP entries with rooted paths, matching the existing safe-extraction contract.

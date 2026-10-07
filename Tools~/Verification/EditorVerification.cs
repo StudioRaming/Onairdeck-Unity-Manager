@@ -70,6 +70,7 @@ public static class OnAirDeckEditorVerification
         try
         {
             File.WriteAllText(Path.Combine(WorkRoot, "results.json"), JsonUtility.ToJson(report, true));
+            await CheckAuth(checks);
             var fixture = LoadFixture();
             Require(fixture.root.StartsWith("Assets/StudioRaming_Onairdeck/__Verification_", StringComparison.Ordinal), "Unexpected fixture destination");
             PreparePackages(fixture);
@@ -113,6 +114,56 @@ public static class OnAirDeckEditorVerification
             report.checks = checks.ToArray();
             Fail(report, e);
         }
+    }
+
+    // Saved-session and 401 handling. SessionStore is pointed at a throwaway EditorPrefs key, so
+    // the real sign-in is never read, replaced or revoked; the run asserts it is unchanged. The
+    // rejected-token check sends a random token to plugin-purchases (expected 401, no side effects).
+    private static async Task CheckAuth(List<string> checks)
+    {
+        var store = TypeFor("SessionStore");
+        var keyField = store.GetField("Key", BindingFlags.NonPublic | BindingFlags.Static);
+        var realKey = (string)store.GetField("DefaultKey", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        var realExists = EditorPrefs.HasKey(realKey);
+        var realValue = EditorPrefs.GetString(realKey, "");
+        var testKey = "OnAirDeck.Verification.Session." + Guid.NewGuid().ToString("N");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var bogus = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        try
+        {
+            keyField.SetValue(null, testKey);
+
+            EditorPrefs.SetString(testKey, "{\"token\":\"expired\",\"expiresAtUnix\":" + (now - 10) + "}");
+            Require(Call("SessionStore", "Load") == null, "An expired saved sign-in was loaded");
+            Require(!EditorPrefs.HasKey(testKey), "An expired saved sign-in was not cleared");
+            checks.Add("An expired saved sign-in is discarded and cleared");
+
+            EditorPrefs.SetString(testKey, "{not json");
+            Require(Call("SessionStore", "Load") == null, "A malformed saved sign-in was loaded");
+            checks.Add("A malformed saved sign-in is ignored");
+
+            EditorPrefs.SetString(testKey, "{\"token\":\"" + bogus + "\",\"email\":\"verification@example.invalid\",\"expiresAtUnix\":" + (now + 3600) + "}");
+            var session = Call("SessionStore", "Load");
+            Require(session != null && (string)session.GetType().GetField("token").GetValue(session) == bogus, "A valid saved sign-in did not load");
+            checks.Add("A valid saved sign-in loads");
+
+            Exception error = null;
+            try { await (Task)Call("OnAirDeckApi", "GetPurchasesAsync", bogus); }
+            catch (Exception e) { error = e; }
+            Require(error != null && error.GetType().Name == "SessionExpiredException", "A rejected token did not raise SessionExpiredException: " + error);
+            checks.Add("A rejected session token (401) surfaces as an expired sign-in");
+
+            await (Task)Call("AuthService", "SignOutAsync", session);
+            Require(!EditorPrefs.HasKey(testKey), "Sign-out did not clear the saved sign-in");
+            checks.Add("Sign-out clears the saved sign-in even when the server no longer knows the token");
+        }
+        finally
+        {
+            keyField.SetValue(null, realKey);
+            EditorPrefs.DeleteKey(testKey);
+        }
+        Require(EditorPrefs.HasKey(realKey) == realExists && EditorPrefs.GetString(realKey, "") == realValue, "The real saved sign-in changed");
+        checks.Add("The real saved sign-in was not touched");
     }
 
     private static async Task CheckRequest(bool cancel, bool fail)

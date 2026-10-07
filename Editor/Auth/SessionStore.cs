@@ -4,20 +4,6 @@ using UnityEngine;
 
 namespace OnAirDeck.UnityManager
 {
-    [Serializable]
-    internal class SavedSession
-    {
-        public string token;
-        public string userId;
-        public string email;
-        public long expiresAtUnix;
-
-        public bool IsExpired
-        {
-            get { return DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= expiresAtUnix; }
-        }
-    }
-
     /// <summary>
     /// Keeps the signed-in session in EditorPrefs: per user and per machine, shared by every
     /// Unity project, and outside the project folder so it can't be committed or shared with
@@ -26,7 +12,10 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class SessionStore
     {
-        private const string Key = "OnAirDeck.UnityManager.Session";
+        internal const string DefaultKey = "OnAirDeck.UnityManager.Session";
+
+        // Verification points this at a throwaway key so tests never read or replace the real sign-in.
+        internal static string Key = DefaultKey;
 
         public static SavedSession Load()
         {

@@ -10,6 +10,10 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="FilesystemHost.cs" />
+    <Compile Include="AuthChecks.cs" />
+    <Compile Include="../../Editor/Auth/LoopbackListener.cs" />
+    <Compile Include="../../Editor/Auth/Pkce.cs" />
+    <Compile Include="../../Editor/Auth/SavedSession.cs" />
     <Compile Include="../../Editor/Download/PathSafety.cs" />
     <Compile Include="../../Editor/Download/Installer.cs" />
     <Compile Include="../../Editor/Api/OnAirDeckConfig.cs" />

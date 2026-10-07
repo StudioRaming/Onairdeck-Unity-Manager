@@ -1,6 +1,6 @@
 # Download verification
 
-## Filesystem checks (no Unity license required)
+## Headless checks (no Unity license required)
 
 From the package repository:
 
@@ -8,9 +8,12 @@ From the package repository:
 dotnet run --project 'Tools~/Verification/Verification.csproj'
 ```
 
-The 14 checks compile the actual `Installer` and `PathSafety` sources. A small host adapter supplies only `Application.dataPath` and a warning sink. Tests create a fresh temporary project, check file contents, overwrite behavior and `.meta` preservation, ZIP nesting, unsafe-entry rejection and the download destination, then delete only that run's temporary directory.
+The 24 checks compile the actual `Installer`, `PathSafety`, `LoopbackListener`, `Pkce` and `SavedSession` sources. A small host adapter supplies only `Application.dataPath` and a warning sink.
 
-This does not exercise Unity requests, imports or script reloads.
+- **Files (14):** a fresh temporary project; file contents, overwrite behavior and `.meta` preservation, ZIP nesting, unsafe-entry rejection and the download destination. Only that run's temporary directory is deleted.
+- **Sign-in (10, `AuthChecks.cs`):** the real localhost listener is driven the way a browser would drive it: approved code, `/favicon.ico` noise, **Deny** (`error=access_denied`), state mismatch, missing code, **timeout**, **Cancel**, port release after dispose; PKCE verifier/S256 challenge shape; saved-session expiry boundary. The OnAirDeck website is not contacted.
+
+This does not exercise Unity requests, EditorPrefs, imports or script reloads.
 
 ## Real Editor checks
 
@@ -19,7 +22,7 @@ Use a disposable Unity project when batch licensing is available. Otherwise the 
 1. Install the local manager package. For a new project, copy `PackageBootstrap.cs` into `Assets/Editor/` and launch the Editor with `-executeMethod OnAirDeckPackageBootstrap.Install -onairdeckPackage <package-directory>`, without `-quit`. The script installs via the Package Manager API and exits when complete.
 2. Run `python Tools~/Verification/make_import_fixtures.py <test-project-directory>`. It prepares a unique fixture manifest. The Editor runner then uses Unity's own exporter to create two tiny packages in the project's Library cache. Text sources avoid a reload during preparation; the runner rewrites only their target paths and the script importer's metadata, preserving Unity's archive headers. The first import compiles a marker script and causes a domain reload, with a text asset queued behind it. Packages contain only unique test assets and preserve existing parent-folder metadata.
 3. Copy `EditorVerification.cs` into the test project's `Assets/Editor/`. In batch mode, launch with `-executeMethod OnAirDeckEditorVerification.Run` without `-quit`; the runner exits itself. In an open Editor, create the empty file `Library/OnAirDeckVerification/run.request` before recompilation, then focus Unity once. The one-shot runner leaves the open Editor running.
-4. Read `Library/OnAirDeckVerification/results.json`. A passing report verifies a loose file at the real Unity destination, ZIP extraction, UnityWebRequest byte contents, cancellation/failure cache cleanup, two queued imports across a script reload, and import-cache cleanup. Requests use localhost; no paid downloads or purchase records are changed.
+4. Read `Library/OnAirDeckVerification/results.json`. A passing report first verifies saved-session handling — expired, malformed and valid sign-ins, a rejected token (401) surfacing as an expired sign-in, and sign-out clearing the saved sign-in — using a throwaway EditorPrefs key, then asserts the real saved sign-in is unchanged. The rejected-token check sends a random token to `plugin-purchases` (expected 401; nothing is changed server-side). It then verifies a loose file at the real Unity destination, ZIP extraction, UnityWebRequest byte contents, cancellation/failure cache cleanup, two queued imports across a script reload, and import-cache cleanup. Requests use localhost; no paid downloads or purchase records are changed.
 5. Remove the temporary verification script and its `.meta`, and the specific `__Verification_<id>` fixture folder named in `fixtures.json`. In an open Editor, use the Project window to delete the fixture folder so Unity updates its asset database.
 
 Package imports are noninteractive for verification; regular manager downloads continue to show the import dialog. The queue persists this setting across script reloads.

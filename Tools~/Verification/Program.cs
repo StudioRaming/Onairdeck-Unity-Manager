@@ -30,6 +30,7 @@ internal static class Program
             Check("separator normalization", () => Equal("nested/file.txt", PathSafety.SafeRelativePath("./nested\\file.txt")));
             Check("unusable file names", () => { Equal("", PathSafety.SafeFileName("..")); Equal("", PathSafety.SafeFileName("C:")); });
             Check("file type detection ignores case", () => { Require(Installer.IsZip("fixture.ZIP")); Require(Installer.IsUnityPackage("fixture.UNITYPACKAGE")); Require(!Installer.IsZip("fixture.jpg")); });
+            AuthChecks.Run(Check);
         }
         finally
         {
@@ -40,7 +41,7 @@ internal static class Program
                 && Path.GetFileName(full).StartsWith("onairdeck-verification-", StringComparison.Ordinal))
                 Directory.Delete(full, true);
         }
-        Console.WriteLine("Filesystem checks: " + _passed + " passed, " + _failed + " failed.");
+        Console.WriteLine("Verification checks: " + _passed + " passed, " + _failed + " failed.");
         return _failed == 0 ? 0 : 1;
     }
 
