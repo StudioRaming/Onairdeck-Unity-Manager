@@ -45,6 +45,35 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>Every purchased line item, newest first (server caps at 50).</summary>
+        public static async Task<PurchaseItem[]> GetPurchasesAsync(string sessionToken)
+        {
+            using (var request = Get("plugin-purchases?client=" + OnAirDeckConfig.ClientId, sessionToken))
+            {
+                await request.SendAsync();
+                ThrowIfFailed(request, "Loading purchases");
+                var response = JsonUtility.FromJson<PurchasesResponse>(request.downloadHandler.text);
+                return response != null && response.purchases != null ? response.purchases : new PurchaseItem[0];
+            }
+        }
+
+        /// <summary>
+        /// Asks for presigned download links for one purchased item. The server records the
+        /// download (the purchase becomes non-refundable) and returns only entitled files.
+        /// </summary>
+        public static async Task<DownloadFile[]> RequestDownloadAsync(string sessionToken, string itemId)
+        {
+            var body = JsonUtility.ToJson(new DownloadRequest { item_id = itemId, client = OnAirDeckConfig.ClientId });
+            using (var request = Post("plugin-download", body, sessionToken))
+            {
+                request.timeout = 60;
+                await request.SendAsync();
+                ThrowIfFailed(request, "Preparing the download");
+                var response = JsonUtility.FromJson<DownloadResponse>(request.downloadHandler.text);
+                return response != null && response.files != null ? response.files : new DownloadFile[0];
+            }
+        }
+
         internal static UnityWebRequest Post(string function, string jsonBody, string bearer)
         {
             var request = new UnityWebRequest(OnAirDeckConfig.FunctionsUrl + "/" + function, "POST");
