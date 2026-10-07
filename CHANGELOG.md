@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2] - 2026-10-07
+
+- Skip ZIP entries with rooted paths, matching the existing safe-extraction contract.
+- Package import queues support noninteractive verification and retain their interaction mode through script reloads. Normal downloads still show Unity's import dialog.
+- Repeatable filesystem checks and a real Editor verification runner for downloading, cancellation, cache cleanup and queued imports across script reloads.
+
 ## [0.2.1] - 2026-10-07
 
 - Buttons use a consistent editor style and height, with widths measured from their labels, including Download again, Downloading, Loading and Signing out.

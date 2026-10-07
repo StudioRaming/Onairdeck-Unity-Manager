@@ -47,6 +47,7 @@ namespace OnAirDeck.UnityManager
         public static string SafeRelativePath(string entryPath)
         {
             if (string.IsNullOrEmpty(entryPath)) return null;
+            if (entryPath[0] == '/' || entryPath[0] == '\\') return null;
             var parts = entryPath.Replace('\\', '/').Split('/');
             var sb = new StringBuilder();
             foreach (var raw in parts)
