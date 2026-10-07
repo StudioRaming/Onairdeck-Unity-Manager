@@ -89,7 +89,7 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 - [x] `test_sell` image downloaded by the owner with the `darudayu123@gmail.com` account.
 - [ ] Check the 0.2.1 button labels at the minimum window width and download the image again to the new folder.
 - [x] Verify ZIP extraction and request cancellation/failure cache cleanup with generated fixtures in the real Unity 2021.3.18f1 Editor.
-- [ ] Import multiple `.unitypackage` files, including one with scripts, and check that the remaining imports survive script reloads.
+- [x] Import two generated `.unitypackage` files in Unity 2021.3.18f1, including a script that causes a domain reload; verify the second import completes and cached packages are removed.
 - [ ] Test Deny, timeout, sign-out and expired-session handling in Unity.
 - [ ] Verify git-URL installation and compilation in Unity 2019.4, 2022.3 and Unity 6.
 - [ ] Review and merge the package PR, choose the release tag, and confirm repository visibility before public release.

@@ -72,6 +72,7 @@ public static class OnAirDeckEditorVerification
             File.WriteAllText(Path.Combine(WorkRoot, "results.json"), JsonUtility.ToJson(report, true));
             var fixture = LoadFixture();
             Require(fixture.root.StartsWith("Assets/StudioRaming_Onairdeck/__Verification_", StringComparison.Ordinal), "Unexpected fixture destination");
+            PreparePackages(fixture);
             var absolute = Path.Combine(ProjectRoot, fixture.root);
             Directory.CreateDirectory(absolute);
             var source = Path.Combine(WorkRoot, "payload.txt");
@@ -163,6 +164,70 @@ public static class OnAirDeckEditorVerification
             Finish(report, 0);
         }
         catch (Exception e) { Fail(report, e); }
+    }
+
+    private static void PreparePackages(Fixture fixture)
+    {
+        var exportRoot = fixture.root + "/_Export";
+        Directory.CreateDirectory(Path.Combine(ProjectRoot, exportRoot));
+        var scriptSource = exportRoot + "/marker.txt";
+        var textSource = exportRoot + "/after-reload.txt";
+        var markerName = fixture.markerType.Substring(fixture.markerType.LastIndexOf('.') + 1);
+        File.WriteAllText(Path.Combine(ProjectRoot, scriptSource), "namespace OnAirDeckVerificationFixtures { public static class " + markerName + " { } }\n");
+        File.WriteAllText(Path.Combine(ProjectRoot, textSource), "OnAirDeck package queue verification\n");
+        AssetDatabase.ImportAsset(scriptSource, ImportAssetOptions.ForceSynchronousImport);
+        AssetDatabase.ImportAsset(textSource, ImportAssetOptions.ForceSynchronousImport);
+        foreach (var package in fixture.packages) Directory.CreateDirectory(Path.GetDirectoryName(package));
+        AssetDatabase.ExportPackage(scriptSource, fixture.packages[0], ExportPackageOptions.Default);
+        AssetDatabase.ExportPackage(textSource, fixture.packages[1], ExportPackageOptions.Default);
+        // Export text first so preparation itself does not compile scripts. Preserve Unity's
+        // TAR headers and only change the target path/importer of the script fixture.
+        RewritePackage(fixture.packages[0], fixture.root + "/Editor/" + markerName + ".cs", true);
+        RewritePackage(fixture.packages[1], fixture.textAsset, false);
+        Require(AssetDatabase.DeleteAsset(exportRoot), "Could not remove temporary export sources");
+    }
+
+    private static void RewritePackage(string path, string assetPath, bool script)
+    {
+        byte[] tar;
+        using (var input = File.OpenRead(path))
+        using (var gzip = new GZipStream(input, CompressionMode.Decompress))
+        using (var buffer = new MemoryStream()) { gzip.CopyTo(buffer); tar = buffer.ToArray(); }
+        using (var output = new MemoryStream())
+        {
+            var position = 0;
+            while (position + 512 <= tar.Length && tar[position] != 0)
+            {
+                var header = new byte[512];
+                Array.Copy(tar, position, header, 0, 512);
+                var name = System.Text.Encoding.ASCII.GetString(header, 0, 100).TrimEnd('\0');
+                var size = Convert.ToInt32(System.Text.Encoding.ASCII.GetString(header, 124, 12).Trim('\0', ' '), 8);
+                var data = new byte[size];
+                Array.Copy(tar, position + 512, data, 0, size);
+                position += 512 + ((size + 511) / 512) * 512;
+                if (name.EndsWith("/pathname", StringComparison.Ordinal)) data = System.Text.Encoding.UTF8.GetBytes(assetPath);
+                else if (script && name.EndsWith("/asset.meta", StringComparison.Ordinal))
+                    data = System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.UTF8.GetString(data).Replace("TextScriptImporter:", "MonoImporter:"));
+                var sizeField = System.Text.Encoding.ASCII.GetBytes(Convert.ToString(data.Length, 8).PadLeft(11, '0') + "\0");
+                Array.Copy(sizeField, 0, header, 124, 12);
+                for (var i = 148; i < 156; i++) header[i] = (byte)' ';
+                var checksum = 0;
+                foreach (var value in header) checksum += value;
+                var checksumField = System.Text.Encoding.ASCII.GetBytes(Convert.ToString(checksum, 8).PadLeft(6, '0') + "\0 ");
+                Array.Copy(checksumField, 0, header, 148, 8);
+                output.Write(header, 0, header.Length);
+                output.Write(data, 0, data.Length);
+                var padding = new byte[(512 - data.Length % 512) % 512];
+                output.Write(padding, 0, padding.Length);
+            }
+            output.Write(new byte[1024], 0, 1024);
+            using (var file = File.Create(path))
+            using (var gzip = new GZipStream(file, CompressionMode.Compress))
+            {
+                var data = output.ToArray();
+                gzip.Write(data, 0, data.Length);
+            }
+        }
     }
 
     private static int PendingCount() { return (int)TypeFor("PackageImportQueue").GetProperty("PendingCount").GetValue(null, null); }
