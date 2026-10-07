@@ -1,11 +1,12 @@
 <!--
-  Compile-checks the package's Editor scripts with C# 7.3 (the Unity 2019.4 language level)
+  Compile-checks the package's Editor scripts with C# 7.3 (kept at the Unity 2019.4 language level
+  so older editors can be re-enabled later; the supported minimum is currently 2021.3)
   against a Unity install's assemblies, without opening Unity (batch mode needs a signed-in
   Unity Hub license). Unity ignores folders ending in "~", so this never ships in the package.
 
   Unity 2020.2+ code path:
     dotnet build -p:CheckTfm=netstandard2.1 "-p:CheckDefines=UNITY_EDITOR%3BUNITY_2020_2_OR_NEWER"
-  Pre-2020.2 (2019.4) code path:
+  Pre-2020.2 code path (optional while the minimum is 2021.3):
     dotnet build -p:CheckTfm=netstandard2.0 -p:CheckDefines=UNITY_EDITOR
   (The 2019 path reports CS0618 for isNetworkError/isHttpError because the 2021 DLLs mark them
   obsolete; they are not obsolete on 2019.)

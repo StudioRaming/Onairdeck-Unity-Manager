@@ -18,7 +18,7 @@ git -c credential.helper= -c 'credential.helper=!f() { echo username=StudioRamin
 
 ## Code rules
 
-- Must compile on **Unity 2019.4 through Unity 6**. First test target: 2021.3.18f1 (installed at `C:\Program Files\Unity\Hub\Editor\2021.3.18f1`).
+- Supported range **for now: Unity 2021.3 or newer** (`package.json` `"unity": "2021.3"`), tested on 2021.3.18f1 (installed at `C:\Program Files\Unity\Hub\Editor\2021.3.18f1`). Keep the code C# 7.3 with the pre-2020.2 fallbacks anyway so older editors can be re-enabled later without a rewrite.
   - C# 7.3 only: no `using var`, switch expressions, `??=`, nullable reference types, records, or ranges.
   - `UnityWebRequest.result` exists only from 2020.2. Use `#if UNITY_2020_2_OR_NEWER`, else `isNetworkError`/`isHttpError`.
   - No UniTask or Newtonsoft dependency. Use `JsonUtility` and editor-loop polling or `async`/`await` (the editor has a main-thread SynchronizationContext).
