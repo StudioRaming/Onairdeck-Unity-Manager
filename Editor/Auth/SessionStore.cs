@@ -4,20 +4,6 @@ using UnityEngine;
 
 namespace OnAirDeck.UnityManager
 {
-    [Serializable]
-    internal class SavedSession
-    {
-        public string token;
-        public string userId;
-        public string email;
-        public long expiresAtUnix;
-
-        public bool IsExpired
-        {
-            get { return DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= expiresAtUnix; }
-        }
-    }
-
     /// <summary>
     /// Keeps the signed-in session in EditorPrefs: per user and per machine, shared by every
     /// Unity project, and outside the project folder so it can't be committed or shared with
@@ -26,18 +12,25 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class SessionStore
     {
-        private const string Key = "OnAirDeck.UnityManager.Session";
+        internal const string DefaultKey = "OnAirDeck.UnityManager.Session";
 
         public static SavedSession Load()
         {
+            return Load(DefaultKey);
+        }
+
+        // The key overloads exist so verification can use a throwaway EditorPrefs key without
+        // changing any shared state; the window and AuthService always use DefaultKey.
+        internal static SavedSession Load(string key)
+        {
             try
             {
-                var json = EditorPrefs.GetString(Key, "");
+                var json = EditorPrefs.GetString(key, "");
                 if (string.IsNullOrEmpty(json)) return null;
                 var session = JsonUtility.FromJson<SavedSession>(json);
                 if (session == null || string.IsNullOrEmpty(session.token) || session.IsExpired)
                 {
-                    Clear();
+                    Clear(key);
                     return null;
                 }
                 return session;
@@ -59,13 +52,18 @@ namespace OnAirDeck.UnityManager
                 email = response.email ?? "",
                 expiresAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + lifetime,
             };
-            EditorPrefs.SetString(Key, JsonUtility.ToJson(session));
+            EditorPrefs.SetString(DefaultKey, JsonUtility.ToJson(session));
             return session;
         }
 
         public static void Clear()
         {
-            EditorPrefs.DeleteKey(Key);
+            Clear(DefaultKey);
+        }
+
+        internal static void Clear(string key)
+        {
+            EditorPrefs.DeleteKey(key);
         }
     }
 }
