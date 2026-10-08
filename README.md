@@ -6,7 +6,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - see your OnAirDeck purchase history,
 - download purchased assets straight into the open project.
 
-> Status: 0.2.1 development version. Sign-in, purchase listing and an image download have been tested in Unity 2021.3.18f1. The release checks below remain open before the first public release.
+> Status: 0.2.2 development version. Sign-in, purchase listing and an image download have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
@@ -88,10 +88,12 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 - [x] Browser sign-in and purchase listing tested by the owner in Unity 2021.3.18f1.
 - [x] `test_sell` image downloaded by the owner with the `darudayu123@gmail.com` account.
 - [ ] Check the 0.2.1 button labels at the minimum window width and download the image again to the new folder.
-- [ ] Download a ZIP and check extraction, cancellation and cache cleanup.
-- [ ] Import multiple `.unitypackage` files, including one with scripts, and check that the remaining imports survive script reloads.
+- [x] Verify ZIP extraction and request cancellation/failure cache cleanup with generated fixtures in the real Unity 2021.3.18f1 Editor.
+- [x] Import two generated `.unitypackage` files in Unity 2021.3.18f1, including a script that causes a domain reload; verify the second import completes and cached packages are removed.
 - [ ] Test Deny, timeout, sign-out and expired-session handling in Unity.
 - [ ] Verify git-URL installation and compilation in Unity 2019.4, 2022.3 and Unity 6.
 - [ ] Review and merge the package PR, choose the release tag, and confirm repository visibility before public release.
 
 Once a release is tagged, install a fixed version with `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<release-tag>` rather than following a moving branch.
+
+Repeatable download checks: [Tools~/Verification/README.md](Tools~/Verification/README.md). Filesystem tests compile the production extraction/copy code; the Editor runner exercises native requests and package imports using unique local fixtures without changing purchases.

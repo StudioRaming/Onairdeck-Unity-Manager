@@ -15,6 +15,7 @@ namespace OnAirDeck.UnityManager
     internal static class PackageImportQueue
     {
         private const string Key = "OnAirDeck.UnityManager.PendingImports";
+        private const string InteractiveKey = "OnAirDeck.UnityManager.InteractiveImports";
         private static bool _importing;
 
         static PackageImportQueue()
@@ -22,13 +23,16 @@ namespace OnAirDeck.UnityManager
             EditorApplication.delayCall += ProcessNext;
         }
 
-        public static void Enqueue(IEnumerable<string> packagePaths)
+        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true)
         {
             var list = Load();
+            if (list.Count > 0 && SessionState.GetBool(InteractiveKey, true) != interactive)
+                throw new InvalidOperationException("Cannot change import interaction while packages are queued.");
             foreach (var path in packagePaths)
             {
                 if (!list.Contains(path)) list.Add(path);
             }
+            SessionState.SetBool(InteractiveKey, interactive);
             Save(list);
             ProcessNext();
         }
@@ -50,7 +54,7 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
-            AssetDatabase.ImportPackage(list[0], true);
+            AssetDatabase.ImportPackage(list[0], SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode);
         }
 
         private static void OnCompleted(string packageName)

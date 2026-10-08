@@ -18,3 +18,5 @@ Thumbs.db
 Tools~/**/obj/
 Tools~/**/bin/
 !Tools~/CompileCheck/CompileCheck.csproj
+
+!Tools~/Verification/Verification.csproj
