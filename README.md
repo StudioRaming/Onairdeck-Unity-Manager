@@ -87,14 +87,14 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 
 - [x] Browser sign-in and purchase listing tested by the owner in Unity 2021.3.18f1.
 - [x] `test_sell` image downloaded by the owner with the `darudayu123@gmail.com` account.
-- [ ] Check the 0.2.1 button labels at the minimum window width and download the image again to the new folder.
+- [x] Button labels checked by the owner at the minimum window width; `miku2018.jpg` downloaded again into `Assets/StudioRaming_Onairdeck/test_sell/` (2026-10-08).
 - [x] Verify ZIP extraction and request cancellation/failure cache cleanup with generated fixtures in the real Unity 2021.3.18f1 Editor.
 - [x] Import two generated `.unitypackage` files in Unity 2021.3.18f1, including a script that causes a domain reload; verify the second import completes and cached packages are removed.
 - [x] Sign-in edge cases verified headlessly against the real listener and PKCE code: Deny, state mismatch, missing code, timeout, Cancel, favicon requests and port release (24-check suite, also in CI).
-- [ ] Run the Editor runner's saved-session checks in Unity 2021.3.18f1: expired/malformed/valid sign-in, rejected token (401) and sign-out. They use a throwaway key; the real sign-in is untouched.
-- [ ] Click **Deny** once on the real consent page and confirm the window shows "Sign-in was denied in the browser."
+- [x] Editor runner in Unity 2021.3.18f1 (2026-10-08): **13/13 passed**, including expired/malformed/valid saved sign-ins, rejected token (401) and sign-out on a throwaway key, with the real sign-in confirmed unchanged.
+- [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
 - [ ] Verify git-URL installation and compilation in Unity 2019.4, 2022.3 and Unity 6.
-- [ ] Review and merge the package PR, choose the release tag, and confirm repository visibility before public release.
+- [ ] Choose the release tag and confirm repository visibility before public release.
 
 Once a release is tagged, install a fixed version with `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<release-tag>` rather than following a moving branch.
 

@@ -29,6 +29,12 @@ Package imports are noninteractive for verification; regular manager downloads c
 
 The editor runner also supports Unity 2022.3. Unity 2019.4 and Unity 6 still need a version-specific install/compatibility check before public release.
 
+## Verified on 2026-10-08
+
+- Headless suite: **24 passed** (14 file checks + 10 sign-in checks), locally and in CI.
+- Real Unity **2021.3.18f1**, open-Editor workflow: **13 checks passed** — 6 saved-session/401/sign-out checks (real sign-in confirmed unchanged) plus the 7 download/import checks, with **1 script domain reload**. Report kept outside the repo.
+- Owner checks in the same Editor: Deny on the real consent page, button layout at minimum width, and a real download into `Assets/StudioRaming_Onairdeck/test_sell/`.
+
 ## Verified on 2026-10-07
 
 - Filesystem suite: **14 passed**, locally and in Windows GitHub Actions.
