@@ -6,11 +6,11 @@ A Unity Editor tool for OnAirDeck buyers:
 - see your OnAirDeck purchase history,
 - download purchased assets straight into the open project.
 
-> Status: 0.2.2 development version. Sign-in, purchase listing and an image download have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.2.4 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
-Targets Unity 2019.4 through Unity 6. Interactive testing currently covers 2021.3.18f1; the other versions still need verification.
+Unity **2021.3 or newer** (`package.json` enforces this minimum). Tested on 2021.3.18f1. Newer editors (2022.3, Unity 6) have not been verified yet; older editors are not supported for now, although the code keeps the C# 7.3 / pre-2020.2 fallbacks so support could be widened later.
 
 ## Install
 
@@ -86,14 +86,15 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 ## Release verification
 
 - [x] Browser sign-in and purchase listing tested by the owner in Unity 2021.3.18f1.
-- [x] `test_sell` image downloaded by the owner with the `darudayu123@gmail.com` account.
+- [x] `test_sell` image downloaded by the owner with a buyer account.
 - [x] Button labels checked by the owner at the minimum window width; `miku2018.jpg` downloaded again into `Assets/StudioRaming_Onairdeck/test_sell/` (2026-10-08).
 - [x] Verify ZIP extraction and request cancellation/failure cache cleanup with generated fixtures in the real Unity 2021.3.18f1 Editor.
 - [x] Import two generated `.unitypackage` files in Unity 2021.3.18f1, including a script that causes a domain reload; verify the second import completes and cached packages are removed.
 - [x] Sign-in edge cases verified headlessly against the real listener and PKCE code: Deny, state mismatch, missing code, timeout, Cancel, favicon requests and port release (24-check suite, also in CI).
 - [x] Editor runner in Unity 2021.3.18f1 (2026-10-08): **13/13 passed**, including expired/malformed/valid saved sign-ins, rejected token (401) and sign-out on a throwaway key, with the real sign-in confirmed unchanged.
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
-- [ ] Verify git-URL installation and compilation in Unity 2019.4, 2022.3 and Unity 6.
+- [ ] Install the package **from the git URL** in a fresh Unity 2021.3.18f1 project (every test so far used "Add package from disk").
+- [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
 - [ ] Choose the release tag and confirm repository visibility before public release.
 
 Once a release is tagged, install a fixed version with `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<release-tag>` rather than following a moving branch.

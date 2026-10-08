@@ -27,7 +27,7 @@ Use a disposable Unity project when batch licensing is available. Otherwise the 
 
 Package imports are noninteractive for verification; regular manager downloads continue to show the import dialog. The queue persists this setting across script reloads.
 
-The editor runner also supports Unity 2022.3. Unity 2019.4 and Unity 6 still need a version-specific install/compatibility check before public release.
+The package's minimum is Unity 2021.3 for now; the editor runner should also work on 2022.3, but 2022.3 and Unity 6 are unverified and not yet claimed as supported.
 
 ## Verified on 2026-10-08
 

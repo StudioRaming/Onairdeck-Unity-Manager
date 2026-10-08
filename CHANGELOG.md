@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.4] - 2026-10-08
+
+- Minimum Unity version raised to 2021.3 (`package.json`), matching what has been tested; older editors can no longer install the package by mistake. No code changes.
+- Documentation describes the supported range honestly and adds a git-URL installation check to the release list.
+
 ## [0.2.3] - 2026-10-08
 
 - Sign-in verification: 10 headless checks drive the real localhost listener (approved code, Deny, state mismatch, missing code, timeout, Cancel, favicon requests, port release) plus PKCE and session-expiry checks; the suite now has 24 checks and runs in CI.
