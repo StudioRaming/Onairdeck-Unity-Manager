@@ -37,7 +37,9 @@ namespace OnAirDeck.UnityManager
         {
             var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var candidateFull = Path.GetFullPath(candidate);
-            return candidateFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase);
+            // Paths produced by the manager preserve the root spelling. Do not grant ownership
+            // to a differently-cased sibling on a case-sensitive filesystem.
+            return candidateFull.StartsWith(rootFull, StringComparison.Ordinal);
         }
 
         /// <summary>

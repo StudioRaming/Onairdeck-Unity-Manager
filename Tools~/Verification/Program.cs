@@ -27,6 +27,7 @@ internal static class Program
             Check("ZIP rooted entries are skipped", SkipRootedZip);
             Check("ZIP overwrite preserves Unity metadata", ZipPreservesMeta);
             Check("sibling prefix is outside product folder", () => Require(!PathSafety.IsInside(Path.Combine(_project, "product"), Path.Combine(_project, "product-other", "file.txt"))));
+            Check("case-different sibling is outside owned root", RefuseCaseSibling);
             Check("separator normalization", () => Equal("nested/file.txt", PathSafety.SafeRelativePath("./nested\\file.txt")));
             Check("unusable file names", () => { Equal("", PathSafety.SafeFileName("..")); Equal("", PathSafety.SafeFileName("C:")); });
             Check("file type detection ignores case", () => { Require(Installer.IsZip("fixture.ZIP")); Require(Installer.IsUnityPackage("fixture.UNITYPACKAGE")); Require(!Installer.IsZip("fixture.jpg")); });
@@ -49,6 +50,16 @@ internal static class Program
     {
         try { test(); _passed++; Console.WriteLine("PASS " + name); }
         catch (Exception e) { _failed++; Console.WriteLine("FAIL " + name + ": " + e.Message); }
+    }
+
+    private static void RefuseCaseSibling()
+    {
+        var root = Path.Combine(_project, "owned-cache");
+        var sibling = Path.Combine(_project, "OWNED-CACHE");
+        Require(PathSafety.IsInside(root, Path.Combine(root, "payload.txt")));
+        Require(!PathSafety.IsInside(root, Path.Combine(sibling, "payload.txt")));
+        Require(!PathSafety.IsInside(root, Path.Combine(root, "..", "OWNED-CACHE", "payload.txt")));
+        Require(!PathSafety.IsInside(root, root));
     }
 
     private static void CopyImage()
