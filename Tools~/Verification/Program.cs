@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using OnAirDeck.UnityManager;
 
 internal static class Program
@@ -27,7 +28,7 @@ internal static class Program
             Check("ZIP rooted entries are skipped", SkipRootedZip);
             Check("ZIP overwrite preserves Unity metadata", ZipPreservesMeta);
             Check("sibling prefix is outside product folder", () => Require(!PathSafety.IsInside(Path.Combine(_project, "product"), Path.Combine(_project, "product-other", "file.txt"))));
-            Check("case-different sibling is outside owned root", RefuseCaseSibling);
+            Check("case-different sibling follows filesystem case rules", CaseSiblingFollowsFilesystemCase);
             Check("separator normalization", () => Equal("nested/file.txt", PathSafety.SafeRelativePath("./nested\\file.txt")));
             Check("unusable file names", () => { Equal("", PathSafety.SafeFileName("..")); Equal("", PathSafety.SafeFileName("C:")); });
             Check("file type detection ignores case", () => { Require(Installer.IsZip("fixture.ZIP")); Require(Installer.IsUnityPackage("fixture.UNITYPACKAGE")); Require(!Installer.IsZip("fixture.jpg")); });
@@ -52,13 +53,17 @@ internal static class Program
         catch (Exception e) { _failed++; Console.WriteLine("FAIL " + name + ": " + e.Message); }
     }
 
-    private static void RefuseCaseSibling()
+    private static void CaseSiblingFollowsFilesystemCase()
     {
         var root = Path.Combine(_project, "owned-cache");
-        var sibling = Path.Combine(_project, "OWNED-CACHE");
+        var recased = Path.Combine(_project, "OWNED-CACHE");
         Require(PathSafety.IsInside(root, Path.Combine(root, "payload.txt")));
-        Require(!PathSafety.IsInside(root, Path.Combine(sibling, "payload.txt")));
-        Require(!PathSafety.IsInside(root, Path.Combine(root, "..", "OWNED-CACHE", "payload.txt")));
+        // Same folder on case-insensitive volumes (Windows, macOS); a different folder on Linux.
+        bool caseInsensitive = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+        Require(PathSafety.IsInside(root, Path.Combine(recased, "payload.txt")) == caseInsensitive);
+        // A real sibling folder is outside the owned root on every platform.
+        Require(!PathSafety.IsInside(root, Path.Combine(_project, "owned-cache-other", "payload.txt")));
+        Require(!PathSafety.IsInside(root, Path.Combine(root, "..", "owned-cache-other", "payload.txt")));
         Require(!PathSafety.IsInside(root, root));
     }
 
