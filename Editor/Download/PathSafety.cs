@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OnAirDeck.UnityManager
@@ -37,7 +38,12 @@ namespace OnAirDeck.UnityManager
         {
             var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var candidateFull = Path.GetFullPath(candidate);
-            return candidateFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase);
+            // Windows and macOS volumes are case-insensitive by default, so a differently-cased
+            // spelling names the same folder there. Linux filesystems are case-sensitive, where
+            // "Root" and "root" are different folders and must not share ownership.
+            var caseInsensitive = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+            var comparison = caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return candidateFull.StartsWith(rootFull, comparison);
         }
 
         /// <summary>
