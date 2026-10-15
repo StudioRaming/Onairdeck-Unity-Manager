@@ -74,6 +74,38 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>
+        /// Signed onairdeck.license for one purchased item. Same ownership rules as a download,
+        /// but issuing never counts as a download, so it can be repeated to refresh the file.
+        /// </summary>
+        public static async Task<LicenseResponse> RequestLicenseAsync(string sessionToken, string itemId)
+        {
+            var body = JsonUtility.ToJson(new LicenseRequest { item_id = itemId, client = OnAirDeckConfig.ClientId });
+            using (var request = Post("plugin-license", body, sessionToken))
+            {
+                await request.SendAsync();
+                ThrowIfFailed(request, "Issuing the license");
+                var response = JsonUtility.FromJson<LicenseResponse>(request.downloadHandler.text);
+                if (response == null || string.IsNullOrEmpty(response.license))
+                    throw new Exception("Issuing the license failed: the server returned no license.");
+                return response;
+            }
+        }
+
+        /// <summary>Release manifest for the Unity Manager itself. Needs no session (the publishable key is enough).</summary>
+        public static async Task<VersionResponse> GetVersionAsync(string currentVersion)
+        {
+            var query = "plugin-version?client=unity-manager&current=" + Uri.EscapeDataString(currentVersion ?? "");
+            using (var request = Get(query, OnAirDeckConfig.PublishableKey))
+            {
+                await request.SendAsync();
+                if (!request.Succeeded()) throw new Exception("Update check failed: " + request.Describe());
+                var response = JsonUtility.FromJson<VersionResponse>(request.downloadHandler.text);
+                if (response == null) throw new Exception("Update check failed: empty response.");
+                return response;
+            }
+        }
+
         internal static UnityWebRequest Post(string function, string jsonBody, string bearer)
         {
             var request = new UnityWebRequest(OnAirDeckConfig.FunctionsUrl + "/" + function, "POST");

@@ -15,6 +15,7 @@ namespace OnAirDeck.UnityManager
         public int Extracted;
         public int SkippedUnsafe;
         public int PackagesQueued;
+        public bool LicenseWritten;
         public string Folder;
 
         public override string ToString()
@@ -25,7 +26,8 @@ namespace OnAirDeck.UnityManager
             if (PackagesQueued > 0) parts.Add(PackagesQueued + " package" + (PackagesQueued == 1 ? "" : "s") + " opened for import");
             if (SkippedUnsafe > 0) parts.Add(SkippedUnsafe + " unsafe entr" + (SkippedUnsafe == 1 ? "y" : "ies") + " skipped");
             var text = parts.Count == 0 ? "Nothing was installed." : string.Join(", ", parts.ToArray()) + ".";
-            return Copied + Extracted > 0 ? text + " Folder: " + Folder : text;
+            if (LicenseWritten) text += " License saved.";
+            return Copied + Extracted > 0 || LicenseWritten ? text + " Folder: " + Folder : text;
         }
     }
 
@@ -98,6 +100,18 @@ namespace OnAirDeck.UnityManager
                 {
                     summary.PackagesQueued = packages.Count;
                     PackageImportQueue.Enqueue(packages);
+                }
+
+                // Signed license next to the product. A failure here must not undo a finished
+                // download; the window refreshes missing licenses the next time it opens.
+                try
+                {
+                    await LicenseService.IssueAsync(sessionToken, item);
+                    summary.LicenseWritten = true;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Downloaded, but the license file could not be written: " + e.Message);
                 }
                 return summary;
             }

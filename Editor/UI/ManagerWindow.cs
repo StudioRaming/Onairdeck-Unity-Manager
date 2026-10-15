@@ -8,24 +8,32 @@ namespace OnAirDeck.UnityManager
     /// <summary>Window ▸ OnAirDeck Unity Manager — sign in, purchases, download into the project.</summary>
     internal sealed class ManagerWindow : EditorWindow
     {
+        // Unity serializes an EditorWindow's private fields across script reloads. Everything that
+        // describes in-flight work is marked [NonSerialized]: the awaiting code is gone after a
+        // reload, so a restored "downloading" / "signing in" flag would leave the window stuck
+        // with disabled buttons and no way out.
         private SavedSession _session;
-        private bool _signingIn;
-        private bool _signingOut;
-        private string _signInUrl;
-        private CancellationTokenSource _signInCancel;
+        [NonSerialized] private bool _signingIn;
+        [NonSerialized] private bool _signingOut;
+        [NonSerialized] private string _signInUrl;
+        [NonSerialized] private CancellationTokenSource _signInCancel;
 
-        private PurchaseItem[] _purchases;
-        private bool _loadingPurchases;
+        [NonSerialized] private PurchaseItem[] _purchases;
+        [NonSerialized] private bool _loadingPurchases;
         private string _search = "";
         private Vector2 _scroll;
 
-        private string _downloadingItemId;
-        private string _progressLabel = "";
-        private float _progress;
-        private CancellationTokenSource _downloadCancel;
+        [NonSerialized] private string _downloadingItemId;
+        [NonSerialized] private string _progressLabel = "";
+        [NonSerialized] private float _progress;
+        [NonSerialized] private CancellationTokenSource _downloadCancel;
 
         private string _message;
         private MessageType _messageType = MessageType.None;
+
+        private UpdateState _update;
+        private UnityEditor.PackageManager.Requests.AddRequest _applyingUpdate;
+        private bool _licensesRefreshed;
 
         private GUIStyle _purchaseTitleStyle;
         private GUIStyle _detailsStyle;
@@ -42,8 +50,12 @@ namespace OnAirDeck.UnityManager
         private void OnEnable()
         {
             _session = SessionStore.Load();
+            // The runtime license check reads this marker as proof of a signed-in Manager.
+            if (_session != null) SessionMarker.Write(_session.userId); else SessionMarker.Clear();
+            _licensesRefreshed = false;
             _purchaseTitleStyle = null;
             _detailsStyle = null;
+            CheckForUpdate();
         }
 
         private void OnDisable()
@@ -51,6 +63,7 @@ namespace OnAirDeck.UnityManager
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelDownload();
+            EditorApplication.update -= PollApplyingUpdate;
         }
 
         private void OnGUI()
@@ -66,7 +79,14 @@ namespace OnAirDeck.UnityManager
             EditorGUILayout.LabelField("Download the assets you bought on OnAirDeck.", EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.Space();
 
-            if (_signingIn) DrawSigningIn();
+            DrawUpdateBanner();
+
+            if (_update != null && _update.MustUpdate)
+            {
+                // Below the server's minimum: the endpoints may refuse this version, so stop here.
+                EditorGUILayout.HelpBox("This version of the Manager is no longer supported. Update to continue.", MessageType.Warning);
+            }
+            else if (_signingIn) DrawSigningIn();
             else if (_session != null) DrawSignedIn();
             else DrawSignedOut();
 
@@ -90,6 +110,60 @@ namespace OnAirDeck.UnityManager
             // Measure the same style that draws the text; fixed pixel widths clip longer states.
             var width = Mathf.Ceil(style.CalcSize(new GUIContent(label)).x) + 12f;
             return GUILayout.Button(label, style, GUILayout.Width(width), GUILayout.Height(height));
+        }
+
+        // ---------- self-update ----------
+
+        private async void CheckForUpdate()
+        {
+            try
+            {
+                var state = await UpdateService.CheckOncePerSessionAsync();
+                if (state != null) _update = state;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update check failed: " + e.Message);
+            }
+            Repaint();
+        }
+
+        private void DrawUpdateBanner()
+        {
+            if (_update == null || !_update.UpdateAvailable) return;
+            var latest = _update.Response.latest;
+            var text = "Version " + latest.version + " is available (you have " + _update.CurrentVersion + ").";
+            if (!string.IsNullOrEmpty(latest.notes)) text += "\n" + latest.notes;
+            EditorGUILayout.HelpBox(text, _update.MustUpdate ? MessageType.Warning : MessageType.Info);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUI.enabled = _update.CanApply && _applyingUpdate == null;
+                if (ActionButton(_applyingUpdate != null ? "Updating…" : "Update")) ApplyUpdate();
+                GUI.enabled = true;
+                if (!_update.CanApply && !string.IsNullOrEmpty(_update.ApplyBlockedReason))
+                    GUILayout.Label(_update.ApplyBlockedReason, _detailsStyle, GUILayout.ExpandWidth(true));
+            }
+            EditorGUILayout.Space();
+        }
+
+        private void ApplyUpdate()
+        {
+            _applyingUpdate = UpdateService.Apply(_update);
+            if (_applyingUpdate == null) return;
+            SetMessage("Updating the OnAirDeck Unity Manager… Unity will reload scripts when it finishes.", MessageType.Info);
+            EditorApplication.update += PollApplyingUpdate;
+        }
+
+        private void PollApplyingUpdate()
+        {
+            if (_applyingUpdate == null || !_applyingUpdate.IsCompleted) return;
+            EditorApplication.update -= PollApplyingUpdate;
+            var request = _applyingUpdate;
+            _applyingUpdate = null;
+            if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
+                SetMessage("Updated to " + request.Result.version + ".", MessageType.Info);
+            else
+                SetMessage("Update failed: " + (request.Error != null ? request.Error.message : "unknown error"), MessageType.Error);
         }
 
         // ---------- sign in / out ----------
@@ -143,6 +217,8 @@ namespace OnAirDeck.UnityManager
                 var session = await AuthService.SignInAsync(url => { _signInUrl = url; Repaint(); }, cancel);
                 _session = session;
                 _purchases = null;
+                _licensesRefreshed = false;
+                SessionMarker.Write(session.userId);
                 SetMessage("Signed in.", MessageType.Info);
             }
             catch (OperationCanceledException)
@@ -184,6 +260,7 @@ namespace OnAirDeck.UnityManager
                 _session = null;
                 _purchases = null;
                 _signingOut = false;
+                SessionMarker.Clear();
                 Repaint();
             }
         }
@@ -191,6 +268,7 @@ namespace OnAirDeck.UnityManager
         private void OnSessionExpired(string message)
         {
             SessionStore.Clear();
+            SessionMarker.Clear();
             _session = null;
             _purchases = null;
             SetMessage(message, MessageType.Warning);
@@ -282,6 +360,7 @@ namespace OnAirDeck.UnityManager
             try
             {
                 _purchases = await OnAirDeckApi.GetPurchasesAsync(_session.token);
+                RefreshLicenses();
             }
             catch (SessionExpiredException e)
             {
@@ -296,6 +375,26 @@ namespace OnAirDeck.UnityManager
             {
                 _loadingPurchases = false;
                 Repaint();
+            }
+        }
+
+        /// <summary>Once per window open: re-issue licenses for items installed here that are missing one or expire soon.</summary>
+        private async void RefreshLicenses()
+        {
+            if (_licensesRefreshed || _session == null || _purchases == null) return;
+            _licensesRefreshed = true;
+            try
+            {
+                var refreshed = await LicenseService.RefreshInstalledAsync(_session.token, _purchases);
+                if (refreshed > 0) Debug.Log(OnAirDeckConfig.LogPrefix + "Refreshed " + refreshed + " license file" + (refreshed == 1 ? "" : "s") + ".");
+            }
+            catch (SessionExpiredException e)
+            {
+                OnSessionExpired(e.Message);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License refresh failed: " + e.Message);
             }
         }
 
