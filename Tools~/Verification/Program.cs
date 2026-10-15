@@ -30,6 +30,10 @@ internal static class Program
             Check("separator normalization", () => Equal("nested/file.txt", PathSafety.SafeRelativePath("./nested\\file.txt")));
             Check("unusable file names", () => { Equal("", PathSafety.SafeFileName("..")); Equal("", PathSafety.SafeFileName("C:")); });
             Check("file type detection ignores case", () => { Require(Installer.IsZip("fixture.ZIP")); Require(Installer.IsUnityPackage("fixture.UNITYPACKAGE")); Require(!Installer.IsZip("fixture.jpg")); });
+            Check("license expiry is read from the payload half", LicenseExpiry);
+            Check("license refresh window (missing, fresh, expiring, unreadable)", LicenseRefreshWindow);
+            Check("license file is written inside the product folder", LicenseWrite);
+            Check("session marker round trip", SessionMarkerRoundTrip);
             AuthChecks.Run(Check);
         }
         finally
@@ -124,6 +128,62 @@ internal static class Program
         Installer.ExtractZip(MakeZip("overwrite.zip", new[] { "payload.txt" }), folder, out skipped);
         Equal("payload.txt", File.ReadAllText(Absolute(folder + "/payload.txt")));
         Equal("existing-guid", File.ReadAllText(Absolute(folder + "/payload.txt.meta")));
+    }
+
+    // "<base64url(payload)>.<base64url(signature)>" with a throwaway signature; only the payload is inspected here.
+    private static string FakeLicense(long exp)
+    {
+        var payload = "{\"v\":1,\"iss\":\"onairdeck\",\"client\":\"unity-manager\",\"user_id\":\"u\",\"item_id\":\"i\",\"product_id\":\"p\",\"product_name\":\"n\",\"iat\":" + (exp - 7L * 86400) + ",\"exp\":" + exp + ",\"nonce\":\"abc\"}";
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        return b64 + "." + "c2ln";
+    }
+
+    private static void LicenseExpiry()
+    {
+        long exp;
+        Require(LicenseFile.TryReadExpiry(FakeLicense(1792566600), out exp));
+        Equal(1792566600L, exp);
+        Require(!LicenseFile.TryReadExpiry("not-a-license", out exp));
+        Require(!LicenseFile.TryReadExpiry("", out exp));
+        Require(!LicenseFile.TryReadExpiry("!!!.sig", out exp));
+    }
+
+    private static void LicenseRefreshWindow()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var folder = Installer.ProductFolder("license-window");
+        Require(LicenseFile.NeedsRefresh(folder, now)); // missing
+        LicenseFile.Write(folder, FakeLicense(now + 6 * 86400));
+        Require(!LicenseFile.NeedsRefresh(folder, now)); // fresh (6 days left)
+        LicenseFile.Write(folder, FakeLicense(now + 1 * 86400));
+        Require(LicenseFile.NeedsRefresh(folder, now)); // expiring within 2 days
+        File.WriteAllText(LicenseFile.PathFor(folder), "garbage");
+        Require(LicenseFile.NeedsRefresh(folder, now)); // unreadable
+    }
+
+    private static void LicenseWrite()
+    {
+        var folder = Installer.ProductFolder("../../license-escape");
+        var path = LicenseFile.Write(folder, "  " + FakeLicense(1792566600) + "  ");
+        Equal(Path.Combine(Absolute("Assets/StudioRaming_Onairdeck/license-escape"), "onairdeck.license"), path);
+        Equal(FakeLicense(1792566600) + "\n", File.ReadAllText(path));
+        var threw = false;
+        try { LicenseFile.Write(folder, "no-dot"); } catch (ArgumentException) { threw = true; }
+        Require(threw);
+    }
+
+    private static void SessionMarkerRoundTrip()
+    {
+        var path = Path.Combine(_project, "marker", "session.json");
+        SessionMarker.Write(path, "2abee825-5f86-4653-8a99-4aa0993231af", 1792000000);
+        Equal("2abee825-5f86-4653-8a99-4aa0993231af", SessionMarker.ReadUserId(path));
+        var json = File.ReadAllText(path);
+        Require(json.Contains("\"client\":\"unity-manager\"") && json.Contains("\"issued_at\":1792000000"));
+        Require(!json.Contains("token"));
+        SessionMarker.Write(path, "", 1); // empty id clears
+        Equal(null, SessionMarker.ReadUserId(path));
+        SessionMarker.Clear(path); // idempotent
+        Require(!File.Exists(path));
     }
 
     private static string MakeZip(string name, string[] entries)

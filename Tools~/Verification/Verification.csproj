@@ -17,5 +17,7 @@
     <Compile Include="../../Editor/Download/PathSafety.cs" />
     <Compile Include="../../Editor/Download/Installer.cs" />
     <Compile Include="../../Editor/Api/OnAirDeckConfig.cs" />
+    <Compile Include="../../Editor/License/LicenseFile.cs" />
+    <Compile Include="../../Editor/License/SessionMarker.cs" />
   </ItemGroup>
 </Project>

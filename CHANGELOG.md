@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-10-15
+
+- **License file.** After a download the Manager asks OnAirDeck for a signed license and writes `onairdeck.license` into the product folder (`Assets/StudioRaming_Onairdeck/<Product>/`). Licenses live 7 days; the Manager re-issues them silently for installed products when the window opens and the file is missing or within 2 days of expiry. Issuing a license never counts as a download.
+- **Session marker.** While signed in, `%LOCALAPPDATA%/OnAirDeck/session.json` holds the signed-in user id (never the token). Removed on sign-out and when the server rejects the session. Together with the license file it lets a seller's asset verify "signed in + licensed" without network access.
+- **Update check.** On window open the Manager asks `plugin-version` once per Editor session. A newer published version shows an **Update** button (git/registry installs switch to the published git URL through Package Manager; local-disk installs are told to update their copy). A version below the server's minimum blocks sign-in until updated.
+- Four more headless verification checks (license parsing, refresh window, write confinement, session marker).
+
 ## [0.2.4] - 2026-10-08
 
 - Minimum Unity version raised to 2021.3 (`package.json`), matching what has been tested; older editors can no longer install the package by mistake. No code changes.
