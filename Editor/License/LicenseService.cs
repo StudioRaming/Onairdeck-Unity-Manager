@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using OnAirDeck.License;
 using UnityEditor;
 using UnityEngine;
 
@@ -18,8 +19,12 @@ namespace OnAirDeck.UnityManager
         {
             var response = await OnAirDeckApi.RequestLicenseAsync(sessionToken, item.item_id);
             var folder = Installer.ProductFolder(item.name);
-            LicenseFile.Write(folder, response.license);
+            var path = LicenseFile.Write(folder, response.license);
             AssetDatabase.Refresh();
+            // The same check sellers' assets run (OnAirDeck.License): embedded public key, product, signed-in user, expiry.
+            var check = OnAirDeckLicense.Check(item.product_id, path);
+            if (!check.IsValid)
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The license for " + item.name + " was saved but fails the local check (" + check.Status + "): " + check.Message);
             return folder + "/" + LicenseFile.FileName;
         }
 

@@ -6,7 +6,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - see your OnAirDeck purchase history,
 - download purchased assets straight into the open project.
 
-> Status: 0.2.4 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.4.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
@@ -37,6 +37,39 @@ Downloads made before 0.2.1 stay in their existing folders. Download again to pl
 
 Sellers with active OnAirDeck Plus enable **Unity download** for each uploaded file in the Atelier asset editor. Buyers do not need Plus. Only files enabled for Unity and included in the purchased option are downloadable; external links are not downloaded by the manager.
 
+## For sellers: checking the license from your asset
+
+The package ships a small Editor-only assembly, `OnAirDeck.License`, that your editor code can call. It needs no network: it reads the buyer's `onairdeck.license` for your product, verifies OnAirDeck's RSA signature with the embedded public key, and confirms the file belongs to the account currently signed in to the Manager and has not expired.
+
+```csharp
+using OnAirDeck.License;
+using UnityEditor;
+using UnityEngine;
+
+public class MyToolWindow : EditorWindow
+{
+    const string ProductId = "2d5f83b7-bacf-4104-b352-6c84180830c1"; // your product's id on OnAirDeck
+
+    void OnGUI()
+    {
+        var license = OnAirDeckLicense.Check(ProductId); // cached for 30 s, safe to call every frame
+        if (!license.IsValid)
+        {
+            EditorGUILayout.HelpBox(license.Message, MessageType.Warning);
+            if (license.Status == LicenseStatus.NotSignedIn && GUILayout.Button("Open OnAirDeck Unity Manager"))
+                EditorApplication.ExecuteMenuItem("Window/OnAirDeck Unity Manager");
+            return;
+        }
+        // your tool
+    }
+}
+```
+
+- Scripts in a plain `Editor/` folder see the assembly automatically. If your editor code has its own assembly definition, add `OnAirDeck.License` to its references.
+- `LicenseStatus` tells you why a check failed: `NotSignedIn`, `LicenseMissing`, `LicenseMalformed`, `InvalidSignature`, `WrongIssuer`, `WrongProduct`, `UserMismatch`, `NotYetValid`, `Expired`. `Message` is a ready-made English sentence.
+- Licenses live 7 days and the Manager renews them when its window opens, so a buyer who has not opened the Manager for a week sees `Expired` until they do.
+- This is a client-side check. It stops casual copying between accounts; it cannot stop someone who decompiles and edits your assembly. Keep the check inside the code you care about rather than in a separate script that is easy to delete.
+
 ## 한국어
 
 ### 설치
@@ -60,6 +93,10 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 
 판매자는 활성 Plus 멤버십이 있어야 Atelier 상품 편집기의 파일별 **Unity download**를 켤 수 있습니다. 구매자에게는 Plus가 필요하지 않습니다. 구매 옵션에 포함되지 않은 파일과 외부 링크는 Unity에서 다운로드할 수 없습니다. 이전 버전으로 받은 파일은 기존 폴더에 남습니다.
 
+### 판매자용: 에셋에서 라이선스 확인하기
+
+패키지에 포함된 에디터 전용 어셈블리 `OnAirDeck.License`를 에디터 코드에서 호출하면 네트워크 없이 라이선스를 확인할 수 있습니다. `OnAirDeckLicense.Check("<상품 ID>")`는 구매자의 `onairdeck.license`를 찾아 OnAirDeck의 RSA 서명을 내장 공개키로 검증하고, 매니저에 로그인된 계정과 일치하는지, 만료되지 않았는지 확인합니다. 결과의 `IsValid`와 `Status`(`NotSignedIn`, `LicenseMissing`, `InvalidSignature`, `Expired`, `UserMismatch` 등), `Message`(영문 안내문)를 사용하세요. 결과는 30초간 캐시되므로 `OnGUI`에서 호출해도 됩니다. 에디터 코드에 어셈블리 정의가 있으면 참조에 `OnAirDeck.License`를 추가하세요. 영문 섹션에 예제 코드가 있습니다. 클라이언트 측 검사이므로 계정 간 복사는 막지만, 어셈블리를 디컴파일해 수정하는 사람까지 막지는 못합니다.
+
 ## 日本語
 
 ### インストール
@@ -82,6 +119,10 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 6. 新しいバージョンのマネージャーが公開されると、ウィンドウに **Update** ボタンが表示されます。git URLでインストールしたパッケージはその場で更新され、ディスクからインストールしたコピーは手動で更新してください。
 
 出品者は有効なPlusメンバーシップで、Atelierの商品編集画面の各ファイルの **Unity download** を有効にできます。購入者にPlusは不要です。購入オプションに含まれないファイルや外部リンクはUnityからダウンロードできません。以前のバージョンで取得したファイルは元のフォルダーに残ります。
+
+### 出品者向け: アセットからライセンスを確認する
+
+パッケージに含まれるエディター専用アセンブリ `OnAirDeck.License` をエディターコードから呼び出すと、ネットワークなしでライセンスを確認できます。`OnAirDeckLicense.Check("<商品ID>")` は購入者の `onairdeck.license` を探し、OnAirDeckのRSA署名を内蔵の公開鍵で検証し、マネージャーにサインイン中のアカウントと一致するか、期限切れでないかを確認します。結果の `IsValid` と `Status`（`NotSignedIn`、`LicenseMissing`、`InvalidSignature`、`Expired`、`UserMismatch` など）、`Message`（英語の案内文）を使ってください。結果は30秒間キャッシュされるため `OnGUI` から呼んでも問題ありません。エディターコードにアセンブリ定義がある場合は参照に `OnAirDeck.License` を追加してください。サンプルコードは英語セクションにあります。クライアント側の確認なのでアカウント間のコピーは防げますが、アセンブリを逆コンパイルして書き換える相手までは防げません。
 
 ## Test a local copy (development)
 
