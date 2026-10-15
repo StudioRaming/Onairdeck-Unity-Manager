@@ -37,6 +37,7 @@ internal static class Program
             Check("license file is written inside the product folder", LicenseWrite);
             Check("session marker round trip", SessionMarkerRoundTrip);
             AuthChecks.Run(Check);
+            LicenseChecks.Run(Check, _project);
         }
         finally
         {

@@ -28,6 +28,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Editor/**/*.cs" />
+    <Compile Include="../../License/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="$(UnityManaged)/UnityEngine.CoreModule.dll" Private="false" />

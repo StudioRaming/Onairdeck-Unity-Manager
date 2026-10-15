@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0] - 2026-10-15
+
+- **Runtime license check for sellers.** New assembly `OnAirDeck.License` (folder `License/`, Editor-only, no UnityEngine dependency): `OnAirDeckLicense.Check("<product id>")` finds the product's `onairdeck.license` under `Assets/StudioRaming_Onairdeck/`, verifies the RSA signature with OnAirDeck's embedded public key, and checks the product, the signed-in account (the Manager's session marker) and the expiry, all offline. The result carries a `LicenseStatus` reason (`NotSignedIn`, `LicenseMissing`, `InvalidSignature`, `Expired`, `UserMismatch`, ...) and a message, so a seller's tool can say "sign in with OnAirDeck Unity Manager" instead of failing silently. Results are cached for 30 seconds so the check can run from `OnGUI`. `LicenseVerifier.Verify` exposes the pure verification for custom setups.
+- After writing a license the Manager runs the same check and logs a warning if the file would not pass it, so a key or format mismatch shows up immediately.
+- Seven more headless verification checks (35 total): a license issued by the real service verified with the embedded key, tampering, malformed input, JSON escapes, and the file/marker lookup with its cache.
+- Honest limit, unchanged: a client-side check deters sharing; it cannot stop someone who decompiles and edits the calling assembly.
+
 ## [0.3.0] - 2026-10-15
 
 - **License file.** After a download the Manager asks OnAirDeck for a signed license and writes `onairdeck.license` into the product folder (`Assets/StudioRaming_Onairdeck/<Product>/`). Licenses live 7 days; the Manager re-issues them silently for installed products when the window opens and the file is missing or within 2 days of expiry. Issuing a license never counts as a download.

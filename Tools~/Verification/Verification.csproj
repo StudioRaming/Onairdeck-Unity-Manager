@@ -19,5 +19,7 @@
     <Compile Include="../../Editor/Api/OnAirDeckConfig.cs" />
     <Compile Include="../../Editor/License/LicenseFile.cs" />
     <Compile Include="../../Editor/License/SessionMarker.cs" />
+    <Compile Include="../../License/*.cs" />
+    <Compile Include="LicenseChecks.cs" />
   </ItemGroup>
 </Project>

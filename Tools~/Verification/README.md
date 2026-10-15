@@ -8,9 +8,11 @@ From the package repository:
 dotnet run --project 'Tools~/Verification/Verification.csproj'
 ```
 
-The 24 checks compile the actual `Installer`, `PathSafety`, `LoopbackListener`, `Pkce` and `SavedSession` sources. A small host adapter supplies only `Application.dataPath` and a warning sink.
+The 35 checks compile the actual `Installer`, `PathSafety`, `LoopbackListener`, `Pkce`, `SavedSession`, `LicenseFile`, `SessionMarker` and `OnAirDeck.License` sources. A small host adapter supplies only `Application.dataPath` and a warning sink.
 
 - **Files (14):** a fresh temporary project; file contents, overwrite behavior and `.meta` preservation, ZIP nesting, unsafe-entry rejection and the download destination. Only that run's temporary directory is deleted.
+- **License files (4):** payload expiry parsing, refresh window, write confinement, session marker round trip.
+- **Runtime license check (7, `LicenseChecks.cs`):** a license issued by the real plugin-license service verifies with the embedded public key; expiry, clock skew, product/account mismatch and signed-out results; edited payload or signature rejected; malformed strings; self-signed payloads (throwaway key) for JSON escapes, issuer, version and missing fields; `Check()` file lookup under `Assets/StudioRaming_Onairdeck/` with a session marker, including a forged copy sorting first, and the result cache.
 - **Sign-in (10, `AuthChecks.cs`):** the real localhost listener is driven the way a browser would drive it: approved code, `/favicon.ico` noise, **Deny** (`error=access_denied`), state mismatch, missing code, **timeout**, **Cancel**, port release after dispose; PKCE verifier/S256 challenge shape; saved-session expiry boundary. The OnAirDeck website is not contacted.
 
 This does not exercise Unity requests, EditorPrefs, imports or script reloads.

@@ -1,6 +1,8 @@
 {
     "name": "OnAirDeck.UnityManager.Editor",
-    "references": [],
+    "references": [
+        "OnAirDeck.License"
+    ],
     "includePlatforms": [
         "Editor"
     ],
