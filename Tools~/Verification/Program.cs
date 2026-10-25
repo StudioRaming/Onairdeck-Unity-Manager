@@ -38,6 +38,7 @@ internal static class Program
             Check("session marker round trip", SessionMarkerRoundTrip);
             AuthChecks.Run(Check);
             LicenseChecks.Run(Check, _project);
+            PackageChecks.Run(Check, _project);
         }
         finally
         {

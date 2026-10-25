@@ -21,5 +21,14 @@
     <Compile Include="../../Editor/License/SessionMarker.cs" />
     <Compile Include="../../License/*.cs" />
     <Compile Include="LicenseChecks.cs" />
+    <Compile Include="PackageChecks.cs" />
+    <Compile Include="../../Editor/Packages/InstalledPackages.cs" />
+    <Compile Include="../../Editor/Packages/JsonWriter.cs" />
+    <Compile Include="../../Editor/Packages/PackageInstallException.cs" />
+    <Compile Include="../../Editor/Packages/PackageTransaction.cs" />
+    <Compile Include="../../Editor/Packages/PackageVersion.cs" />
+    <Compile Include="../../Editor/Packages/PackageZip.cs" />
+    <Compile Include="../../Editor/Packages/VpmListing.cs" />
+    <Compile Include="../../Editor/Packages/VpmManifestUpdater.cs" />
   </ItemGroup>
 </Project>

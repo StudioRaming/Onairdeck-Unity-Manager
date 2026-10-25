@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace OnAirDeck.UnityManager
 {
     /// <summary>
@@ -18,5 +20,23 @@ namespace OnAirDeck.UnityManager
         public const string ClientId = "unity";
 
         public const string LogPrefix = "[OnAirDeck] ";
+
+        /// <summary>
+        /// VPM listings package dependencies may be downloaded from. A fixed list: never a URL read from
+        /// a zip or from the server.
+        /// </summary>
+        public static readonly string[] TrustedVpmListings =
+        {
+            "https://studioraming.github.io/mingtoon-distribution/index.json"
+        };
+
+        /// <summary>
+        /// Packages that older versions shipped as a plain folder under Assets/ (no package.json, so a scan
+        /// cannot find them). Installing the package over such a project would duplicate its files.
+        /// </summary>
+        public static readonly Dictionary<string, string> LegacyAssetFolders = new Dictionary<string, string>
+        {
+            { "com.studioraming.mingtoon", "Assets/StudioRaming/MingToon" }
+        };
     }
 }
