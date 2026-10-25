@@ -30,11 +30,40 @@ namespace OnAirDeck.UnityManager
         public string error;
     }
 
-    // GET plugin-purchases?client=unity → { purchases: [...] }
+    // GET plugin-purchases?client=unity → { purchases: [...], licenses: [...] }
     [Serializable]
     internal class PurchasesResponse
     {
         public PurchaseItem[] purchases;
+        public LicenseEntry[] licenses;   // seller licenses the account holds an active grant on, with their versions
+    }
+
+    /// <summary>One seller license the account may download versions of (an OnAirDeck purchase or an approved BOOTH claim).</summary>
+    [Serializable]
+    internal class LicenseEntry
+    {
+        public string license_id;
+        public string name;
+        public string[] rights;
+        public LicenseVersionEntry[] versions;   // active versions, newest first, at most 20
+    }
+
+    [Serializable]
+    internal class LicenseVersionEntry
+    {
+        public string version_id;
+        public string version_label;
+        public string file_name;
+        public long file_size;
+        public string released_at;
+        public string release_notes;
+        public string package_name;      // "" unless file_name looks like <package>-<version>.zip
+        public string package_version;   // "" likewise
+
+        public bool IsPackage
+        {
+            get { return !string.IsNullOrEmpty(package_name) && !string.IsNullOrEmpty(package_version); }
+        }
     }
 
     /// <summary>One purchased line item. `files` lists only the Unity-enabled files this item is entitled to.</summary>
@@ -67,6 +96,16 @@ namespace OnAirDeck.UnityManager
     internal class DownloadRequest
     {
         public string item_id;
+        public string client;
+    }
+
+    // POST plugin-download { license_version_id, client } → same response. A separate type from
+    // DownloadRequest: JsonUtility writes every field, and the server rejects item_id together with
+    // license_version_id, so an empty item_id must not be sent.
+    [Serializable]
+    internal class LicenseDownloadRequest
+    {
+        public string license_version_id;
         public string client;
     }
 
