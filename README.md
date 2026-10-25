@@ -4,9 +4,10 @@ A Unity Editor tool for OnAirDeck buyers:
 
 - sign in and sign out through the browser,
 - see your OnAirDeck purchase history,
-- download purchased assets straight into the open project.
+- download purchased assets straight into the open project,
+- install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.4.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.5.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
@@ -36,6 +37,36 @@ Package Manager fetches the package with Git, so Git must be installed. To pin a
 Downloads made before 0.2.1 stay in their existing folders. Download again to place loose files or ZIP contents in the new folder. The manager does not move existing assets or their `.meta` files.
 
 Sellers with active OnAirDeck Plus enable **Unity download** for each uploaded file in the Atelier asset editor. Buyers do not need Plus. Only files enabled for Unity and included in the purchased option are downloadable; external links are not downloaded by the manager.
+
+## Install without Git
+
+Each release also ships two files for people who do not have Git (build them with `python Tools~/Packaging/build_manager_packages.py`, which checks both before it reports success):
+
+- `OnAirDeck-Unity-Manager-<version>.unitypackage`: **Assets ▸ Import Package ▸ Custom Package…**. The files land in `Packages/com.studioraming.manager` with the GUIDs of this repository.
+- `com.studioraming.manager-<version>.zip`: unzip so that `package.json` sits in `Packages/com.studioraming.manager/`.
+
+A Manager installed this way (an *embedded* package) updates itself: when the release carries a download URL, **Update** downloads the zip, validates it like any package (below) and swaps the folder in place; the old folder goes to the backup. A copy that is a git working copy refuses and tells you to use git. Manager installs from a git URL or a registry keep the Package Manager update.
+
+## Packages
+
+When your account holds a license with installable package versions (an OnAirDeck purchase or an approved BOOTH claim give the same right), the window shows a **Packages** section above your purchases:
+
+- per package: the version installed in this project (read from `Packages/<name>/package.json`), the newest available version, **Install** / **Update**, and a picker for older versions;
+- a **mismatch banner** when an installed package names exact dependency versions that disagree with what is installed (for example the Creator Companion moved the core package alone). One button installs the add-on version equal to your installed dependency when that version exists, otherwise the newest add-on with the dependency versions it requires. The button text names the versions.
+
+Other packages can open the window on their own row: `OnAirDeck.UnityManager.OnAirDeckPackages.OpenAndFocus("<package name>")` (look the type up with `Type.GetType("OnAirDeck.UnityManager.OnAirDeckPackages, OnAirDeck.UnityManager.Editor")` so your package works when the Manager is absent).
+
+### What an install does
+
+1. Asks OnAirDeck for the zip of the chosen version (the first download of a license makes the purchase non-refundable, so Unity asks you to confirm) and downloads it over HTTPS.
+2. Validates the zip. Every entry must be a plain relative path: a single `..`, rooted, drive or sanitised name fails the whole package (nothing is skipped). The root `package.json` must exist and its `name` and `version` must equal what OnAirDeck listed. `vpmDependencies` must name exact versions; a range fails the install.
+3. Resolves each dependency that is not installed at exactly the named version from a fixed list of trusted VPM listings (`https://studioraming.github.io/mingtoon-distribution/index.json`), never from a URL inside a zip. The download must match the listing's SHA-256.
+4. Runs **one transaction** for the add-on and its dependencies: the zips are unpacked into `Temp/OnAirDeck/stage-<id>/`, a journal is written to `Library/OnAirDeck/install-journal.json`, and then each existing `Packages/<name>` is moved to `Library/OnAirDeck/Backup/<name>-<oldVersion>-<yyyyMMdd-HHmmss>` and the new folder is moved into place. If anything fails the moves are undone in reverse order. If Unity is closed or crashes half-way, the next editor load rolls the incomplete journal back and the window reports it.
+5. Files of the old folder that the new package does not contain are **not** carried over (the same as the Creator Companion); the result lists them with the backup path.
+6. If `Packages/vpm-manifest.json` exists, the entries it already has for the installed packages (in `dependencies` and `locked`) are set to the new versions. Nothing is added, unknown keys are kept, and the file is backed up to `Library/OnAirDeck/Backup/vpm-manifest-<time>/` first.
+7. Calls `Client.Resolve()` and `AssetDatabase.Refresh()` once.
+
+The Manager refuses to install a package that an older version put in a plain folder under `Assets/` (`com.studioraming.mingtoon` in `Assets/StudioRaming/MingToon`): migrate that install first. It never writes MingToon's own installer receipt.
 
 ## For sellers: checking the license from your asset
 
@@ -93,6 +124,14 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 
 판매자는 활성 Plus 멤버십이 있어야 Atelier 상품 편집기의 파일별 **Unity download**를 켤 수 있습니다. 구매자에게는 Plus가 필요하지 않습니다. 구매 옵션에 포함되지 않은 파일과 외부 링크는 Unity에서 다운로드할 수 없습니다. 이전 버전으로 받은 파일은 기존 폴더에 남습니다.
 
+### Git 없이 설치와 패키지 애드온
+
+릴리스에는 Git이 없는 환경을 위한 파일 두 개가 함께 들어 있습니다. `OnAirDeck-Unity-Manager-<버전>.unitypackage`는 **Assets ▸ Import Package ▸ Custom Package…**로 가져오고, `com.studioraming.manager-<버전>.zip`은 `Packages/com.studioraming.manager/`에 압축을 풀면 됩니다. 이렇게 설치한 매니저는 릴리스에 다운로드 주소가 있으면 **Update**로 스스로 폴더를 교체합니다.
+
+계정에 패키지 버전이 있는 라이선스(OnAirDeck 구매 또는 승인된 BOOTH 청구)가 있으면 구매 목록 위에 **Packages** 섹션이 표시됩니다. 설치된 버전(`Packages/<이름>/package.json`), 최신 버전, **Install/Update**, 이전 버전 선택기가 있습니다. 설치된 패키지가 요구하는 정확한 의존 버전이 실제 설치된 버전과 다르면(예: VCC가 코어만 올린 경우) 경고와 함께 맞출 버전을 적은 버튼이 표시됩니다.
+
+설치는 하나의 트랜잭션입니다. zip을 검증하고(경로가 하나라도 안전하지 않으면 전체 실패, `package.json`의 이름과 버전이 목록과 같아야 하고, 의존성은 정확한 버전이어야 함) 신뢰하는 VPM 목록에서 의존 패키지를 SHA-256 확인 후 받아, 기존 `Packages/<이름>`을 `Library/OnAirDeck/Backup/<이름>-<이전버전>-<시각>`으로 옮기고 새 폴더를 이동해 넣습니다. 실패하면 역순으로 되돌리고, 에디터가 중간에 꺼지면 다음 로드 때 자동으로 되돌립니다. 새 패키지에 없는 예전 파일은 가져오지 않고 결과에 목록으로 보여줍니다. `Packages/vpm-manifest.json`에 이미 있는 항목의 버전만 갱신하며(백업 후, 항목은 추가하지 않음), 마지막에 `Client.Resolve()`와 `AssetDatabase.Refresh()`를 한 번 호출합니다. `Assets/StudioRaming/MingToon`에 예전 방식으로 설치된 경우에는 먼저 그 설치를 정리하라는 안내와 함께 거부합니다.
+
 ### 판매자용: 에셋에서 라이선스 확인하기
 
 패키지에 포함된 에디터 전용 어셈블리 `OnAirDeck.License`를 에디터 코드에서 호출하면 네트워크 없이 라이선스를 확인할 수 있습니다. `OnAirDeckLicense.Check("<상품 ID>")`는 구매자의 `onairdeck.license`를 찾아 OnAirDeck의 RSA 서명을 내장 공개키로 검증하고, 매니저에 로그인된 계정과 일치하는지, 만료되지 않았는지 확인합니다. 결과의 `IsValid`와 `Status`(`NotSignedIn`, `LicenseMissing`, `InvalidSignature`, `Expired`, `UserMismatch` 등), `Message`(영문 안내문)를 사용하세요. 결과는 30초간 캐시되므로 `OnGUI`에서 호출해도 됩니다. 에디터 코드에 어셈블리 정의가 있으면 참조에 `OnAirDeck.License`를 추가하세요. 영문 섹션에 예제 코드가 있습니다. 클라이언트 측 검사이므로 계정 간 복사는 막지만, 어셈블리를 디컴파일해 수정하는 사람까지 막지는 못합니다.
@@ -124,11 +163,21 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 
 パッケージに含まれるエディター専用アセンブリ `OnAirDeck.License` をエディターコードから呼び出すと、ネットワークなしでライセンスを確認できます。`OnAirDeckLicense.Check("<商品ID>")` は購入者の `onairdeck.license` を探し、OnAirDeckのRSA署名を内蔵の公開鍵で検証し、マネージャーにサインイン中のアカウントと一致するか、期限切れでないかを確認します。結果の `IsValid` と `Status`（`NotSignedIn`、`LicenseMissing`、`InvalidSignature`、`Expired`、`UserMismatch` など）、`Message`（英語の案内文）を使ってください。結果は30秒間キャッシュされるため `OnGUI` から呼んでも問題ありません。エディターコードにアセンブリ定義がある場合は参照に `OnAirDeck.License` を追加してください。サンプルコードは英語セクションにあります。クライアント側の確認なのでアカウント間のコピーは防げますが、アセンブリを逆コンパイルして書き換える相手までは防げません。
 
+### Gitなしのインストールとパッケージアドオン
+
+リリースにはGitがない環境向けのファイルが2つあります。`OnAirDeck-Unity-Manager-<バージョン>.unitypackage` は **Assets ▸ Import Package ▸ Custom Package…** でインポートし、`com.studioraming.manager-<バージョン>.zip` は `Packages/com.studioraming.manager/` に展開してください。この方法で入れたマネージャーは、リリースにダウンロードURLがあれば **Update** で自分のフォルダーを置き換えます。
+
+アカウントにパッケージ版を持つライセンス（OnAirDeckでの購入または承認済みのBOOTH申請）があると、購入一覧の上に **Packages** セクションが表示されます。インストール済みバージョン、最新バージョン、**Install/Update**、旧バージョンの選択ができます。インストール済みパッケージが要求する依存バージョンと実際のバージョンが違う場合（例: VCCがコアだけを更新した）は、警告と、入れるバージョンを書いたボタンが表示されます。
+
+インストールは1つのトランザクションです。zipを検証し（安全でないパスが1つでもあれば全体が失敗、`package.json` の名前とバージョンが一覧と一致、依存は正確なバージョンのみ）、信頼するVPM一覧から依存パッケージをSHA-256確認のうえ取得し、既存の `Packages/<名前>` を `Library/OnAirDeck/Backup/` に移して新しいフォルダーを移動します。失敗時は逆順で戻し、エディターが途中で終了した場合は次回起動時に自動で戻します。新しいパッケージにない旧ファイルは引き継がず、結果に一覧を表示します。`Packages/vpm-manifest.json` に既にある項目のバージョンだけを更新し（バックアップ後、項目は追加しない）、最後に `Client.Resolve()` と `AssetDatabase.Refresh()` を1回呼びます。`Assets/StudioRaming/MingToon` に旧方式で入っている場合は、先にそのインストールを整理するよう案内して拒否します。
+
 ## Test a local copy (development)
 
 In any Unity project: **Window ▸ Package Manager ▸ + ▸ Add package from disk…** and select this folder's `package.json`. Changes to the files are picked up when Unity recompiles.
 
-To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileCheck` (instructions inside the `.csproj`).
+To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileCheck` (instructions inside the `.csproj`; pass `-p:UnityManaged=` for another installed editor).
+
+To build the Git-free install files: `python Tools~/Packaging/build_manager_packages.py` (`--out`, `--version`). It stops if a file or folder lacks its `.meta`, then reopens both outputs and verifies entries, contents and GUIDs.
 
 ## Release verification
 
@@ -140,6 +189,8 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 - [x] Sign-in edge cases verified headlessly against the real listener and PKCE code: Deny, state mismatch, missing code, timeout, Cancel, favicon requests and port release (24-check suite, also in CI).
 - [x] Editor runner in Unity 2021.3.18f1 (2026-10-08): **13/13 passed**, including expired/malformed/valid saved sign-ins, rejected token (401) and sign-out on a throwaway key, with the real sign-in confirmed unchanged.
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
+- [ ] Package install (0.5.0) in a real Unity 2021.3 and 2022.3 editor: fresh install from the Manager alone, pair update, mismatch repair, interrupted install rolled back on the next load, legacy `Assets/` core refused, domain reload during the swap, `Client.Resolve()` timing, the Packages section layout.
+- [ ] Import `OnAirDeck-Unity-Manager-<version>.unitypackage` into a fresh project and confirm Unity accepts the `Packages/` pathnames.
 - [ ] Install the package **from the git URL** in a fresh Unity 2021.3.18f1 project (every test so far used "Add package from disk").
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
 - [x] Repository made public (2026-10-08).
