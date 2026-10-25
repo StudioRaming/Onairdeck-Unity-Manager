@@ -16,6 +16,8 @@ namespace OnAirDeck.UnityManager
         public string ZipPath = "";
         /// <summary>Absolute folder to replace. Empty means Packages/&lt;Name&gt; (self-update of an embedded package uses its real folder).</summary>
         public string TargetFolder = "";
+        /// <summary>Why this item is in the install when it is not the requested package (shown in the report).</summary>
+        public string Note = "";
     }
 
     internal sealed class InstalledEntry
@@ -29,6 +31,7 @@ namespace OnAirDeck.UnityManager
         public string Backup = "";
         /// <summary>Files of the old folder that the new package does not have (relative, '/').</summary>
         public readonly List<string> NotCarriedOver = new List<string>();
+        public string Note = "";
     }
 
     internal sealed class InstallReport
@@ -44,6 +47,7 @@ namespace OnAirDeck.UnityManager
             {
                 sb.Append(entry.Name).Append(' ');
                 sb.Append(entry.OldVersion.Length == 0 ? "installed " : entry.OldVersion + " -> ").Append(entry.NewVersion).Append('\n');
+                if (entry.Note.Length > 0) sb.Append("  ").Append(entry.Note).Append('\n');
                 if (entry.Backup.Length > 0) sb.Append("  Old version kept at ").Append(entry.Backup).Append('\n');
                 if (entry.NotCarriedOver.Count > 0)
                 {
@@ -115,6 +119,22 @@ namespace OnAirDeck.UnityManager
                 if (refusal != null) throw new PackageInstallException(refusal);
             }
 
+            // Duplicate GUIDs break references. The folders being replaced do not count: their old files go away.
+            var targets = new List<string>();
+            var guids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in items)
+            {
+                targets.Add(TargetOf(projectRoot, item));
+                foreach (var guid in GuidCollisions.ReadZipGuids(item.ZipPath))
+                {
+                    // Two packages of one install that share a GUID would collide with each other after the swap.
+                    if (!guids.Add(guid))
+                        throw new PackageInstallException("Cannot install: " + item.Name + " and another package in this install both use GUID " + guid + ".");
+                }
+            }
+            var collisions = GuidCollisions.Scan(projectRoot, guids, targets);
+            if (collisions.Count > 0) throw new PackageInstallException(GuidCollisions.Refusal(collisions));
+
             var stageFolder = Path.Combine(StageRoot(projectRoot), "stage-" + Guid.NewGuid().ToString("N"));
             var journal = new Journal { StageFolder = stageFolder };
             var journalWritten = false;
@@ -130,11 +150,11 @@ namespace OnAirDeck.UnityManager
                     var staged = Path.Combine(stageFolder, item.Name);
                     manifests.Add(PackageZip.Extract(item.ZipPath, staged, item.Name, item.Version));
 
-                    var target = item.TargetFolder.Length > 0 ? Path.GetFullPath(item.TargetFolder) : Path.GetFullPath(InstalledPackages.FolderOf(projectRoot, item.Name));
+                    var target = TargetOf(projectRoot, item);
                     if (!PathSafety.IsInside(Path.Combine(projectRoot, "Packages"), target))
                         throw new PackageInstallException("Refusing to install " + item.Name + " outside the project's Packages folder.");
 
-                    var entry = new InstalledEntry { Name = item.Name, NewVersion = item.Version, Target = target, Staged = staged };
+                    var entry = new InstalledEntry { Name = item.Name, NewVersion = item.Version, Target = target, Staged = staged, Note = item.Note };
                     if (Directory.Exists(target))
                     {
                         entry.OldVersion = ReadFolderVersion(target);
@@ -304,6 +324,11 @@ namespace OnAirDeck.UnityManager
         }
 
         // ---------- helpers ----------
+
+        private static string TargetOf(string projectRoot, InstallItem item)
+        {
+            return item.TargetFolder.Length > 0 ? Path.GetFullPath(item.TargetFolder) : Path.GetFullPath(InstalledPackages.FolderOf(projectRoot, item.Name));
+        }
 
         private static void Fault(string point)
         {

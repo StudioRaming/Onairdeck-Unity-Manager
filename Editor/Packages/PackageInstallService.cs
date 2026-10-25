@@ -52,6 +52,7 @@ namespace OnAirDeck.UnityManager
                 await CollectDependenciesAsync(root, manifest, items, new Dictionary<string, string>(), new Dictionary<string, VpmListing>(),
                     cacheFolders, onProgress, cancel, 0);
                 items.Add(new InstallItem { Name = version.package_name, Version = version.package_version, ZipPath = zip });
+                await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
                 return Apply(root, items, onProgress, cancel);
             }
             finally
@@ -87,6 +88,7 @@ namespace OnAirDeck.UnityManager
                 await CollectDependenciesAsync(root, manifest, items, new Dictionary<string, string>(), new Dictionary<string, VpmListing>(),
                     cacheFolders, onProgress, cancel, 0);
                 items.Add(new InstallItem { Name = packageName, Version = version, ZipPath = zip, TargetFolder = packageFolder });
+                await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
                 return Apply(root, items, onProgress, cancel);
             }
             finally
@@ -106,6 +108,66 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.Refresh();
             Report(onProgress, "Done", 1f);
             return report;
+        }
+
+        /// <summary>
+        /// Files an older install left inside another package's folder (the old add-on .unitypackage imported into
+        /// the core folder) carry the same GUIDs as the incoming package. Reinstalling that package at its CURRENT
+        /// version from a trusted listing removes them (the swap does not carry extra files over). Collisions
+        /// anywhere else, or in a package no trusted listing can restore, refuse the install before any change.
+        /// </summary>
+        private static async Task AddCollisionReinstallsAsync(
+            string root, List<InstallItem> items, List<string> cacheFolders, Action<string, float> onProgress, CancellationToken cancel)
+        {
+            var guids = new HashSet<string>(StringComparer.Ordinal);
+            var targets = new List<string>();
+            foreach (var item in items)
+            {
+                guids.UnionWith(GuidCollisions.ReadZipGuids(item.ZipPath));
+                targets.Add(item.TargetFolder.Length > 0 ? item.TargetFolder : InstalledPackages.FolderOf(root, item.Name));
+            }
+            var collisions = GuidCollisions.Scan(root, guids, targets);
+            if (collisions.Count == 0) return;
+
+            var blocking = new List<GuidCollision>();
+            var candidates = GuidCollisions.Candidates(collisions, blocking);
+            var listings = new Dictionary<string, VpmListing>();
+            var reinstalls = new List<InstallItem>();
+            foreach (var candidate in candidates)
+            {
+                VpmVersion listed = null;
+                try { listed = await FindInListingsAsync(candidate.Name, candidate.Version, listings, cancel); }
+                catch (PackageInstallException) { }
+                if (listed == null)
+                {
+                    // Not restorable from a trusted listing: these files stay where they are, so the install is refused.
+                    foreach (var collision in collisions) if (collision.Container == candidate.Folder) blocking.Add(collision);
+                    continue;
+                }
+                PackageDownloadChecks.RequireHttps(listed.Url);
+                var label = candidate.Name + " " + candidate.Version;
+                var zip = await Downloader.DownloadAsync(listed.Url, PathSafety.SafeFolderName(candidate.Name + "-" + candidate.Version, "package") + ".zip",
+                    p => Report(onProgress, "Downloading " + label, 0.6f * p), cancel);
+                cacheFolders.Add(Path.GetDirectoryName(zip));
+                PackageDownloadChecks.RequireSha256(zip, listed.Sha256, label);
+                PackageZip.Validate(zip, candidate.Name, candidate.Version);
+                reinstalls.Add(new InstallItem
+                {
+                    Name = candidate.Name,
+                    Version = candidate.Version,
+                    ZipPath = zip,
+                    TargetFolder = candidate.Folder,
+                    Note = ReinstallNote(candidate)
+                });
+            }
+            if (blocking.Count > 0) throw new PackageInstallException(GuidCollisions.Refusal(blocking));
+            items.InsertRange(0, reinstalls);
+        }
+
+        internal static string ReinstallNote(ReinstallCandidate candidate)
+        {
+            return "Files from an older install of the package being installed (" + candidate.Files + " with the same GUIDs) were inside "
+                + candidate.Name + " and were removed by reinstalling it at " + candidate.Version + ".";
         }
 
         private static DownloadFile PickFile(DownloadFile[] files, LicenseVersionEntry version)

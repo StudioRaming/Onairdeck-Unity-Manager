@@ -44,6 +44,9 @@ internal static class PackageChecks
         check("legacy Assets install is refused and nothing changes", LegacyRefusal);
         check("journal paths outside the project are refused on recovery", JournalTamper);
         check("mismatch finder and target choice", Mismatches);
+        check("GUID collision inside an installed package: reinstalled in the same transaction, stray files listed", GuidReinstall);
+        check("GUID collision in Assets, a non-package folder or between two zips of one install is refused before any change (10 paths shown)", GuidRefusals);
+        check("no GUID collision: no extra reinstall; ignored folders do not count", GuidNoCollision);
         check("built package zip passes the same validation (ONAIRDECK_PACKAGING_ZIP)", BuiltZip);
     }
 
@@ -529,6 +532,183 @@ internal static class PackageChecks
         Require(File.Exists(Path.Combine(destination, "Editor", "OnAirDeck.UnityManager.Editor.asmdef")));
         Require(File.Exists(Path.Combine(destination, "Editor", "OnAirDeck.UnityManager.Editor.asmdef.meta")));
         Require(!Directory.Exists(Path.Combine(destination, "Tools~")) && !Directory.Exists(Path.Combine(destination, ".git")));
+    }
+
+    // ---------- GUID collisions ----------
+
+    private const string G1 = "11111111111111111111111111111111";
+    private const string G2 = "22222222222222222222222222222222";
+    private const string G3 = "33333333333333333333333333333333";
+    private const string GA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    private static string Meta(string guid) { return "fileFormatVersion: 2\nguid: " + guid + "\n"; }
+
+    /// <summary>Core 0.1.16 as VCC left it, with the old add-on's files inside it (the legacy unitypackage import).</summary>
+    private static string NewStrayProject()
+    {
+        var project = NewProject(false);
+        WritePackage(project, Core, "0.1.16", null);
+        var core = Path.Combine(project, "Packages", Core);
+        Directory.CreateDirectory(Path.Combine(core, "Runtime"));
+        Directory.CreateDirectory(Path.Combine(core, "Editor", "AddonStray"));
+        File.WriteAllText(Path.Combine(core, "Runtime", "A.cs"), "A");
+        File.WriteAllText(Path.Combine(core, "Runtime", "A.cs.meta"), Meta(GA));
+        File.WriteAllText(Path.Combine(core, "Editor", "AddonStray", "B.cs"), "old B");
+        File.WriteAllText(Path.Combine(core, "Editor", "AddonStray", "B.cs.meta"), Meta(G1));
+        File.WriteAllText(Path.Combine(core, "Editor", "AddonStray.meta"), Meta(G2));
+        return project;
+    }
+
+    private static string AddonZipWithMetas(string dir)
+    {
+        return MakeRawZip(dir, "addon.zip", new Dictionary<string, string>
+        {
+            { "package.json", PackageJson(Addon, "0.1.16", new[] { Core + "==0.1.16" }) },
+            { "Editor/B.cs", "new B" },
+            { "Editor/B.cs.meta", Meta(G1) },
+            { "Editor.meta", Meta(G3) }
+        });
+    }
+
+    private static string CoreZipWithMetas(string dir)
+    {
+        return MakeRawZip(dir, "core.zip", new Dictionary<string, string>
+        {
+            { "package.json", PackageJson(Core, "0.1.16", null) },
+            { "Runtime/A.cs", "A" },
+            { "Runtime/A.cs.meta", Meta(GA) }
+        });
+    }
+
+    private static void GuidReinstall()
+    {
+        var project = NewStrayProject();
+        var dir = NewDir();
+        var addon = new InstallItem { Name = Addon, Version = "0.1.16", ZipPath = AddonZipWithMetas(dir) };
+        var before = Snapshot(project);
+
+        // The add-on alone would duplicate the stray file's GUID: refused before anything moves.
+        Throws<PackageInstallException>(() => PackageTransaction.Execute(project, new[] { addon }, Now), "already use GUIDs", "alone");
+        Equal(before, Snapshot(project));
+        Require(!File.Exists(PackageTransaction.JournalPath(project)) && !Directory.Exists(PackageTransaction.BackupRoot(project)));
+
+        var guids = GuidCollisions.ReadZipGuids(addon.ZipPath);
+        Require(guids.Contains(G1) && guids.Contains(G3) && guids.Count == 2);
+        var found = GuidCollisions.Scan(project, guids, new string[0]);
+        Equal(1, found.Count);
+        Equal(G1, found[0].Guid);
+        Equal("Packages/" + Core + "/Editor/AddonStray/B.cs.meta", found[0].Path);
+        Equal(Core, found[0].PackageName);
+        Equal("0.1.16", found[0].PackageVersion);
+        var blocking = new List<GuidCollision>();
+        var candidates = GuidCollisions.Candidates(found, blocking);
+        Equal(1, candidates.Count);
+        Equal(0, blocking.Count);
+        Equal(Core, candidates[0].Name);
+        Equal(1, candidates[0].Files);
+
+        // The same transaction reinstalls the core at its current version: the stray files leave with the swap.
+        var reinstall = new InstallItem { Name = Core, Version = candidates[0].Version, ZipPath = CoreZipWithMetas(dir), Note = ReinstallNote(candidates[0]) };
+        var report = PackageTransaction.Execute(project, new[] { reinstall, addon }, Now);
+        Equal(2, report.Installed.Count);
+        var coreFolder = Path.Combine(project, "Packages", Core);
+        Require(File.Exists(Path.Combine(coreFolder, "Runtime", "A.cs")));
+        Require(!Directory.Exists(Path.Combine(coreFolder, "Editor")));
+        Require(report.Installed[0].NotCarriedOver.Contains("Editor/AddonStray/B.cs") && report.Installed[0].NotCarriedOver.Contains("Editor/AddonStray/B.cs.meta"));
+        Equal("old B", File.ReadAllText(Path.Combine(report.Installed[0].Backup, "Editor", "AddonStray", "B.cs")));
+        Equal("new B", File.ReadAllText(Path.Combine(project, "Packages", Addon, "Editor", "B.cs")));
+        Require(report.Describe().Contains("removed by reinstalling it at 0.1.16"));
+        Equal("0.1.16", InstalledPackages.InstalledVersion(project, Core));
+        // Nothing else in the project uses the add-on's GUIDs any more.
+        Equal(0, GuidCollisions.Scan(project, guids, new[] { Path.Combine(project, "Packages", Addon) }).Count);
+    }
+
+    // Same wording as PackageInstallService.ReinstallNote, which needs Unity and cannot be compiled here.
+    private static string ReinstallNote(ReinstallCandidate candidate)
+    {
+        return "Files from an older install of the package being installed (" + candidate.Files + " with the same GUIDs) were inside "
+            + candidate.Name + " and were removed by reinstalling it at " + candidate.Version + ".";
+    }
+
+    private static void GuidRefusals()
+    {
+        // A collision under Assets/ cannot be repaired by a reinstall: refused, nothing moved.
+        var project = NewProject(false);
+        WritePackage(project, Core, "0.1.16", null);
+        var old = Path.Combine(project, "Assets", "Old");
+        Directory.CreateDirectory(old);
+        File.WriteAllText(Path.Combine(old, "B.cs.meta"), Meta(G1));
+        var addon = new InstallItem { Name = Addon, Version = "0.1.16", ZipPath = AddonZipWithMetas(NewDir()) };
+        var before = Snapshot(project);
+        var error = Capture(() => PackageTransaction.Execute(project, new[] { addon }, Now));
+        Require(error != null && error.Contains("Assets/Old/B.cs.meta") && error.Contains(G1));
+        Equal(before, Snapshot(project));
+        Require(File.Exists(Path.Combine(old, "B.cs.meta")) && !Directory.Exists(PackageTransaction.BackupRoot(project)) && !File.Exists(PackageTransaction.JournalPath(project)));
+        var blocking = new List<GuidCollision>();
+        Equal(0, GuidCollisions.Candidates(GuidCollisions.Scan(project, GuidCollisions.ReadZipGuids(addon.ZipPath), new string[0]), blocking).Count);
+        Equal(1, blocking.Count);
+
+        // At most 10 paths are listed.
+        for (var i = 0; i < 12; i++) File.WriteAllText(Path.Combine(old, "many" + i + ".meta"), Meta(G1));
+        var many = Capture(() => PackageTransaction.Execute(project, new[] { addon }, Now));
+        Equal(10, many.Split('\n').Count(l => l.StartsWith("  Assets/")));
+        Require(many.Contains("and 3 more"));
+
+        // A folder that is no package cannot be reinstalled either.
+        var odd = NewProject(false);
+        var loose = Path.Combine(odd, "Packages", "not-a-package");
+        Directory.CreateDirectory(loose);
+        File.WriteAllText(Path.Combine(loose, "X.meta"), Meta(G1));
+        var found = GuidCollisions.Scan(odd, GuidCollisions.ReadZipGuids(addon.ZipPath), new string[0]);
+        var oddBlocking = new List<GuidCollision>();
+        Equal(0, GuidCollisions.Candidates(found, oddBlocking).Count);
+        Equal(1, oddBlocking.Count);
+        Require(Capture(() => PackageTransaction.Execute(odd, new[] { addon }, Now)) != null);
+
+        // Two packages of one install that share a GUID are refused too, before anything moves.
+        var pair = NewProject(false);
+        var clash = new InstallItem
+        {
+            Name = Core,
+            Version = "0.1.16",
+            ZipPath = MakeRawZip(NewDir(), "core-clash.zip", new Dictionary<string, string>
+            {
+                { "package.json", PackageJson(Core, "0.1.16", null) },
+                { "Editor/B.cs", "B" },
+                { "Editor/B.cs.meta", Meta(G1) }
+            })
+        };
+        var pairBefore = Snapshot(pair);
+        var pairError = Capture(() => PackageTransaction.Execute(pair, new[] { clash, addon }, Now));
+        Require(pairError != null && pairError.Contains("both use GUID " + G1));
+        Equal(pairBefore, Snapshot(pair));
+        Require(!Directory.Exists(PackageTransaction.BackupRoot(pair)) && !File.Exists(PackageTransaction.JournalPath(pair)));
+    }
+
+    private static void GuidNoCollision()
+    {
+        var project = NewProject(false);
+        WritePackage(project, Core, "0.1.16", null);
+        var core = Path.Combine(project, "Packages", Core);
+        File.WriteAllText(Path.Combine(core, "A.cs.meta"), Meta(GA));
+        // Ignored folders (name ending in ~) and non-meta text do not count.
+        var hidden = Path.Combine(project, "Assets", "Docs~");
+        Directory.CreateDirectory(hidden);
+        File.WriteAllText(Path.Combine(hidden, "B.cs.meta"), Meta(G1));
+        File.WriteAllText(Path.Combine(project, "Assets", "garbage.meta"), "not a meta");
+        var addon = new InstallItem { Name = Addon, Version = "0.1.16", ZipPath = AddonZipWithMetas(NewDir()) };
+        Equal(0, GuidCollisions.Scan(project, GuidCollisions.ReadZipGuids(addon.ZipPath), new string[0]).Count);
+        var report = PackageTransaction.Execute(project, new[] { addon }, Now);
+        Equal(1, report.Installed.Count);                       // no extra reinstall
+        Equal("", report.Installed[0].Note);
+        Equal("0.1.16", InstalledPackages.InstalledVersion(project, Core));
+        Require(!report.Describe().Contains("reinstalling"));
+    }
+
+    private static string Capture(Action action)
+    {
+        try { action(); return null; }
+        catch (PackageInstallException e) { return e.Message; }
     }
 
     // ---------- fixtures ----------

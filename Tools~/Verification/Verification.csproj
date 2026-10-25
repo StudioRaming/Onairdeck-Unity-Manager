@@ -23,6 +23,7 @@
     <Compile Include="LicenseChecks.cs" />
     <Compile Include="PackageChecks.cs" />
     <Compile Include="../../Editor/Packages/InstalledPackages.cs" />
+    <Compile Include="../../Editor/Packages/GuidCollisions.cs" />
     <Compile Include="../../Editor/Packages/JsonWriter.cs" />
     <Compile Include="../../Editor/Packages/PackageInstallException.cs" />
     <Compile Include="../../Editor/Packages/PackageTransaction.cs" />
