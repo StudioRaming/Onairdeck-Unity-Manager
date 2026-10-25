@@ -20,3 +20,6 @@ Tools~/**/bin/
 !Tools~/CompileCheck/CompileCheck.csproj
 
 !Tools~/Verification/Verification.csproj
+
+# Git-free install files (Tools~/Packaging)
+Tools~/Packaging/out/
