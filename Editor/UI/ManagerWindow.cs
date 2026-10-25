@@ -6,7 +6,7 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager
 {
     /// <summary>Window ▸ OnAirDeck Unity Manager — sign in, purchases, download into the project.</summary>
-    internal sealed class ManagerWindow : EditorWindow
+    internal sealed partial class ManagerWindow : EditorWindow
     {
         // Unity serializes an EditorWindow's private fields across script reloads. Everything that
         // describes in-flight work is marked [NonSerialized]: the awaiting code is gone after a
@@ -55,7 +55,14 @@ namespace OnAirDeck.UnityManager
             _licensesRefreshed = false;
             _purchaseTitleStyle = null;
             _detailsStyle = null;
+            OnEnablePackages();
             CheckForUpdate();
+        }
+
+        private void OnFocus()
+        {
+            // A package folder can change outside the window (VCC, another editor, a rollback).
+            RefreshInstalledPackages();
         }
 
         private void OnDisable()
@@ -63,6 +70,7 @@ namespace OnAirDeck.UnityManager
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelDownload();
+            CancelPackageInstall();
             EditorApplication.update -= PollApplyingUpdate;
         }
 
@@ -137,8 +145,9 @@ namespace OnAirDeck.UnityManager
             EditorGUILayout.HelpBox(text, _update.MustUpdate ? MessageType.Warning : MessageType.Info);
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUI.enabled = _update.CanApply && _applyingUpdate == null;
-                if (ActionButton(_applyingUpdate != null ? "Updating…" : "Update")) ApplyUpdate();
+                var updating = _applyingUpdate != null || _applyingSelfUpdate;
+                GUI.enabled = _update.CanApply && !updating && !_installingPackage;
+                if (ActionButton(updating ? "Updating…" : "Update")) ApplyUpdate();
                 GUI.enabled = true;
                 if (!_update.CanApply && !string.IsNullOrEmpty(_update.ApplyBlockedReason))
                     GUILayout.Label(_update.ApplyBlockedReason, _detailsStyle, GUILayout.ExpandWidth(true));
@@ -148,6 +157,11 @@ namespace OnAirDeck.UnityManager
 
         private void ApplyUpdate()
         {
+            if (_update != null && _update.UseEmbedded)
+            {
+                ApplyEmbeddedUpdate();
+                return;
+            }
             _applyingUpdate = UpdateService.Apply(_update);
             if (_applyingUpdate == null) return;
             SetMessage("Updating the OnAirDeck Unity Manager… Unity will reload scripts when it finishes.", MessageType.Info);
@@ -200,6 +214,7 @@ namespace OnAirDeck.UnityManager
             }
 
             EditorGUILayout.Space();
+            DrawPackages();
             DrawPurchases();
         }
 
@@ -217,6 +232,7 @@ namespace OnAirDeck.UnityManager
                 var session = await AuthService.SignInAsync(url => { _signInUrl = url; Repaint(); }, cancel);
                 _session = session;
                 _purchases = null;
+                _licenses = null;
                 _licensesRefreshed = false;
                 SessionMarker.Write(session.userId);
                 SetMessage("Signed in.", MessageType.Info);
@@ -259,6 +275,7 @@ namespace OnAirDeck.UnityManager
             {
                 _session = null;
                 _purchases = null;
+                _licenses = null;
                 _signingOut = false;
                 SessionMarker.Clear();
                 Repaint();
@@ -271,6 +288,7 @@ namespace OnAirDeck.UnityManager
             SessionMarker.Clear();
             _session = null;
             _purchases = null;
+            _licenses = null;
             SetMessage(message, MessageType.Warning);
         }
 
@@ -359,7 +377,9 @@ namespace OnAirDeck.UnityManager
             Repaint();
             try
             {
-                _purchases = await OnAirDeckApi.GetPurchasesAsync(_session.token);
+                var response = await OnAirDeckApi.GetPurchasesAndLicensesAsync(_session.token);
+                _purchases = response.purchases;
+                SetLicenses(response.licenses);
                 RefreshLicenses();
             }
             catch (SessionExpiredException e)
