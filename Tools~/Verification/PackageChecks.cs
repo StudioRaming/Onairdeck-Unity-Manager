@@ -36,13 +36,18 @@ internal static class PackageChecks
         check("transaction: failure at every step undoes everything (in process)", FailEverywhere);
         check("transaction: crash at every step is rolled back on the next load", CrashEverywhere);
         check("transaction: a rollback that fails is retried by recovery", RollbackRetry);
+        check("transaction: a file held open during the swap is waited for; held past the budget rolls back", HeldFileDuringSwap);
+        check("transaction: an updated, rolled back or recovered package keeps its folder, so a watcher on it still sees new files", WatchedFolderSurvives);
+        check("transaction: a rollback interrupted at every step finishes on the next load", UndoCrashEverywhere);
+        check("transaction: an unfinished journal from an older build is set aside, not replayed", OldJournalFormat);
         check("transaction: an interrupted install blocks the next one until rolled back", InterruptedBlocksNext);
         check("transaction: target outside Packages and bad names are refused", TargetGuards);
         check("transaction: self-update style item replaces a differently named folder", CustomTarget);
         check("vpm-manifest: existing entries only, unknown keys kept, backup written", ManifestUpdate);
         check("vpm-manifest: nothing to update leaves the file alone; CRLF kept; bad JSON fails before any move", ManifestEdgeCases);
         check("legacy Assets install is refused and nothing changes", LegacyRefusal);
-        check("journal paths outside the project are refused on recovery", JournalTamper);
+        check("tampered journals (paths outside, absolute name, no stage folder, missing or odd phase) are refused on recovery, each for its own reason", JournalTamper);
+        check("a journal that says a package was untouched while its backup holds files stops recovery and stays unfinished", JournalContradiction);
         check("mismatch finder and target choice", Mismatches);
         check("GUID collision inside an installed package: reinstalled in the same transaction, stray files listed", GuidReinstall);
         check("GUID collision in Assets, a non-package folder or between two zips of one install is refused before any change (10 paths shown)", GuidRefusals);
@@ -251,13 +256,17 @@ internal static class PackageChecks
 
     private static void CrashEverywhere()
     {
-        foreach (var point in RecordPoints())
+        var points = RecordPoints();
+        // The journal is replaced whole: a crash after its new copy is written but before it takes the old one's place
+        // must leave a journal the next load can read and act on.
+        Require(points.Contains("journal-write:old-out:" + Core) && points.Contains("journal-write:new-in:" + Core) && points.Contains("journal-write:complete"));
+        foreach (var point in points)
         {
             var project = NewManifestProject();
             var before = Snapshot(project);
             var items = StandardItems(project);
             // Before the journal exists nothing is recoverable, and Unity empties Temp on the next launch.
-            var beforeJournal = point.StartsWith("stage:") || point == "journal";
+            var beforeJournal = point.StartsWith("stage:") || point == "journal" || point == "journal-write:applying";
             PackageTransaction.FaultHook = p => { if (p == point) throw new TransactionCrash(p); };
             try
             {
@@ -297,6 +306,157 @@ internal static class PackageChecks
         var message = PackageTransaction.Recover(project);
         Require(message != null);
         Equal(before, Snapshot(project));
+    }
+
+    // Antivirus holds a freshly extracted file for a moment; Windows then refuses to rename its folder. The swap waits
+    // for a short hold and rolls back cleanly when the hold outlasts the retry budget.
+    private static void HeldFileDuringSwap()
+    {
+        var project = NewManifestProject();
+        FileStream held = null;
+        PackageTransaction.FaultHook = p =>
+        {
+            if (p != "after-backup:" + Addon) return;
+            held = HoldStagedFile(project);
+            var release = held;
+            new System.Threading.Thread(() => { System.Threading.Thread.Sleep(300); release.Dispose(); }).Start();
+        };
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try { PackageTransaction.Execute(project, StandardItems(project), Now); }
+        finally { PackageTransaction.FaultHook = null; }
+        Require(held != null && clock.ElapsedMilliseconds >= 250);   // the move really waited for the release
+        Equal("0.1.16", InstalledPackages.InstalledVersion(project, Addon));
+        Equal("complete", JournalState(project));
+        Equal(0, StageFolders(project));
+
+        var stuck = NewManifestProject();
+        var before = Snapshot(stuck);
+        held = null;
+        PackageTransaction.MoveRetryBudgetMs = 100;
+        PackageTransaction.FaultHook = p => { if (p == "after-backup:" + Addon) held = HoldStagedFile(stuck); };
+        try
+        {
+            Throws<PackageInstallException>(() => PackageTransaction.Execute(stuck, StandardItems(stuck), Now), "rolled back", "held past the budget");
+        }
+        finally
+        {
+            PackageTransaction.FaultHook = null;
+            PackageTransaction.MoveRetryBudgetMs = 5000;
+            if (held != null) held.Dispose();
+        }
+        Equal(before, Snapshot(stuck));
+        Equal("rolledback", JournalState(stuck));
+    }
+
+    // Unity watches each embedded package folder and keeps watching it when it is renamed. On the 2021.3 bed, an update
+    // that renamed the old folder away and put a new one in its place left every later AssetDatabase.Refresh waiting
+    // forever in DirectoryMonitorWindows::Sync. A watcher on the package folder stands in for Unity's directory monitor:
+    // after an update, a rollback and a recovery it must still see a file created in Packages/<name>.
+    private static void WatchedFolderSurvives()
+    {
+        var updated = NewManifestProject();
+        Require(WatcherSeesProbe(updated, () => PackageTransaction.Execute(updated, StandardItems(updated), Now)));
+        Equal("0.1.16", InstalledPackages.InstalledVersion(updated, Core));
+
+        var failed = NewManifestProject();
+        Require(WatcherSeesProbe(failed, () =>
+        {
+            PackageTransaction.FaultHook = p => { if (p == "before-manifest") throw new IOException("boom"); };
+            try { Throws<PackageInstallException>(() => PackageTransaction.Execute(failed, StandardItems(failed), Now), "rolled back", "failed install"); }
+            finally { PackageTransaction.FaultHook = null; }
+        }));
+        Equal("0.1.15", InstalledPackages.InstalledVersion(failed, Core));
+
+        var crashed = NewManifestProject();
+        Require(WatcherSeesProbe(crashed, () =>
+        {
+            PackageTransaction.FaultHook = p => { if (p == "after-install:" + Core) throw new TransactionCrash(p); };
+            try { Throws<TransactionCrash>(() => PackageTransaction.Execute(crashed, StandardItems(crashed), Now), "simulated crash", "crash"); }
+            finally { PackageTransaction.FaultHook = null; }
+            Require(PackageTransaction.Recover(crashed) != null);
+        }));
+        Equal("0.1.15", InstalledPackages.InstalledVersion(crashed, Core));
+    }
+
+    private static bool WatcherSeesProbe(string project, Action action)
+    {
+        var core = Path.Combine(project, "Packages", Core);
+        using (var seen = new System.Threading.ManualResetEventSlim(false))
+        using (var watcher = new FileSystemWatcher(core) { IncludeSubdirectories = false, NotifyFilter = NotifyFilters.FileName })
+        {
+            watcher.Created += (s, e) => { if (e.Name == "probe.txt") seen.Set(); };
+            watcher.EnableRaisingEvents = true;
+            action();
+            File.WriteAllText(Path.Combine(core, "probe.txt"), "probe");
+            var result = seen.Wait(3000);
+            watcher.EnableRaisingEvents = false;
+            File.Delete(Path.Combine(core, "probe.txt"));
+            return result;
+        }
+    }
+
+    // A rollback can itself be cut short (editor killed, a file locked). Every point of the rollback is crashed once and
+    // the next load must still bring Packages/ back byte for byte.
+    private static void UndoCrashEverywhere()
+    {
+        var undoPoints = new List<string>();
+        var probe = NewManifestProject();
+        var failing = false;
+        PackageTransaction.FaultHook = p =>
+        {
+            if (failing) undoPoints.Add(p);
+            if (p == "before-manifest") { failing = true; throw new IOException("boom"); }
+        };
+        try { Throws<PackageInstallException>(() => PackageTransaction.Execute(probe, StandardItems(probe), Now), "rolled back", "probe"); }
+        finally { PackageTransaction.FaultHook = null; }
+        Require(undoPoints.Contains("undo:" + Core) && undoPoints.Any(p => p.StartsWith("restored:" + Core + "/", StringComparison.Ordinal)));
+
+        foreach (var point in undoPoints)
+        {
+            var project = NewManifestProject();
+            var before = Snapshot(project);
+            PackageTransaction.FaultHook = p =>
+            {
+                if (p == "before-manifest") throw new IOException("boom");
+                if (p == point) throw new TransactionCrash(p);
+            };
+            try { Throws<PackageInstallException>(() => PackageTransaction.Execute(project, StandardItems(project), Now), "could not finish", point); }
+            finally { PackageTransaction.FaultHook = null; }
+            Equal("applying", JournalState(project));
+            Require(PackageTransaction.Recover(project) != null);
+            Equal(before, Snapshot(project));
+            Equal("rolledback", JournalState(project));
+            Require(PackageTransaction.Recover(project) == null);
+        }
+    }
+
+    // Builds before the folder-keeping swap moved whole package folders; their unfinished journals cannot be replayed safely.
+    private static void OldJournalFormat()
+    {
+        var project = NewProject(true);
+        var before = Snapshot(project);
+        var journal = PackageTransaction.JournalPath(project);
+        Directory.CreateDirectory(Path.GetDirectoryName(journal));
+        var text = "{\"format\":1,\"state\":\"applying\",\"stageFolder\":\"\",\"manifestPath\":\"\",\"manifestBackup\":\"\",\"entries\":[{\"name\":\"" + Core
+            + "\",\"oldVersion\":\"0.1.15\",\"newVersion\":\"0.1.16\",\"target\":\"" + Path.Combine(project, "Packages", Core).Replace("\\", "\\\\")
+            + "\",\"staged\":\"" + Path.Combine(project, "Temp", "OnAirDeck", "stage-x", Core).Replace("\\", "\\\\")
+            + "\",\"backup\":\"" + Path.Combine(project, "Library", "OnAirDeck", "Backup", Core + "-0.1.15-x").Replace("\\", "\\\\") + "\"}]}";
+        File.WriteAllText(journal, text);
+        var message = PackageTransaction.Recover(project);
+        Require(message != null && message.Contains("older"));
+        Equal(before, Snapshot(project));
+        Require(!File.Exists(journal) && PackageTransaction.Recover(project) == null);
+
+        // A finished journal of the old format is history and changes nothing.
+        File.WriteAllText(journal, text.Replace("\"applying\"", "\"complete\""));
+        Require(PackageTransaction.Recover(project) == null && File.Exists(journal));
+    }
+
+    // Opens the staged add-on's file without delete sharing, the way a scanner does.
+    private static FileStream HoldStagedFile(string project)
+    {
+        var stage = Directory.GetDirectories(Path.Combine(project, "Temp", "OnAirDeck"), "stage-*").Single();
+        return new FileStream(Path.Combine(stage, Addon, "Editor", "B.cs"), FileMode.Open, FileAccess.Read, FileShare.Read);
     }
 
     private static void InterruptedBlocksNext()
@@ -458,26 +618,99 @@ internal static class PackageChecks
         Require(InstalledPackages.LegacyRefusal(NewProject(false), Core) == null);       // no folder, no refusal
     }
 
+    // Each case starts from a valid format-2 journal and changes one field, so a refusal can only come from that field.
     private static void JournalTamper()
     {
-        var project = NewProject(true);
-        var outside = Path.Combine(project, "Assets", "Precious");
-        Directory.CreateDirectory(outside);
-        File.WriteAllText(Path.Combine(outside, "keep.txt"), "keep");
-        var journal = PackageTransaction.JournalPath(project);
-        Directory.CreateDirectory(Path.GetDirectoryName(journal));
-        var text = "{\"format\":1,\"state\":\"applying\",\"stageFolder\":\"\",\"manifestPath\":\"\",\"manifestBackup\":\"\",\"entries\":[{\"name\":\"x.y\",\"oldVersion\":\"1.0.0\",\"newVersion\":\"1.0.1\",\"target\":\""
-            + outside.Replace("\\", "\\\\") + "\",\"staged\":\"" + Path.Combine(project, "Temp", "OnAirDeck", "stage-x", "x.y").Replace("\\", "\\\\") + "\",\"backup\":\""
-            + Path.Combine(project, "Library", "OnAirDeck", "Backup", "x").Replace("\\", "\\\\") + "\"}]}";
-        File.WriteAllText(journal, text);
-        var message = PackageTransaction.Recover(project);
-        Require(message != null && message.Contains("could not be read"));
-        Require(File.Exists(Path.Combine(outside, "keep.txt")));                         // untouched
-        Require(!File.Exists(journal) && Directory.GetFiles(Path.GetDirectoryName(journal), "install-journal.json.unreadable-*").Length == 1);
-        Require(PackageTransaction.Recover(project) == null);
+        var valid = NewProject(true);
+        WriteJournal(valid, new Dictionary<string, string>());
+        var recovered = PackageTransaction.Recover(valid);
+        Require(recovered != null && recovered.Contains("rolled back"));   // the untouched fixture is accepted
 
-        File.WriteAllText(journal, "garbage");
-        Require(PackageTransaction.Recover(project).Contains("could not be read"));
+        var cases = new[]
+        {
+            new { Field = "target", Value = "OUTSIDE", Reason = "target outside Packages" },
+            new { Field = "staged", Value = "OUTSIDE", Reason = "staged folder outside" },
+            new { Field = "backup", Value = "OUTSIDE", Reason = "backup outside" },
+            new { Field = "name", Value = "OUTSIDE", Reason = "not a valid package name" },
+            new { Field = "stageFolder", Value = "\"\"", Reason = "no stage folder" },
+            new { Field = "phase", Value = (string)null, Reason = "no phase" },
+            new { Field = "phase", Value = "null", Reason = "no phase" },
+            new { Field = "phase", Value = "3", Reason = "no phase" },
+            new { Field = "phase", Value = "\"sideways\"", Reason = "unknown phase" }
+        };
+        foreach (var c in cases)
+        {
+            var project = NewProject(true);
+            var outside = Path.Combine(project, "Assets", "Precious");
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(outside, "keep.txt"), "keep");
+            var before = Snapshot(project);
+            var journal = WriteJournal(project, new Dictionary<string, string> { { c.Field, c.Value == "OUTSIDE" ? Json(outside) : c.Value } });
+            var message = PackageTransaction.Recover(project);
+            if (message == null || !message.Contains("could not be read") || !message.Contains(c.Reason))
+                throw new Exception(c.Field + "=" + (c.Value ?? "(missing)") + ": expected \"" + c.Reason + "\", got " + (message ?? "null"));
+            Require(File.Exists(Path.Combine(outside, "keep.txt")) && Directory.GetFileSystemEntries(outside).Length == 1);   // untouched
+            Equal(before, Snapshot(project));
+            Require(!File.Exists(journal) && Directory.GetFiles(Path.GetDirectoryName(journal), "install-journal.json.unreadable-*").Length == 1);
+            Require(PackageTransaction.Recover(project) == null);
+        }
+
+        var garbage = NewProject(true);
+        File.WriteAllText(WriteJournal(garbage, new Dictionary<string, string>()), "garbage");
+        Require(PackageTransaction.Recover(garbage).Contains("could not be read"));
+    }
+
+    // Old-out is journaled before the first move, so "no phase" with files in the backup can only be a wrong journal.
+    private static void JournalContradiction()
+    {
+        var project = NewProject(true);
+        var backup = Path.Combine(project, "Library", "OnAirDeck", "Backup", Core + "-0.1.15-x");
+        Directory.CreateDirectory(backup);
+        File.WriteAllText(Path.Combine(backup, "moved.txt"), "moved");
+        var before = Snapshot(project);
+        WriteJournal(project, new Dictionary<string, string> { { "phase", "\"\"" } });
+        Throws<PackageInstallException>(() => PackageTransaction.Recover(project), "by hand", "recovery");
+        Equal("applying", JournalState(project));
+        Equal(before, Snapshot(project));
+        Require(File.Exists(Path.Combine(backup, "moved.txt")));
+        Throws<PackageInstallException>(() => PackageTransaction.Execute(project, StandardItems(project), Now), "by hand", "next install");
+        Equal("applying", JournalState(project));
+    }
+
+    /// <summary>
+    /// Writes an unfinished format-2 journal for the core (phase old-out, nothing moved yet). Each override replaces one
+    /// field with raw JSON; a null value leaves the field out. Returns the journal path.
+    /// </summary>
+    private static string WriteJournal(string project, Dictionary<string, string> overrides)
+    {
+        var stage = Path.Combine(project, "Temp", "OnAirDeck", "stage-x");
+        var top = new Dictionary<string, string>
+        {
+            { "format", "2" }, { "state", "\"applying\"" }, { "stageFolder", Json(stage) }, { "manifestPath", "\"\"" }, { "manifestBackup", "\"\"" }
+        };
+        var entry = new Dictionary<string, string>
+        {
+            { "name", "\"" + Core + "\"" }, { "oldVersion", "\"0.1.15\"" }, { "newVersion", "\"0.1.16\"" },
+            { "target", Json(Path.Combine(project, "Packages", Core)) }, { "staged", Json(Path.Combine(stage, Core)) },
+            { "backup", Json(Path.Combine(project, "Library", "OnAirDeck", "Backup", Core + "-0.1.15-x")) }, { "phase", "\"old-out\"" }
+        };
+        foreach (var pair in overrides)
+        {
+            var fields = top.ContainsKey(pair.Key) ? top : entry;
+            if (pair.Value == null) fields.Remove(pair.Key);
+            else fields[pair.Key] = pair.Value;
+        }
+        Func<Dictionary<string, string>, string> obj = d => "{" + string.Join(",", d.Select(p => "\"" + p.Key + "\":" + p.Value).ToArray()) + "}";
+        var text = obj(top).TrimEnd('}') + ",\"entries\":[" + obj(entry) + "]}";
+        var path = PackageTransaction.JournalPath(project);
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        File.WriteAllText(path, text);
+        return path;
+    }
+
+    private static string Json(string path)
+    {
+        return "\"" + path.Replace("\\", "\\\\") + "\"";
     }
 
     private static void Mismatches()
