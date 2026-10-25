@@ -14,6 +14,8 @@ namespace OnAirDeck.UnityManager
         public string Version = "";
         /// <summary>Exact versions only (see <see cref="PackageVersion.IsExact"/>), in declaration order.</summary>
         public readonly List<KeyValuePair<string, string>> VpmDependencies = new List<KeyValuePair<string, string>>();
+        /// <summary>The same dependencies with the value exactly as package.json wrote it ("=0.1.16" or "0.1.16"), same order.</summary>
+        public readonly List<KeyValuePair<string, string>> VpmDependenciesRaw = new List<KeyValuePair<string, string>>();
     }
 
     /// <summary>
@@ -102,13 +104,15 @@ namespace OnAirDeck.UnityManager
                 if (map == null) throw new PackageInstallException("package.json vpmDependencies must be an object.");
                 foreach (var pair in map)
                 {
-                    var version = pair.Value as string;
-                    if (!PackageVersion.IsExact(version))
+                    var raw = pair.Value as string;
+                    string version;
+                    if (!PackageVersion.TryParsePin(raw, out version))
                     {
                         if (!strict) continue;
-                        throw new PackageInstallException("Dependency " + pair.Key + " must name an exact version, not \"" + (version ?? "") + "\".");
+                        throw new PackageInstallException("Dependency " + pair.Key + " must name an exact version, not \"" + (raw ?? "") + "\".");
                     }
                     manifest.VpmDependencies.Add(new KeyValuePair<string, string>(pair.Key, version));
+                    manifest.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(pair.Key, raw));
                 }
             }
             return manifest;

@@ -57,13 +57,13 @@ namespace OnAirDeck.UnityManager
         {
             object current;
             var hasKey = entry.TryGetValue("dependencies", out current);
-            if (!hasKey && package.VpmDependencies.Count == 0) return false;
+            if (!hasKey && package.VpmDependenciesRaw.Count == 0) return false;
 
             var existing = current as Dictionary<string, object>;
-            if (existing != null && existing.Count == package.VpmDependencies.Count)
+            if (existing != null && existing.Count == package.VpmDependenciesRaw.Count)
             {
                 var same = true;
-                foreach (var dependency in package.VpmDependencies)
+                foreach (var dependency in package.VpmDependenciesRaw)
                 {
                     object old;
                     if (!existing.TryGetValue(dependency.Key, out old) || (old as string) != dependency.Value) { same = false; break; }
@@ -72,7 +72,8 @@ namespace OnAirDeck.UnityManager
             }
 
             var desired = new Dictionary<string, object>(System.StringComparer.Ordinal);
-            foreach (var dependency in package.VpmDependencies) desired[dependency.Key] = dependency.Value;
+            // Copied exactly as package.json has it.
+            foreach (var dependency in package.VpmDependenciesRaw) desired[dependency.Key] = dependency.Value;
             entry["dependencies"] = desired;
             return true;
         }

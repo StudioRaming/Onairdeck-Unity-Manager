@@ -125,7 +125,7 @@ internal static class PackageChecks
 
     private static void ZipDependencies()
     {
-        foreach (var range in new[] { "^0.1.16", "~0.1.16", ">=0.1.16", "0.1", "*", "latest" })
+        foreach (var range in new[] { "^0.1.16", "~0.1.16", ">=0.1.16", "0.1", "*", "latest", "==0.1.16", "= 0.1.16", " 0.1.16", "0.1.16 ", "=^0.1.16", "=", "= ", "0.1.16 - 0.2.0", "=0.1.x" })
         {
             var zip = MakePackageZip(NewDir(), Addon, "0.1.16", new[] { Core + "=" + range }, "Editor/B.cs");
             Throws<PackageInstallException>(() => PackageZip.Validate(zip, Addon, "0.1.16"), "exact version", range);
@@ -135,6 +135,17 @@ internal static class PackageChecks
         Equal(1, manifest.VpmDependencies.Count);
         Equal(Core, manifest.VpmDependencies[0].Key);
         Equal("0.1.16", manifest.VpmDependencies[0].Value);
+
+        // Both "=X" and bare "X" pin X; the raw spelling is kept for vpm-manifest.json.
+        var pinned = PackageZip.Validate(MakePackageZip(NewDir(), Addon, "0.1.16", new[] { Core + "==0.1.16", "com.other.pkg=1.2.3-beta.1" }, "Editor/B.cs"), Addon, "0.1.16");
+        Equal("0.1.16", pinned.VpmDependencies[0].Value);
+        Equal("=0.1.16", pinned.VpmDependenciesRaw[0].Value);
+        Equal("1.2.3-beta.1", pinned.VpmDependencies[1].Value);
+        Equal("1.2.3-beta.1", pinned.VpmDependenciesRaw[1].Value);
+        string exact;
+        Require(PackageVersion.TryParsePin("=1.0.0", out exact) && exact == "1.0.0");
+        Require(PackageVersion.TryParsePin("1.0.0", out exact) && exact == "1.0.0");
+        Require(!PackageVersion.TryParsePin("==1.0.0", out exact) && !PackageVersion.TryParsePin(">=1.0.0", out exact));
 
         // An installed package the Manager did not validate may carry a range: read leniently, range skipped.
         var lenient = PackageZip.ParseManifest(PackageJson(Addon, "0.1.1", new[] { Core + "=^0.1.0" }), false);
@@ -371,7 +382,7 @@ internal static class PackageChecks
         Equal("0.1.16", (string)Obj(locked, Core)["version"]);
         Equal(5L, Obj(locked, Core)["extra"]);
         Equal("0.1.16", (string)Obj(locked, Addon)["version"]);
-        Equal("0.1.16", (string)Obj(Obj(locked, Addon), "dependencies")[Core]);         // dependencies follow vpmDependencies
+        Equal("=0.1.16", (string)Obj(Obj(locked, Addon), "dependencies")[Core]);        // copied exactly as package.json spells it
         Require(!deps.ContainsKey(Addon));                                              // never added to "dependencies"
 
         // Everything else is untouched, including values JsonUtility could not carry.
@@ -557,7 +568,7 @@ internal static class PackageChecks
         return new List<InstallItem>
         {
             new InstallItem { Name = Core, Version = "0.1.16", ZipPath = MakePackageZip(dir, Core, "0.1.16", null, "Runtime/A.cs", "Runtime/A.cs.meta") },
-            new InstallItem { Name = Addon, Version = "0.1.16", ZipPath = MakePackageZip(dir, Addon, "0.1.16", new[] { Core + "=0.1.16" }, "Editor/B.cs") }
+            new InstallItem { Name = Addon, Version = "0.1.16", ZipPath = MakePackageZip(dir, Addon, "0.1.16", new[] { Core + "==0.1.16" }, "Editor/B.cs") }
         };
     }
 
@@ -574,7 +585,7 @@ internal static class PackageChecks
         if (deps != null)
         {
             sb.Append(",\"vpmDependencies\":{");
-            sb.Append(string.Join(",", deps.Select(d => "\"" + d.Split('=')[0] + "\":\"" + d.Split('=')[1] + "\"").ToArray()));
+            sb.Append(string.Join(",", deps.Select(d => "\"" + d.Substring(0, d.IndexOf('=')) + "\":\"" + d.Substring(d.IndexOf('=') + 1) + "\"").ToArray()));
             sb.Append("}");
         }
         return sb.Append("}").ToString();

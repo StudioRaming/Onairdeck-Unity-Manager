@@ -14,6 +14,20 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(version) && Exact.IsMatch(version);
         }
 
+        /// <summary>
+        /// A vpmDependencies value that pins one version: "X" or "=X" (one leading "="). Anything else
+        /// (ranges, wildcards, spaces) is refused. <paramref name="exact"/> is X.
+        /// </summary>
+        public static bool TryParsePin(string raw, out string exact)
+        {
+            exact = null;
+            if (string.IsNullOrEmpty(raw)) return false;
+            var candidate = raw[0] == '=' ? raw.Substring(1) : raw;
+            if (!IsExact(candidate)) return false;
+            exact = candidate;
+            return true;
+        }
+
         /// <summary>Semver precedence. Prerelease sorts below the release; unparsable input sorts lowest.</summary>
         public static int Compare(string a, string b)
         {
