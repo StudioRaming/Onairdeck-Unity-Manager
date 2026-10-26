@@ -114,6 +114,12 @@ namespace OnAirDeck.UnityManager
             {
                 GUILayout.Space(SRMetrics.Space4);
                 SRGui.HelpBox(_message, Tone(_messageType));
+                // A result (an install report, for one) stays until replaced; let the user clear it once read.
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (ActionButton("Dismiss")) SetMessage(null, MessageType.None);
+                }
             }
 
             if (_session == null || _signingIn) GUILayout.FlexibleSpace();
@@ -344,7 +350,11 @@ namespace OnAirDeck.UnityManager
             }
             if (_purchases.Length == 0)
             {
-                SRGui.EmptyState("No purchases yet", "Assets you buy on OnAirDeck will appear here.", null, 120f);
+                // A license from a BOOTH claim lists its packages above but has no OnAirDeck order.
+                if (_packages != null && _packages.Count > 0)
+                    SRGui.EmptyState("No other downloads", "Your licensed packages are listed above.", null, 120f);
+                else
+                    SRGui.EmptyState("No purchases yet", "Assets you buy on OnAirDeck will appear here.", null, 120f);
                 return;
             }
 
