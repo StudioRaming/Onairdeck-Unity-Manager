@@ -205,7 +205,8 @@ namespace OnAirDeck.UnityManager
             if (!EditorUtility.DisplayDialog(
                     "Install " + version.package_name + " " + version.package_version,
                     "The current version, if any, is moved to Library/OnAirDeck/Backup. Packages it depends on are installed at the exact versions it names.\n\n"
-                    + "Downloading makes this purchase non-refundable, the same as downloading on onairdeck.com.",
+                    // A license can come from a BOOTH claim, where OnAirDeck's refund rule does not apply.
+                    + "If you bought it on onairdeck.com, the first download makes that purchase non-refundable, the same as downloading on the website.",
                     "Install", "Cancel"))
             {
                 return;
