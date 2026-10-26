@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using OnAirDeck.UnityManager.Theme;
 using UnityEditor;
 using UnityEngine;
 
@@ -101,15 +102,15 @@ namespace OnAirDeck.UnityManager
             if (_packages.Count == 0)
             {
                 if (_focusPackage.Length > 0)
-                    EditorGUILayout.HelpBox("OnAirDeck lists no installable version of " + _focusPackage + " for this account.", MessageType.Info);
+                    SRGui.HelpBox("OnAirDeck lists no installable version of " + _focusPackage + " for this account.", SRTone.Info);
                 return;
             }
 
-            GUILayout.Label("Packages", EditorStyles.boldLabel);
+            GUILayout.Label("Packages", SRStyles.Section);
+            GUILayout.Space(SRMetrics.Space4);
             if (_installingPackage)
             {
-                var rect = EditorGUILayout.GetControlRect(false, 18);
-                EditorGUI.ProgressBar(rect, _packageProgress, _packageProgressLabel);
+                SRGui.ProgressBar(_packageProgress, _packageProgressLabel);
                 if (ActionButton("Cancel", true)) CancelPackageInstall();
             }
 
@@ -131,15 +132,13 @@ namespace OnAirDeck.UnityManager
             bool matches;
             var target = InstalledPackages.ChooseTarget(versions, mismatch.Installed, out matches);
 
-            EditorGUILayout.HelpBox(
-                mismatch.Package + " " + mismatch.Version + " needs " + mismatch.Dependency + " " + mismatch.Required + ", but " + have + ".",
-                MessageType.Warning);
+            SRGui.HelpBox(mismatch.Package + " " + mismatch.Version + " needs " + mismatch.Dependency + " " + mismatch.Required + ", but " + have + ".", SRTone.Warning);
             if (target == null) return;
             var label = matches
                 ? "Install " + mismatch.Package + " " + target + " to match " + mismatch.Dependency + " " + mismatch.Installed
                 : "Install " + mismatch.Package + " " + target + " with the exact " + mismatch.Dependency + " version it requires";
             GUI.enabled = !PackageBusy;
-            if (ActionButton(label, true)) InstallPackage(group.Versions.Find(v => v.package_version == target));
+            if (ActionButton(label, true, true)) InstallPackage(group.Versions.Find(v => v.package_version == target));
             GUI.enabled = true;
             EditorGUILayout.Space();
         }
@@ -148,23 +147,27 @@ namespace OnAirDeck.UnityManager
         {
             var newest = group.Versions[0];
             var focused = group.Name == _focusPackage;
-            var previous = GUI.backgroundColor;
-            if (focused) GUI.backgroundColor = new Color(1f, 0.92f, 0.55f);
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            var upToDate = group.Installed.Length > 0 && PackageVersion.Compare(newest.package_version, group.Installed) <= 0;
+            SRGui.BeginCard();
             {
-                GUI.backgroundColor = previous;
-                GUILayout.Label(group.Name, _purchaseTitleStyle, GUILayout.ExpandWidth(true));
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label(group.Name, _purchaseTitleStyle, GUILayout.ExpandWidth(true));
+                    if (focused) SRGui.BadgeLayout("Requested", SRTone.Brand);
+                    if (group.Installed.Length == 0) SRGui.BadgeLayout("Not installed", SRTone.Neutral);
+                    else if (upToDate) SRGui.BadgeLayout("Up to date", SRTone.Success);
+                    else SRGui.BadgeLayout("Update available", SRTone.Warning);
+                }
                 var installed = group.Installed.Length > 0 ? group.Installed : "not installed";
                 GUILayout.Label("Installed: " + installed + "  ·  Newest: " + newest.package_version, _detailsStyle, GUILayout.ExpandWidth(true));
                 if (focused) GUILayout.Label("Requested by another package.", _detailsStyle, GUILayout.ExpandWidth(true));
 
-                var upToDate = group.Installed.Length > 0 && PackageVersion.Compare(newest.package_version, group.Installed) <= 0;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.FlexibleSpace();
                     GUI.enabled = !PackageBusy && !upToDate;
                     var label = group.Installed.Length == 0 ? "Install " + newest.package_version : upToDate ? "Up to date" : "Update to " + newest.package_version;
-                    if (ActionButton(label)) InstallPackage(newest);
+                    if (ActionButton(label, false, !upToDate)) InstallPackage(newest);
                     GUI.enabled = true;
                 }
 
@@ -182,7 +185,7 @@ namespace OnAirDeck.UnityManager
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Label("Other version", _detailsStyle, GUILayout.ExpandWidth(false));
-                        index = EditorGUILayout.Popup(index, labels);
+                        index = SRGui.Popup(index, labels, GUILayout.ExpandWidth(true));
                         _pickedVersion[group.Name] = index;
                         var picked = group.Versions[index];
                         GUI.enabled = !PackageBusy && picked.package_version != group.Installed;
@@ -194,7 +197,8 @@ namespace OnAirDeck.UnityManager
                         GUILayout.Label(notes.Length > 300 ? notes.Substring(0, 300) + "…" : notes, _detailsStyle, GUILayout.ExpandWidth(true));
                 }
             }
-            GUI.backgroundColor = previous;
+            SRGui.EndCard();
+            GUILayout.Space(SRMetrics.Space4);
         }
 
         // ---------- actions ----------

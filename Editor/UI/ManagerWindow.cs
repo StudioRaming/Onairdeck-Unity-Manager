@@ -1,11 +1,14 @@
 using System;
 using System.Threading;
+using OnAirDeck.UnityManager.Theme;
 using UnityEditor;
 using UnityEngine;
 
 namespace OnAirDeck.UnityManager
 {
     /// <summary>Window ▸ OnAirDeck Unity Manager — sign in, purchases, download into the project.</summary>
+    /// <remarks>Drawn with the StudioRaming Editor Theme (Editor/UI/Theme): every colour comes from SRTheme.P, so the
+    /// window matches MingPainter / MaskMaker on both editor skins. Layout stays GUILayout-based.</remarks>
     internal sealed partial class ManagerWindow : EditorWindow
     {
         // Unity serializes an EditorWindow's private fields across script reloads. Everything that
@@ -37,13 +40,14 @@ namespace OnAirDeck.UnityManager
 
         private GUIStyle _purchaseTitleStyle;
         private GUIStyle _detailsStyle;
+        private bool _stylesDark;
 
         [MenuItem("Window/OnAirDeck Unity Manager")]
         public static void Open()
         {
             var window = GetWindow<ManagerWindow>();
             window.titleContent = new GUIContent("OnAirDeck");
-            window.minSize = new Vector2(380, 360);
+            window.minSize = new Vector2(SRMetrics.InspectorMin + 105f, 360);
             window.Show();
         }
 
@@ -55,6 +59,7 @@ namespace OnAirDeck.UnityManager
             _licensesRefreshed = false;
             _purchaseTitleStyle = null;
             _detailsStyle = null;
+            wantsMouseMove = true; // themed buttons and rows draw hover states
             OnEnablePackages();
             CheckForUpdate();
         }
@@ -76,23 +81,30 @@ namespace OnAirDeck.UnityManager
 
         private void OnGUI()
         {
-            // Create styles once, after Unity has made the current editor skin available.
-            if (_purchaseTitleStyle == null)
-                _purchaseTitleStyle = new GUIStyle(EditorStyles.boldLabel) { wordWrap = true };
-            if (_detailsStyle == null)
-                _detailsStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+            // Text styles come from the theme (skin-aware); rebuilt when the editor skin changes.
+            if (_purchaseTitleStyle == null || _stylesDark != SRTheme.Dark)
+            {
+                _stylesDark = SRTheme.Dark;
+                _purchaseTitleStyle = new GUIStyle(SRStyles.Strong) { wordWrap = true };
+                _detailsStyle = new GUIStyle(SRStyles.Small) { wordWrap = true };
+            }
 
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("OnAirDeck Unity Manager", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Download the assets you bought on OnAirDeck.", EditorStyles.wordWrappedMiniLabel);
-            EditorGUILayout.Space();
+            SRGui.WindowBackground(this);
+            Rect tools = SRGui.Header(SRProduct.OnAirDeck, "O", "OnAirDeck Unity Manager", "Download the assets you bought on OnAirDeck.");
+            if (SRGui.Button(new Rect(tools.xMax - 110f, tools.y, 110f, tools.height), new GUIContent("onairdeck.com", OnAirDeckConfig.WebsiteUrl), SRButtonKind.Ghost, SRButtonSize.Default))
+                Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
+
+            GUILayout.Space(SRMetrics.Space8);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(SRMetrics.Space12);
+            EditorGUILayout.BeginVertical();
 
             DrawUpdateBanner();
 
             if (_update != null && _update.MustUpdate)
             {
                 // Below the server's minimum: the endpoints may refuse this version, so stop here.
-                EditorGUILayout.HelpBox("This version of the Manager is no longer supported. Update to continue.", MessageType.Warning);
+                SRGui.HelpBox("This version of the Manager is no longer supported. Update to continue.", SRTone.Warning);
             }
             else if (_signingIn) DrawSigningIn();
             else if (_session != null) DrawSignedIn();
@@ -100,8 +112,8 @@ namespace OnAirDeck.UnityManager
 
             if (!string.IsNullOrEmpty(_message))
             {
-                EditorGUILayout.Space();
-                EditorGUILayout.HelpBox(_message, _messageType);
+                GUILayout.Space(SRMetrics.Space4);
+                SRGui.HelpBox(_message, Tone(_messageType));
                 // A result (an install report, for one) stays until replaced; let the user clear it once read.
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -110,39 +122,32 @@ namespace OnAirDeck.UnityManager
                 }
             }
 
-            // Set the website link apart, so it doesn't read as the next step of the message above it.
             if (_session == null || _signingIn) GUILayout.FlexibleSpace();
-            else EditorGUILayout.Space();
-            var separator = GUILayoutUtility.GetRect(1f, 1f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(separator, new Color(0.5f, 0.5f, 0.5f, 0.35f));
-            if (ActionButton("Open onairdeck.com", true))
-                Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
+            GUILayout.Space(SRMetrics.Space12);
+            EditorGUILayout.EndVertical();
+            GUILayout.Space(SRMetrics.Space12);
+            EditorGUILayout.EndHorizontal();
         }
 
-        private static GUIStyle _wrappedButton;
-
-        private static bool ActionButton(string label, bool expand = false)
+        /// <summary>Unity's message types mapped onto the theme's tones.</summary>
+        private static SRTone Tone(MessageType type)
         {
-            var style = EditorStyles.miniButton;
-            var height = Mathf.Max(24f, EditorGUIUtility.singleLineHeight + 6f);
-            if (expand)
+            switch (type)
             {
-                // Full-width buttons wrap: a package name pair in the narrowest window was clipped at both ends.
-                // One line is padded to the usual height, so a wrapped label grows the button line by line
-                // (a forced MinHeight would also cap it there).
-                if (_wrappedButton == null)
-                {
-                    _wrappedButton = new GUIStyle(style) { wordWrap = true, fixedHeight = 0f };
-                    var extra = Mathf.CeilToInt(Mathf.Max(0f, height - _wrappedButton.CalcHeight(new GUIContent("A"), 1000f)));
-                    var pad = _wrappedButton.padding;
-                    _wrappedButton.padding = new RectOffset(pad.left, pad.right, pad.top + extra / 2, pad.bottom + extra - extra / 2);
-                }
-                return GUILayout.Button(label, _wrappedButton);
+                case MessageType.Info: return SRTone.Info;
+                case MessageType.Warning: return SRTone.Warning;
+                case MessageType.Error: return SRTone.Danger;
+                default: return SRTone.Neutral;
             }
+        }
 
-            // Measure the same style that draws the text; fixed pixel widths clip longer states.
-            var width = Mathf.Ceil(style.CalcSize(new GUIContent(label)).x) + 12f;
-            return GUILayout.Button(label, style, GUILayout.Width(width), GUILayout.Height(height));
+        /// <summary>Themed button. Primary = the one action the row/screen is about; the rest are secondary.</summary>
+        private static bool ActionButton(string label, bool expand = false, bool primary = false)
+        {
+            var kind = primary ? SRButtonKind.Primary : SRButtonKind.Secondary;
+            if (expand) return SRGui.Button(new GUIContent(label), kind, SRButtonSize.Large, GUILayout.ExpandWidth(true), GUILayout.Height(SRMetrics.ButtonLarge));
+            // The theme measures the label with the style that draws it, so longer states never clip.
+            return SRGui.Button(new GUIContent(label), kind, SRButtonSize.Large);
         }
 
         // ---------- self-update ----------
@@ -167,12 +172,12 @@ namespace OnAirDeck.UnityManager
             var latest = _update.Response.latest;
             var text = "Version " + latest.version + " is available (you have " + _update.CurrentVersion + ").";
             if (!string.IsNullOrEmpty(latest.notes)) text += "\n" + latest.notes;
-            EditorGUILayout.HelpBox(text, _update.MustUpdate ? MessageType.Warning : MessageType.Info);
+            SRGui.HelpBox(text, _update.MustUpdate ? SRTone.Warning : SRTone.Info);
             using (new EditorGUILayout.HorizontalScope())
             {
                 var updating = _applyingUpdate != null || _applyingSelfUpdate;
                 GUI.enabled = _update.CanApply && !updating && !_installingPackage;
-                if (ActionButton(updating ? "Updating…" : "Update")) ApplyUpdate();
+                if (ActionButton(updating ? "Updating…" : "Update", false, true)) ApplyUpdate();
                 GUI.enabled = true;
                 if (!_update.CanApply && !string.IsNullOrEmpty(_update.ApplyBlockedReason))
                     GUILayout.Label(_update.ApplyBlockedReason, _detailsStyle, GUILayout.ExpandWidth(true));
@@ -209,15 +214,13 @@ namespace OnAirDeck.UnityManager
 
         private void DrawSignedOut()
         {
-            EditorGUILayout.HelpBox("Sign in with your OnAirDeck account to see your purchases.", MessageType.Info);
-            if (ActionButton("Sign in with browser", true)) SignIn();
+            SRGui.HelpBox("Sign in with your OnAirDeck account to see your purchases.", SRTone.Info);
+            if (ActionButton("Sign in with browser", true, true)) SignIn();
         }
 
         private void DrawSigningIn()
         {
-            EditorGUILayout.HelpBox(
-                "Approve the request in your browser, then come back to Unity.\nWaiting up to 3 minutes…",
-                MessageType.Info);
+            SRGui.HelpBox("Approve the request in your browser, then come back to Unity.\nWaiting up to 3 minutes…", SRTone.Info);
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUI.enabled = !string.IsNullOrEmpty(_signInUrl);
@@ -232,7 +235,7 @@ namespace OnAirDeck.UnityManager
             using (new EditorGUILayout.HorizontalScope())
             {
                 var who = string.IsNullOrEmpty(_session.email) ? "your OnAirDeck account" : _session.email;
-                GUILayout.Label("Signed in as " + who, _detailsStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Label("Signed in as " + who, SRStyles.Muted, GUILayout.ExpandWidth(true));
                 GUI.enabled = !_signingOut && _downloadingItemId == null;
                 if (ActionButton(_signingOut ? "Signing out…" : "Sign out")) SignOut();
                 GUI.enabled = true;
@@ -325,8 +328,10 @@ namespace OnAirDeck.UnityManager
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Purchases", EditorStyles.boldLabel, GUILayout.ExpandWidth(false));
-                _search = EditorGUILayout.TextField(_search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(40));
+                GUILayout.Label("Purchases", SRStyles.Section, GUILayout.ExpandWidth(false));
+                GUILayout.Space(SRMetrics.Space8);
+                _search = SRGui.SearchField(_search, "Search purchases", GUILayout.MinWidth(40));
+                GUILayout.Space(SRMetrics.Space4);
                 GUI.enabled = !_loadingPurchases && _downloadingItemId == null;
                 if (ActionButton(_loadingPurchases ? "Loading…" : "Refresh")) LoadPurchases();
                 GUI.enabled = true;
@@ -334,23 +339,22 @@ namespace OnAirDeck.UnityManager
 
             if (_downloadingItemId != null)
             {
-                var rect = EditorGUILayout.GetControlRect(false, 18);
-                EditorGUI.ProgressBar(rect, _progress, _progressLabel);
+                SRGui.ProgressBar(_progress, _progressLabel);
                 if (ActionButton("Cancel download", true)) CancelDownload();
             }
 
             if (_purchases == null)
             {
-                EditorGUILayout.HelpBox(_loadingPurchases ? "Loading your purchases…" : "Could not load purchases.", MessageType.None);
+                SRGui.HelpBox(_loadingPurchases ? "Loading your purchases…" : "Could not load purchases.", _loadingPurchases ? SRTone.Neutral : SRTone.Danger);
                 return;
             }
             if (_purchases.Length == 0)
             {
                 // A license from a BOOTH claim lists its packages above but has no OnAirDeck order.
-                var text = _packages != null && _packages.Count > 0
-                    ? "No other downloads. Your licensed packages are listed above."
-                    : "No purchases yet. Assets you buy on OnAirDeck will appear here.";
-                EditorGUILayout.HelpBox(text, MessageType.Info);
+                if (_packages != null && _packages.Count > 0)
+                    SRGui.EmptyState("No other downloads", "Your licensed packages are listed above.", null, 120f);
+                else
+                    SRGui.EmptyState("No purchases yet", "Assets you buy on OnAirDeck will appear here.", null, 120f);
                 return;
             }
 
@@ -363,21 +367,24 @@ namespace OnAirDeck.UnityManager
                 shown++;
                 DrawPurchaseRow(item);
             }
-            if (shown == 0) EditorGUILayout.LabelField("No purchases match \"" + filter + "\".", EditorStyles.centeredGreyMiniLabel);
+            if (shown == 0) GUILayout.Label("No purchases match \"" + filter + "\".", SRStyles.Center);
             EditorGUILayout.EndScrollView();
         }
 
         private void DrawPurchaseRow(PurchaseItem item)
         {
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            SRGui.BeginCard();
             {
-                GUILayout.Label(item.name ?? "", _purchaseTitleStyle, GUILayout.ExpandWidth(true));
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label(item.name ?? "", _purchaseTitleStyle, GUILayout.ExpandWidth(true));
+                    if (item.update_available) SRGui.BadgeLayout("Update available", SRTone.Warning);
+                    else if (item.downloaded) SRGui.BadgeLayout("Downloaded", SRTone.Success);
+                }
 
                 var details = item.date ?? "";
                 if (item.files != null && item.files.Length > 0)
                     details += "  ·  " + item.files.Length + " file" + (item.files.Length == 1 ? "" : "s");
-                if (item.update_available) details += "  ·  Update available";
-                else if (item.downloaded) details += "  ·  Downloaded";
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -388,15 +395,17 @@ namespace OnAirDeck.UnityManager
                         var thisOne = _downloadingItemId == item.item_id;
                         GUI.enabled = !busy;
                         var label = thisOne ? "Downloading…" : item.downloaded ? "Download again" : "Download";
-                        if (ActionButton(label)) Download(item);
+                        if (ActionButton(label, false, !item.downloaded)) Download(item);
                         GUI.enabled = true;
                     }
                     else
                     {
-                        GUILayout.Label("Not available in Unity", EditorStyles.miniLabel, GUILayout.ExpandWidth(false));
+                        GUILayout.Label("Not available in Unity", SRStyles.Mini, GUILayout.ExpandWidth(false));
                     }
                 }
             }
+            SRGui.EndCard();
+            GUILayout.Space(SRMetrics.Space4);
         }
 
         private async void LoadPurchases()
