@@ -48,12 +48,20 @@ namespace OnAirDeck.UnityManager
         /// <summary>Every purchased line item, newest first (server caps at 50).</summary>
         public static async Task<PurchaseItem[]> GetPurchasesAsync(string sessionToken)
         {
+            return (await GetPurchasesAndLicensesAsync(sessionToken)).purchases;
+        }
+
+        /// <summary>Purchases plus the seller licenses (with their versions) the account may download. Arrays are never null.</summary>
+        public static async Task<PurchasesResponse> GetPurchasesAndLicensesAsync(string sessionToken)
+        {
             using (var request = Get("plugin-purchases?client=" + OnAirDeckConfig.ClientId, sessionToken))
             {
                 await request.SendAsync();
                 ThrowIfFailed(request, "Loading purchases");
-                var response = JsonUtility.FromJson<PurchasesResponse>(request.downloadHandler.text);
-                return response != null && response.purchases != null ? response.purchases : new PurchaseItem[0];
+                var response = JsonUtility.FromJson<PurchasesResponse>(request.downloadHandler.text) ?? new PurchasesResponse();
+                if (response.purchases == null) response.purchases = new PurchaseItem[0];
+                if (response.licenses == null) response.licenses = new LicenseEntry[0];
+                return response;
             }
         }
 
@@ -69,6 +77,23 @@ namespace OnAirDeck.UnityManager
                 request.timeout = 60;
                 await request.SendAsync();
                 ThrowIfFailed(request, "Preparing the download");
+                var response = JsonUtility.FromJson<DownloadResponse>(request.downloadHandler.text);
+                return response != null && response.files != null ? response.files : new DownloadFile[0];
+            }
+        }
+
+        /// <summary>
+        /// Presigned link (30 minutes) for one seller license version. Requires an active grant on its license;
+        /// the server records the download like an item download.
+        /// </summary>
+        public static async Task<DownloadFile[]> RequestLicenseVersionDownloadAsync(string sessionToken, string versionId)
+        {
+            var body = JsonUtility.ToJson(new LicenseDownloadRequest { license_version_id = versionId, client = OnAirDeckConfig.ClientId });
+            using (var request = Post("plugin-download", body, sessionToken))
+            {
+                request.timeout = 60;
+                await request.SendAsync();
+                ThrowIfFailed(request, "Preparing the package download");
                 var response = JsonUtility.FromJson<DownloadResponse>(request.downloadHandler.text);
                 return response != null && response.files != null ? response.files : new DownloadFile[0];
             }
@@ -103,6 +128,20 @@ namespace OnAirDeck.UnityManager
                 var response = JsonUtility.FromJson<VersionResponse>(request.downloadHandler.text);
                 if (response == null) throw new Exception("Update check failed: empty response.");
                 return response;
+            }
+        }
+
+        /// <summary>Plain GET of a public text file (a VPM listing), as a string. HTTPS only.</summary>
+        public static async Task<string> GetTextAsync(string url)
+        {
+            PackageDownloadChecks.RequireHttps(url);
+            using (var request = UnityWebRequest.Get(url))
+            {
+                request.timeout = TimeoutSeconds;
+                request.SetRequestHeader("Accept", "application/json");
+                await request.SendAsync();
+                if (!request.Succeeded()) throw new Exception("Loading " + url + " failed: " + request.Describe());
+                return request.downloadHandler.text;
             }
         }
 

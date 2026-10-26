@@ -54,6 +54,7 @@ namespace OnAirDeck.UnityManager
     internal class VersionResponse
     {
         public string client;
+        public string download_url;   // zip for Git-free installs, "" when the release has none (latest.download_url carries the same value)
         public ReleaseInfo latest;    // JsonUtility leaves a blank instance when the server sends null: check latest.version
         public string min_supported_version;
         public bool update_available;

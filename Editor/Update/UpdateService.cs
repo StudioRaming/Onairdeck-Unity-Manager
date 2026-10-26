@@ -15,6 +15,10 @@ namespace OnAirDeck.UnityManager
         public VersionResponse Response;   // null when the check failed
         public bool CanApply;              // installed from git/registry → Client.Add(git_url) switches to the new tag
         public string ApplyBlockedReason;  // why the Update button is disabled
+        public bool UseEmbedded;           // embedded install + a download_url: update by replacing the package folder (PackageInstallService)
+        public string PackageName;
+        public string PackageFolder;
+        public string DownloadUrl = "";
 
         public bool HasLatest
         {
@@ -66,9 +70,23 @@ namespace OnAirDeck.UnityManager
                 var info = PackageInfo.FindForAssembly(typeof(UpdateService).Assembly);
                 var source = info != null ? info.source : PackageSource.Unknown;
                 var hasGitUrl = state.HasLatest && !string.IsNullOrEmpty(state.Response.latest.git_url);
-                state.CanApply = hasGitUrl && (source == PackageSource.Git || source == PackageSource.Registry);
-                if (!hasGitUrl) state.ApplyBlockedReason = "This release has no install URL yet.";
-                else if (!state.CanApply) state.ApplyBlockedReason = "Installed from disk (" + source + "); update your local copy instead.";
+                var downloadUrl = state.HasLatest ? (state.Response.latest.download_url ?? "") : "";
+                if (downloadUrl.Length == 0 && state.Response.download_url != null) downloadUrl = state.Response.download_url;
+                if (source == PackageSource.Embedded && downloadUrl.Length > 0)
+                {
+                    // Installed without Git (the unitypackage or zip route): replace the package folder in place.
+                    state.UseEmbedded = true;
+                    state.CanApply = true;
+                    state.DownloadUrl = downloadUrl;
+                    state.PackageName = info.name;
+                    state.PackageFolder = info.resolvedPath;
+                }
+                else
+                {
+                    state.CanApply = hasGitUrl && (source == PackageSource.Git || source == PackageSource.Registry);
+                    if (!hasGitUrl) state.ApplyBlockedReason = "This release has no install URL yet.";
+                    else if (!state.CanApply) state.ApplyBlockedReason = "Installed from disk (" + source + "); update your local copy instead.";
+                }
                 SessionState.SetBool(CheckedKey, true);
                 Last = state;
             }
@@ -87,7 +105,7 @@ namespace OnAirDeck.UnityManager
         /// <summary>Switches the package to the published git URL. Package Manager does the rest (and reloads scripts).</summary>
         public static AddRequest Apply(UpdateState state)
         {
-            if (state == null || !state.CanApply) return null;
+            if (state == null || !state.CanApply || state.UseEmbedded) return null;
             return Client.Add(state.Response.latest.git_url);
         }
     }

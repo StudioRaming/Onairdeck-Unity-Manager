@@ -6,7 +6,7 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager
 {
     /// <summary>Window ▸ OnAirDeck Unity Manager — sign in, purchases, download into the project.</summary>
-    internal sealed class ManagerWindow : EditorWindow
+    internal sealed partial class ManagerWindow : EditorWindow
     {
         // Unity serializes an EditorWindow's private fields across script reloads. Everything that
         // describes in-flight work is marked [NonSerialized]: the awaiting code is gone after a
@@ -55,7 +55,14 @@ namespace OnAirDeck.UnityManager
             _licensesRefreshed = false;
             _purchaseTitleStyle = null;
             _detailsStyle = null;
+            OnEnablePackages();
             CheckForUpdate();
+        }
+
+        private void OnFocus()
+        {
+            // A package folder can change outside the window (VCC, another editor, a rollback).
+            RefreshInstalledPackages();
         }
 
         private void OnDisable()
@@ -63,6 +70,7 @@ namespace OnAirDeck.UnityManager
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelDownload();
+            CancelPackageInstall();
             EditorApplication.update -= PollApplyingUpdate;
         }
 
@@ -94,18 +102,43 @@ namespace OnAirDeck.UnityManager
             {
                 EditorGUILayout.Space();
                 EditorGUILayout.HelpBox(_message, _messageType);
+                // A result (an install report, for one) stays until replaced; let the user clear it once read.
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (ActionButton("Dismiss")) SetMessage(null, MessageType.None);
+                }
             }
 
+            // Set the website link apart, so it doesn't read as the next step of the message above it.
             if (_session == null || _signingIn) GUILayout.FlexibleSpace();
+            else EditorGUILayout.Space();
+            var separator = GUILayoutUtility.GetRect(1f, 1f, GUILayout.ExpandWidth(true));
+            EditorGUI.DrawRect(separator, new Color(0.5f, 0.5f, 0.5f, 0.35f));
             if (ActionButton("Open onairdeck.com", true))
                 Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
         }
+
+        private static GUIStyle _wrappedButton;
 
         private static bool ActionButton(string label, bool expand = false)
         {
             var style = EditorStyles.miniButton;
             var height = Mathf.Max(24f, EditorGUIUtility.singleLineHeight + 6f);
-            if (expand) return GUILayout.Button(label, style, GUILayout.Height(height));
+            if (expand)
+            {
+                // Full-width buttons wrap: a package name pair in the narrowest window was clipped at both ends.
+                // One line is padded to the usual height, so a wrapped label grows the button line by line
+                // (a forced MinHeight would also cap it there).
+                if (_wrappedButton == null)
+                {
+                    _wrappedButton = new GUIStyle(style) { wordWrap = true, fixedHeight = 0f };
+                    var extra = Mathf.CeilToInt(Mathf.Max(0f, height - _wrappedButton.CalcHeight(new GUIContent("A"), 1000f)));
+                    var pad = _wrappedButton.padding;
+                    _wrappedButton.padding = new RectOffset(pad.left, pad.right, pad.top + extra / 2, pad.bottom + extra - extra / 2);
+                }
+                return GUILayout.Button(label, _wrappedButton);
+            }
 
             // Measure the same style that draws the text; fixed pixel widths clip longer states.
             var width = Mathf.Ceil(style.CalcSize(new GUIContent(label)).x) + 12f;
@@ -137,8 +170,9 @@ namespace OnAirDeck.UnityManager
             EditorGUILayout.HelpBox(text, _update.MustUpdate ? MessageType.Warning : MessageType.Info);
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUI.enabled = _update.CanApply && _applyingUpdate == null;
-                if (ActionButton(_applyingUpdate != null ? "Updating…" : "Update")) ApplyUpdate();
+                var updating = _applyingUpdate != null || _applyingSelfUpdate;
+                GUI.enabled = _update.CanApply && !updating && !_installingPackage;
+                if (ActionButton(updating ? "Updating…" : "Update")) ApplyUpdate();
                 GUI.enabled = true;
                 if (!_update.CanApply && !string.IsNullOrEmpty(_update.ApplyBlockedReason))
                     GUILayout.Label(_update.ApplyBlockedReason, _detailsStyle, GUILayout.ExpandWidth(true));
@@ -148,6 +182,11 @@ namespace OnAirDeck.UnityManager
 
         private void ApplyUpdate()
         {
+            if (_update != null && _update.UseEmbedded)
+            {
+                ApplyEmbeddedUpdate();
+                return;
+            }
             _applyingUpdate = UpdateService.Apply(_update);
             if (_applyingUpdate == null) return;
             SetMessage("Updating the OnAirDeck Unity Manager… Unity will reload scripts when it finishes.", MessageType.Info);
@@ -200,6 +239,7 @@ namespace OnAirDeck.UnityManager
             }
 
             EditorGUILayout.Space();
+            DrawPackages();
             DrawPurchases();
         }
 
@@ -217,6 +257,7 @@ namespace OnAirDeck.UnityManager
                 var session = await AuthService.SignInAsync(url => { _signInUrl = url; Repaint(); }, cancel);
                 _session = session;
                 _purchases = null;
+                _licenses = null;
                 _licensesRefreshed = false;
                 SessionMarker.Write(session.userId);
                 SetMessage("Signed in.", MessageType.Info);
@@ -259,6 +300,7 @@ namespace OnAirDeck.UnityManager
             {
                 _session = null;
                 _purchases = null;
+                _licenses = null;
                 _signingOut = false;
                 SessionMarker.Clear();
                 Repaint();
@@ -271,6 +313,7 @@ namespace OnAirDeck.UnityManager
             SessionMarker.Clear();
             _session = null;
             _purchases = null;
+            _licenses = null;
             SetMessage(message, MessageType.Warning);
         }
 
@@ -303,7 +346,11 @@ namespace OnAirDeck.UnityManager
             }
             if (_purchases.Length == 0)
             {
-                EditorGUILayout.HelpBox("No purchases yet. Assets you buy on OnAirDeck will appear here.", MessageType.Info);
+                // A license from a BOOTH claim lists its packages above but has no OnAirDeck order.
+                var text = _packages != null && _packages.Count > 0
+                    ? "No other downloads. Your licensed packages are listed above."
+                    : "No purchases yet. Assets you buy on OnAirDeck will appear here.";
+                EditorGUILayout.HelpBox(text, MessageType.Info);
                 return;
             }
 
@@ -359,7 +406,9 @@ namespace OnAirDeck.UnityManager
             Repaint();
             try
             {
-                _purchases = await OnAirDeckApi.GetPurchasesAsync(_session.token);
+                var response = await OnAirDeckApi.GetPurchasesAndLicensesAsync(_session.token);
+                _purchases = response.purchases;
+                SetLicenses(response.licenses);
                 RefreshLicenses();
             }
             catch (SessionExpiredException e)

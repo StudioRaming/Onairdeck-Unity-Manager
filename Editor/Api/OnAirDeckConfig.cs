@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace OnAirDeck.UnityManager
 {
     /// <summary>
@@ -18,5 +20,25 @@ namespace OnAirDeck.UnityManager
         public const string ClientId = "unity";
 
         public const string LogPrefix = "[OnAirDeck] ";
+
+        /// <summary>
+        /// VPM listings package dependencies may be downloaded from, searched in this order. A fixed list:
+        /// never a URL read from a zip or from the server. Only the preview listing carries prerelease
+        /// versions (for example 0.1.14-preview.2), so a preview add-on can find its exact core.
+        /// </summary>
+        public static readonly string[] TrustedVpmListings =
+        {
+            "https://studioraming.github.io/mingtoon-distribution/index.json",
+            "https://studioraming.github.io/mingtoon-distribution/preview/index.json"
+        };
+
+        /// <summary>
+        /// Packages that older versions shipped as a plain folder under Assets/ (no package.json, so a scan
+        /// cannot find them). Installing the package over such a project would duplicate its files.
+        /// </summary>
+        public static readonly Dictionary<string, string> LegacyAssetFolders = new Dictionary<string, string>
+        {
+            { "com.studioraming.mingtoon", "Assets/StudioRaming/MingToon" }
+        };
     }
 }
