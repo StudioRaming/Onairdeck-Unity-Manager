@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.5.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.6.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
@@ -68,6 +68,15 @@ Other packages can open the window on their own row: `OnAirDeck.UnityManager.OnA
 8. Calls `Client.Resolve()` and `AssetDatabase.Refresh()` once.
 
 The Manager refuses to install a package that an older version put in a plain folder under `Assets/` (`com.studioraming.mingtoon` in `Assets/StudioRaming/MingToon`): migrate that install first. It never writes MingToon's own installer receipt.
+
+## Feedback / 문의
+
+While you are signed in, the **Feedback / 문의** section at the bottom of the window sends a bug report, a feature request or a question to OnAirDeck. It arrives in OnAirDeck's bug-report list with your account, so the team can reply.
+
+- **Kind**: Bug, Feature request or Question. **Message**: up to 4000 characters. **Error code**: optional, up to 200 characters (paste the code or the first line of the error).
+- **Attach recent Console errors (N)**: the last 50 errors, exceptions and failed asserts logged since the last script reload, each with up to 20 stack lines and its time. Your home folder in paths is replaced with `~`, and the attachment stays under 20 KB (the newest entries are kept). OnAirDeck masks e-mail addresses, phone numbers and card numbers in the message, the error code and the log before storing them.
+- Sent with every message, shown read-only before you send: the Unity version, the Manager version, the operating system and the installed StudioRaming / OnAirDeck packages (`name@version`).
+- At most 5 messages per 10 minutes per account.
 
 ## For sellers: checking the license from your asset
 
@@ -191,6 +200,7 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] Editor runner in Unity 2021.3.18f1 (2026-10-08): **13/13 passed**, including expired/malformed/valid saved sign-ins, rejected token (401) and sign-out on a throwaway key, with the real sign-in confirmed unchanged.
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
 - [ ] Package install (0.5.0) in a real Unity 2021.3 and 2022.3 editor: fresh install from the Manager alone, pair update, mismatch repair, interrupted install rolled back on the next load, legacy `Assets/` core refused, domain reload during the swap, `Client.Resolve()` timing, the Packages section layout.
+- [ ] Feedback (0.6.0) in a real editor after `plugin-feedback` is deployed: send each kind with and without Console errors, check the row in the admin bug-report tab, the 429 message after 5 sends, and the section at the minimum window size.
 - [ ] Import `OnAirDeck-Unity-Manager-<version>.unitypackage` into a fresh project and confirm Unity accepts the `Packages/` pathnames.
 - [ ] Install the package **from the git URL** in a fresh Unity 2021.3.18f1 project (every test so far used "Add package from disk").
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
