@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0] - 2026-10-27
+
+- **Feedback / 문의.** A new section at the bottom of the window (signed in only, collapsed until opened) sends a bug report, a feature request or a question to OnAirDeck, where it lands in the admin bug-report list with the account. Kind popup (Bug / Feature request / Question), a message of up to 4000 characters, an optional error code of up to 200, a toggle **Attach recent Console errors (N)**, the environment shown read-only before sending, **Send** (disabled while sending or while the message is empty or too long) and the result below it with a short reference. Too many messages (more than 5 in 10 minutes) get their own message; an expired sign-in signs out as everywhere else. The draft survives a script reload.
+- **Console error buffer** (`Editor/Feedback/ConsoleErrorBuffer.cs`, `[InitializeOnLoad]`): `Application.logMessageReceivedThreaded` feeds a thread-safe ring buffer of the last 50 Error / Exception / Assert entries (message, first 20 stack lines, time). Nothing is sent unless the toggle is on; the attachment keeps the newest entries within 20 KB and replaces the user's home folder with `~`.
+- **`FeedbackClient`** (`Editor/Feedback/FeedbackClient.cs`) posts `{ kind, message, errorCode, consoleLog, unityVersion, managerVersion, os, packages }` to the new `plugin-feedback` edge function with the plugin session token, like the other calls. `packages` lists the registered `com.studioraming.*` / OnAirDeck packages as `name@version` (the Manager included).
+
 ## [0.5.0] - 2026-10-25
 
 - **StudioRaming Editor Theme.** The window is drawn with the family theme used by MingPainter and MaskMaker (`Editor/UI/Theme/StudioRamingEditorTheme.cs`, namespace `OnAirDeck.UnityManager.Theme`, `SRProduct.OnAirDeck` = the Mint accent): header band with the OnAirDeck mark, cards for packages and purchases with status badges (Downloaded / Update available / Up to date / Not installed / Requested), themed buttons (the row's main action is the primary one), help boxes by tone, the themed progress line and search field. Both editor skins; no layout or behaviour change.

@@ -244,6 +244,7 @@ namespace OnAirDeck.UnityManager
             EditorGUILayout.Space();
             DrawPackages();
             DrawPurchases();
+            DrawFeedback();
         }
 
         private async void SignIn()
