@@ -1,0 +1,383 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Text.Json;
+using System.Threading.Tasks;
+using OnAirDeck.UnityManager;
+
+// Favorites, thumbnail cache rules, update-check rules and the batch queue. The real FavoritesLogic,
+// ThumbnailCachePolicy, UpdateCheckLogic and BatchQueue sources are compiled in; the queue runs fake actions.
+// EditorPrefs, UnityWebRequest and Texture2D (the Unity halves of these services) are not exercised here.
+internal static class CatalogChecks
+{
+    public static void Run(Action<string, Action> check)
+    {
+        check("favorites: key per user, entry key per kind", FavoriteKeys);
+        check("favorites: toggle, parse and stable text form", FavoriteToggle);
+        check("thumbnails: only absolute https URLs without credentials", ThumbUrls);
+        check("thumbnails: file name is a SHA-256 vector", ThumbFileName);
+        check("thumbnails: eviction is oldest first and stops at the cap", ThumbEviction);
+        check("update check: throttle (session, 6 hours, signed in, clock moved back)", Throttle);
+        check("update check: purchases and installed packages with a newer version", FindUpdates);
+        check("batch: order, progress text, results", BatchOrder);
+        check("batch: cancel stops after the current item", BatchCancel);
+        check("batch: a failed item does not stop the rest; a rejected session does", BatchFailures);
+        check("batch: device limit pauses, retry resumes the same item", BatchPauseResume);
+        check("batch: cancel while paused skips the rest and clears the notice", BatchCancelPaused);
+        check("v3: every request carries X-Atelier-Manager: 1", ManagerHeader);
+        check("v3: plugin-purchases body with description, product_url, versions[] parses; older body keeps defaults", ParseV3Purchases);
+    }
+
+    // ---------- favorites ----------
+
+    private static void FavoriteKeys()
+    {
+        Equal("OnAirDeck.UnityManager.Favorites.u1", FavoritesLogic.PrefsKey("u1"));
+        Equal(null, FavoritesLogic.PrefsKey(""));
+        Equal(null, FavoritesLogic.PrefsKey(null));
+        Equal("p:abc", FavoritesLogic.EntryKey(FavoriteKind.Purchase, "abc"));
+        Equal("l:abc", FavoritesLogic.EntryKey(FavoriteKind.License, "abc"));
+        Equal(null, FavoritesLogic.EntryKey(FavoriteKind.Purchase, ""));
+        Require(FavoritesLogic.PrefsKey("u1") != FavoritesLogic.PrefsKey("u2"));
+    }
+
+    private static void FavoriteToggle()
+    {
+        var set = new HashSet<string>();
+        Equal(true, FavoritesLogic.Toggle(set, "p:1"));
+        Equal(true, FavoritesLogic.Toggle(set, "l:1"));
+        Equal(2, set.Count); // same id as purchase and as license are two entries
+        Equal(false, FavoritesLogic.Toggle(set, "p:1"));
+        Require(!set.Contains("p:1") && set.Contains("l:1"));
+        Equal(false, FavoritesLogic.Toggle(set, null));
+        Equal(1, set.Count);
+
+        set.Add("p:b"); set.Add("p:a");
+        var text = FavoritesLogic.Serialize(set);
+        Equal("l:1\np:a\np:b", text);
+        var back = FavoritesLogic.Parse(text + "\n\njunk\np:\nx:9\n");
+        Equal(3, back.Count);
+        Require(back.Contains("p:a") && back.Contains("p:b") && back.Contains("l:1"));
+        Equal(0, FavoritesLogic.Parse(null).Count);
+    }
+
+    // ---------- thumbnails ----------
+
+    private static void ThumbUrls()
+    {
+        Require(ThumbnailCachePolicy.IsAllowedUrl("https://cdn.example.com/a.png"));
+        Require(ThumbnailCachePolicy.IsAllowedUrl("https://cdn.example.com/a.png?v=2"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("http://cdn.example.com/a.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("ftp://cdn.example.com/a.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("file:///C:/secret.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("//cdn.example.com/a.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("a.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("javascript:alert(1)"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("https://user:pw@cdn.example.com/a.png"));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl(""));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl(null));
+        Require(!ThumbnailCachePolicy.IsAllowedUrl("https://cdn.example.com/" + new string('a', 2100)));
+    }
+
+    private static void ThumbFileName()
+    {
+        // python: hashlib.sha256(b"https://cdn.example.com/a.png").hexdigest()
+        Equal("6155f67efa620e76fd5fb2c42f3676aec9cba0ee554f6ad1f33773ff1d26f587.img", ThumbnailCachePolicy.FileNameFor("https://cdn.example.com/a.png"));
+        Require(ThumbnailCachePolicy.FileNameFor("https://a/1") != ThumbnailCachePolicy.FileNameFor("https://a/2"));
+        Require(ThumbnailCachePolicy.FileNameFor("https://a/../../x").IndexOf('/') < 0);
+    }
+
+    private static ThumbnailFile F(string path, long size, int daysAgo)
+    {
+        return new ThumbnailFile { Path = path, Size = size, LastUsedUtc = new DateTime(2026, 10, 28, 0, 0, 0, DateTimeKind.Utc).AddDays(-daysAgo) };
+    }
+
+    private static void ThumbEviction()
+    {
+        var files = new List<ThumbnailFile> { F("new", 40, 0), F("old", 40, 9), F("mid", 40, 3), F("older", 40, 20) };
+        // total 160, cap 100: drop the two least recently used (older, then old), keep mid and new.
+        var doomed = ThumbnailCachePolicy.PlanEviction(files, 100);
+        Equal(2, doomed.Count);
+        Equal("older", doomed[0].Path);
+        Equal("old", doomed[1].Path);
+        Equal(0, ThumbnailCachePolicy.PlanEviction(files, 160).Count);
+        Equal(4, ThumbnailCachePolicy.PlanEviction(files, 0).Count);
+        // Equal times: path order decides, so the plan is stable.
+        var ties = new List<ThumbnailFile> { F("b", 10, 1), F("a", 10, 1), F("c", 10, 1) };
+        var plan = ThumbnailCachePolicy.PlanEviction(ties, 10);
+        Equal("a", plan[0].Path);
+        Equal("b", plan[1].Path);
+        // One big file that alone exceeds the cap is the only thing removed when it is the oldest.
+        var big = new List<ThumbnailFile> { F("big", 500, 5), F("s1", 10, 1), F("s2", 10, 0) };
+        var one = ThumbnailCachePolicy.PlanEviction(big, 100);
+        Equal(1, one.Count);
+        Equal("big", one[0].Path);
+    }
+
+    // ---------- update check ----------
+
+    private static void Throttle()
+    {
+        const long H = 3600;
+        long now = 1800000000;
+        Require(UpdateCheckLogic.ShouldRun(true, false, now, 0));
+        Require(!UpdateCheckLogic.ShouldRun(false, false, now, 0));            // not signed in
+        Require(!UpdateCheckLogic.ShouldRun(true, true, now, 0));              // already this session
+        Require(!UpdateCheckLogic.ShouldRun(true, false, now, now - 6 * H + 1)); // 5h59m59s ago
+        Require(UpdateCheckLogic.ShouldRun(true, false, now, now - 6 * H));    // exactly 6h
+        Require(UpdateCheckLogic.ShouldRun(true, false, now, now - 30 * H));
+        Require(UpdateCheckLogic.ShouldRun(true, false, now, now + H));        // clock moved back
+    }
+
+    private static LicenseVersionEntry V(string package, string version)
+    {
+        return new LicenseVersionEntry { version_id = package + version, package_name = package, package_version = version, file_name = package + "-" + version + ".zip" };
+    }
+
+    private static void FindUpdates()
+    {
+        var purchases = new[]
+        {
+            new PurchaseItem { name = "Flagged", update_available = true, item_id = "i1" },
+            new PurchaseItem { name = "Quiet", update_available = false, item_id = "i2" },
+            null
+        };
+        var licenses = new[]
+        {
+            new LicenseEntry { license_id = "L1", versions = new[] { V("pkg.a", "1.2.0"), V("pkg.a", "1.1.0"), V("pkg.b", "2.0.0"), V("pkg.c", "3.0.0"), V("pkg.d", "1.1.0-preview.2") } },
+            new LicenseEntry { license_id = "L2", versions = new[] { V("pkg.a", "1.3.0"), V("pkg.e", "1.0.0") } },
+            new LicenseEntry { license_id = "L3", versions = null }
+        };
+        var installed = new Dictionary<string, string>
+        {
+            { "pkg.a", "1.1.0" },          // newer offered by two licenses: the newest wins
+            { "pkg.b", "2.0.0" },          // same version: no update
+            { "pkg.d", "1.0.0" },          // a prerelease is not offered to a stable install
+            { "pkg.e", "1.0.0-preview.1" } // a prerelease install gets a newer stable
+        };
+        var found = UpdateCheckLogic.Find(purchases, licenses, n => { string v; return installed.TryGetValue(n, out v) ? v : ""; });
+        // pkg.c is not installed, so it is not an update.
+        Equal(3, found.Count);
+        Equal(UpdateKind.Purchase, found[0].Kind);
+        Equal("Flagged", found[0].Name);
+        Equal("pkg.a", found[1].Name);
+        Equal("1.3.0", found[1].Latest);
+        Equal("1.1.0", found[1].Installed);
+        Equal("L2", found[1].License.license_id);
+        Equal("pkg.e", found[2].Name);
+        Equal("1.0.0", found[2].Latest);
+        Equal(0, UpdateCheckLogic.Find(null, null, n => "").Count);
+    }
+
+    // ---------- batch ----------
+
+    private static BatchItem Item(string name, Func<Action<string, float>, Task<object>> run)
+    {
+        return new BatchItem { Name = name, Run = run };
+    }
+
+    private static void Wait(Task task)
+    {
+        if (!task.Wait(TimeSpan.FromSeconds(10))) throw new Exception("The batch did not finish in time.");
+    }
+
+    private static void WaitFor(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new Exception("Timed out waiting for: " + what);
+            Thread.Sleep(5);
+        }
+    }
+
+    private static void BatchOrder()
+    {
+        var order = new List<string>();
+        BatchQueue queue = null;
+        var progress = new List<string>();
+        Func<string, BatchItem> make = name => Item(name, async report =>
+        {
+            order.Add(name);
+            progress.Add(queue.ProgressText);
+            report(name + " step", 0.5f);
+            await Task.Yield();
+            return name + " result";
+        });
+        queue = new BatchQueue(new[] { make("A"), make("B"), make("C") });
+        Equal("1/3", queue.ProgressText);
+        Wait(queue.RunAsync());
+        Equal("A,B,C", string.Join(",", order.ToArray()));
+        Equal("1/3,2/3,3/3", string.Join(",", progress.ToArray()));
+        Equal(3, queue.DoneCount);
+        Equal("B result", (string)queue.Results[1].Result);
+        Equal(BatchStatus.Done, queue.Results[2].Status);
+        Equal(false, queue.IsRunning);
+        var threw = false;
+        try { Wait(queue.RunAsync()); } catch (AggregateException) { threw = true; }
+        Require(threw); // a queue runs once
+    }
+
+    private static void BatchCancel()
+    {
+        var ran = new List<string>();
+        BatchQueue queue = null;
+        queue = new BatchQueue(new[]
+        {
+            Item("A", r => { ran.Add("A"); return Task.FromResult<object>(1); }),
+            Item("B", r => { ran.Add("B"); queue.Cancel(); return Task.FromResult<object>(2); }),
+            Item("C", r => { ran.Add("C"); return Task.FromResult<object>(3); }),
+            Item("D", r => { ran.Add("D"); return Task.FromResult<object>(4); })
+        });
+        Wait(queue.RunAsync());
+        Equal("A,B", string.Join(",", ran.ToArray()));
+        Equal(BatchStatus.Done, queue.Results[1].Status); // the current item finishes
+        Equal(BatchStatus.Skipped, queue.Results[2].Status);
+        Equal(BatchStatus.Skipped, queue.Results[3].Status);
+        Equal(true, queue.CancelRequested);
+    }
+
+    private static void BatchFailures()
+    {
+        var ran = new List<string>();
+        var queue = new BatchQueue(new[]
+        {
+            Item("A", r => { ran.Add("A"); throw new ApiException("A failed: HTTP 500", 500, "", ""); }),
+            Item("B", r => { ran.Add("B"); return Task.FromResult<object>(null); })
+        });
+        Wait(queue.RunAsync());
+        Equal("A,B", string.Join(",", ran.ToArray()));
+        Equal(BatchStatus.Failed, queue.Results[0].Status);
+        Equal("A failed: HTTP 500", queue.Results[0].Message);
+        Equal(BatchStatus.Done, queue.Results[1].Status);
+
+        ran.Clear();
+        var expired = new BatchQueue(new[]
+        {
+            Item("A", r => { ran.Add("A"); throw new SessionExpiredException("Your sign-in has expired."); }),
+            Item("B", r => { ran.Add("B"); return Task.FromResult<object>(null); })
+        });
+        Wait(expired.RunAsync());
+        Equal("A", string.Join(",", ran.ToArray()));
+        Equal(true, expired.SessionExpired);
+        Equal(BatchStatus.Failed, expired.Results[0].Status);
+        Equal(BatchStatus.Skipped, expired.Results[1].Status);
+    }
+
+    private static DeviceLimitException Refusal()
+    {
+        return (DeviceLimitException)ApiErrorParser.ToException(409, "{\"error\":\"device_limit\",\"message\":\"Too many devices.\"}", "x", null);
+    }
+
+    private static void BatchPauseResume()
+    {
+        DeviceLimitNotice.Clear();
+        var attempts = new Dictionary<string, int>();
+        var ran = new List<string>();
+        Func<string, bool, BatchItem> make = (name, refuseFirst) => Item(name, r =>
+        {
+            int n;
+            attempts.TryGetValue(name, out n);
+            attempts[name] = ++n;
+            ran.Add(name + n);
+            if (refuseFirst && n == 1) throw Refusal();
+            return Task.FromResult<object>(name);
+        });
+        var queue = new BatchQueue(new[] { make("A", false), make("B", true), make("C", false) });
+        var task = queue.RunAsync();
+        WaitFor(() => queue.IsPaused, "the queue to pause on the device limit");
+        Equal("A1,B1", string.Join(",", ran.ToArray())); // C has not started
+        Equal(BatchStatus.Paused, queue.Results[1].Status);
+        Equal(1, queue.CurrentIndex);
+        Require(DeviceLimitNotice.Current != null && DeviceLimitNotice.Current.Kind == NoticeKind.DeviceLimit);
+        Require(DeviceLimitNotice.Current.Items.Contains("B"));
+        Require(!task.IsCompleted);
+
+        DeviceLimitNotice.RetryAsync().Wait(TimeSpan.FromSeconds(5));
+        Wait(task);
+        Equal("A1,B1,B2,C1", string.Join(",", ran.ToArray()));
+        Equal(3, queue.DoneCount);
+        Equal(false, queue.IsPaused);
+        Require(DeviceLimitNotice.Current == null); // cleared once resumed
+    }
+
+    private static void BatchCancelPaused()
+    {
+        DeviceLimitNotice.Clear();
+        var ran = new List<string>();
+        var queue = new BatchQueue(new[]
+        {
+            Item("A", r => { ran.Add("A"); return Task.FromResult<object>(null); }),
+            Item("B", r => { ran.Add("B"); throw Refusal(); }),
+            Item("C", r => { ran.Add("C"); return Task.FromResult<object>(null); })
+        });
+        var task = queue.RunAsync();
+        WaitFor(() => queue.IsPaused, "the queue to pause");
+        queue.Cancel();
+        Wait(task);
+        Equal("A,B", string.Join(",", ran.ToArray()));
+        Equal(BatchStatus.Done, queue.Results[0].Status);
+        Equal(BatchStatus.Skipped, queue.Results[1].Status);
+        Equal(BatchStatus.Skipped, queue.Results[2].Status);
+        Require(DeviceLimitNotice.Current == null);
+    }
+
+    // ---------- contract v3 ----------
+
+    private static void ManagerHeader()
+    {
+        Equal("X-Atelier-Manager", DeviceIdentityCore.ManagerHeaderName);
+        Equal("1", DeviceIdentityCore.ManagerHeaderValue);
+        // OnAirDeckApi.AddHeaders sets it for every Post/Get (including plugin-version and the publishable-key calls);
+        // that UnityWebRequest code is compile-checked only, so the source is checked for the single call site.
+        var api = System.IO.File.ReadAllText(System.IO.Path.Combine(RepoRoot(), "Editor", "Api", "OnAirDeckApi.cs"));
+        Require(api.Contains("SetRequestHeader(DeviceIdentityCore.ManagerHeaderName, DeviceIdentityCore.ManagerHeaderValue)"));
+        var afterAdd = api.Substring(api.IndexOf("private static void AddHeaders", StringComparison.Ordinal));
+        Require(afterAdd.IndexOf("ManagerHeaderName", StringComparison.Ordinal) < afterAdd.IndexOf("if (bearer != OnAirDeckConfig.PublishableKey)", StringComparison.Ordinal));
+    }
+
+    // JsonUtility is not available here; System.Text.Json (public fields) checks field names and value types of the DTOs.
+    private static void ParseV3Purchases()
+    {
+        const string body = "{\"purchases\":[{\"name\":\"Pack\",\"date\":\"2026-10-01\",\"item_id\":\"i1\",\"product_id\":\"p1\",\"files\":[{\"file_id\":\"f2\",\"file_name\":\"Pack.unitypackage\"}],"
+            + "\"downloaded\":false,\"update_available\":true,\"description\":\"A plain text description.\",\"product_url\":\"https://onairdeck.com/p/p1\","
+            + "\"versions\":[{\"file_id\":\"f2\",\"version\":\"1.1\",\"released_at\":\"2026-10-20T00:00:00Z\",\"notes\":\"Fixed a bug\",\"size_bytes\":123456789012},"
+            + "{\"file_id\":\"f1\",\"version\":\"1.0\",\"released_at\":\"\",\"notes\":\"\",\"size_bytes\":0}]}],"
+            + "\"licenses\":[{\"license_id\":\"l1\",\"name\":\"Core\",\"rights\":[],\"description\":\"Core text\",\"product_url\":\"\","
+            + "\"versions\":[{\"version_id\":\"v1\",\"version_label\":\"1.0\",\"file_name\":\"a-1.0.0.zip\",\"file_size\":10,\"released_at\":\"2026-10-02T00:00:00Z\",\"release_notes\":\"n\",\"package_name\":\"a\",\"package_version\":\"1.0.0\"}]}]}";
+        var options = new JsonSerializerOptions { IncludeFields = true };
+        var parsed = JsonSerializer.Deserialize<PurchasesResponse>(body, options);
+        var p = parsed.purchases[0];
+        Equal("A plain text description.", p.description);
+        Equal("https://onairdeck.com/p/p1", p.product_url);
+        Equal(2, p.versions.Length);
+        Equal("f2", p.versions[0].file_id);
+        Equal("1.1", p.versions[0].version);
+        Equal("Fixed a bug", p.versions[0].notes);
+        Equal(123456789012L, p.versions[0].size_bytes);
+        Equal("", p.versions[1].released_at);
+        var l = parsed.licenses[0];
+        Equal("Core text", l.description);
+        Equal("", l.product_url);
+        Equal("2026-10-02T00:00:00Z", l.versions[0].released_at);
+
+        // A body from a server without v3: the new fields keep their "" / empty defaults.
+        var old = JsonSerializer.Deserialize<PurchasesResponse>("{\"purchases\":[{\"name\":\"X\",\"item_id\":\"i\",\"product_id\":\"p\"}],\"licenses\":[{\"license_id\":\"l\",\"versions\":[{\"version_id\":\"v\"}]}]}", options);
+        Equal("", old.purchases[0].description);
+        Equal("", old.purchases[0].product_url);
+        Equal(0, old.purchases[0].versions.Length);
+        Equal("", old.licenses[0].description);
+        Equal("", old.licenses[0].versions[0].released_at);
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null && !System.IO.File.Exists(System.IO.Path.Combine(dir, "package.json"))) dir = System.IO.Path.GetDirectoryName(dir);
+        if (dir == null) throw new Exception("package.json not found above " + AppContext.BaseDirectory);
+        return dir;
+    }
+
+    private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }
+    private static void Equal(object expected, object actual) { if (!object.Equals(expected, actual)) throw new Exception("Expected " + expected + ", got " + actual); }
+}

@@ -26,7 +26,7 @@ namespace OnAirDeck.UnityManager
 
             using (var listener = LoopbackListener.Start())
             {
-                var url = OnAirDeckConfig.WebsiteUrl + "/plugin-auth" +
+                var url = DevServer.SiteUrl + "/plugin-auth" +
                           "?redirect_uri=" + Uri.EscapeDataString(listener.RedirectUri) +
                           "&state=" + Uri.EscapeDataString(state) +
                           "&code_challenge=" + Uri.EscapeDataString(challenge) +

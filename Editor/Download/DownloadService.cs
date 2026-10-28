@@ -16,6 +16,7 @@ namespace OnAirDeck.UnityManager
         public int SkippedUnsafe;
         public int PackagesQueued;
         public bool LicenseWritten;
+        public bool LicenseRefused;   // the server refused the license for this PC (device limit or Manager too old); see DeviceLimitNotice
         public string Folder;
 
         public override string ToString()
@@ -38,13 +39,68 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class DownloadService
     {
-        public static async Task<DownloadSummary> DownloadItemAsync(
-            string sessionToken, PurchaseItem item, Action<string, float> onProgress, CancellationToken cancel)
+        /// <summary>
+        /// Presigned links for the item: one request for a purchase, one per file for the sellers own product
+        /// (owner path: product_id + file_id, no download is counted).
+        /// </summary>
+        private static async Task<DownloadFile[]> RequestFilesAsync(string sessionToken, PurchaseItem item, bool userInitiated)
         {
-            var files = await OnAirDeckApi.RequestDownloadAsync(sessionToken, item.item_id);
+            if (!item.IsOwn) return await OnAirDeckApi.RequestDownloadAsync(sessionToken, item.item_id, userInitiated);
+            var all = new List<DownloadFile>();
+            foreach (var file in item.files ?? new PurchaseFile[0])
+            {
+                if (file == null || string.IsNullOrEmpty(file.file_id)) continue;
+                all.AddRange(await OnAirDeckApi.RequestOwnProductDownloadAsync(sessionToken, item.product_id, file.file_id, userInitiated));
+            }
+            return all.ToArray();
+        }
+
+        /// <param name="interactiveImport">false: .unitypackage files import without the Unity import window (batch runs).</param>
+        /// <param name="userInitiated">true (default): a user click started this, so the request may take back a released seat (X-Atelier-Reactivate).</param>
+        public static async Task<DownloadSummary> DownloadItemAsync(
+            string sessionToken, PurchaseItem item, Action<string, float> onProgress, CancellationToken cancel,
+            bool interactiveImport = true, bool userInitiated = true)
+        {
+            LegacyHandoff.ThrowIfWaiting();
+            DownloadFile[] files;
+            try
+            {
+                files = await RequestFilesAsync(sessionToken, item, userInitiated);
+            }
+            catch (Exception e)
+            {
+                // A device-limit or update-required refusal reaches the window; retrying runs the whole download again.
+                DeviceLimitNotice.Report(e, item.name, async () => (object)await DownloadItemAsync(sessionToken, item, onProgress, cancel, interactiveImport, true), "download:" + item.name);
+                throw;
+            }
+            var summary = await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport);
+
+            // Signed license next to the product. A failure here must not undo a finished
+            // download; the window refreshes missing licenses the next time it opens.
+            // A device-limit refusal is already in DeviceLimitNotice (IssueAsync reports it; its retry only issues the license).
+            try
+            {
+                await LicenseService.IssueAsync(sessionToken, item, userInitiated);
+                summary.LicenseWritten = true;
+            }
+            catch (Exception e)
+            {
+                summary.LicenseRefused = e is DeviceLimitException || e is ManagerUpdateRequiredException;
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Downloaded, but the license file could not be written: " + e.Message);
+            }
+            return summary;
+        }
+
+        /// <summary>
+        /// Downloads every file to the cache, then places them: .unitypackage files go to <see cref="PackageImportQueue"/> (paths and
+        /// GUIDs as the package has them, overwriting in place), zips are extracted into <paramref name="folder"/>, other files are
+        /// copied there. All downloads finish before any import starts. The cache is cleaned on a failure.
+        /// </summary>
+        internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport)
+        {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
-            var cached = new List<KeyValuePair<string, string>>(); // local path → safe file name
+            var cached = new List<KeyValuePair<string, string>>(); // local path -> safe file name
             var cacheFolders = new List<string>();
             try
             {
@@ -63,7 +119,7 @@ namespace OnAirDeck.UnityManager
                     cached.Add(new KeyValuePair<string, string>(path, safeName));
                 }
 
-                var summary = new DownloadSummary { Downloaded = cached.Count, Folder = Installer.ProductFolder(item.name) };
+                var summary = new DownloadSummary { Downloaded = cached.Count, Folder = folder };
                 var packages = new List<string>();
                 foreach (var pair in cached)
                 {
@@ -86,38 +142,26 @@ namespace OnAirDeck.UnityManager
                     }
                 }
 
-                if (summary.Copied + summary.Extracted > 0) AssetDatabase.Refresh();
+                if (summary.Copied + summary.Extracted > 0) LegacyHandoffRunner.RefreshUnlessWaiting();
 
                 // Package folders are deleted by the import queue once imported; the rest now.
-                foreach (var folder in cacheFolders)
+                foreach (var cacheFolder in cacheFolders)
                 {
                     var keep = false;
-                    foreach (var package in packages) if (package.StartsWith(folder, StringComparison.OrdinalIgnoreCase)) keep = true;
-                    if (!keep) Downloader.TryDeleteFolder(folder);
+                    foreach (var package in packages) if (package.StartsWith(cacheFolder, StringComparison.OrdinalIgnoreCase)) keep = true;
+                    if (!keep) Downloader.TryDeleteFolder(cacheFolder);
                 }
 
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;
-                    PackageImportQueue.Enqueue(packages);
-                }
-
-                // Signed license next to the product. A failure here must not undo a finished
-                // download; the window refreshes missing licenses the next time it opens.
-                try
-                {
-                    await LicenseService.IssueAsync(sessionToken, item);
-                    summary.LicenseWritten = true;
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Downloaded, but the license file could not be written: " + e.Message);
+                    PackageImportQueue.Enqueue(packages, interactiveImport);
                 }
                 return summary;
             }
             catch
             {
-                foreach (var folder in cacheFolders) Downloader.TryDeleteFolder(folder);
+                foreach (var cacheFolder in cacheFolders) Downloader.TryDeleteFolder(cacheFolder);
                 throw;
             }
         }

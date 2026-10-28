@@ -67,7 +67,45 @@ namespace OnAirDeck.UnityManager
             return sb.Length == 0 ? null : sb.ToString();
         }
 
+        /// <summary>
+        /// A safe folder name that always ends with <paramref name="suffix"/>: the name part is cut so that name + suffix
+        /// stays within the length limit (a plain cut after appending would drop the suffix of a long name).
+        /// </summary>
+        public static string SafeFolderName(string name, string fallback, string suffix)
+        {
+            suffix = suffix ?? "";
+            var normalized = (name ?? "").Replace('\\', '/');
+            var slash = normalized.LastIndexOf('/');
+            if (slash >= 0) normalized = normalized.Substring(slash + 1);
+            var head = CleanSegment(normalized, Math.Max(1, MaxNameLength - suffix.Length));
+            if (head.Length == 0) head = fallback;
+            return head + suffix;
+        }
+
+        private static readonly string[] ReservedDeviceNames =
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        };
+
+        /// <summary>Windows device names (CON, NUL, COM1...), alone or with an extension ("nul.txt"), any case.</summary>
+        internal static bool IsReservedName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            var dot = name.IndexOf('.');
+            var stem = (dot >= 0 ? name.Substring(0, dot) : name).TrimEnd(' ');
+            foreach (var reserved in ReservedDeviceNames)
+                if (string.Equals(stem, reserved, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         private static string CleanSegment(string segment)
+        {
+            return CleanSegment(segment, MaxNameLength);
+        }
+
+        private static string CleanSegment(string segment, int maxLength)
         {
             var trimmed = segment.Trim();
             if (trimmed.Length == 0 || trimmed == "." || trimmed == "..") return "";
@@ -79,7 +117,8 @@ namespace OnAirDeck.UnityManager
                 sb.Append(Array.IndexOf(invalid, c) >= 0 || c < ' ' ? '_' : c);
             }
             var result = sb.ToString().TrimEnd('.', ' ');               // Windows rejects trailing dots/spaces
-            if (result.Length > MaxNameLength) result = result.Substring(0, MaxNameLength);
+            if (IsReservedName(result)) result = "_" + result;           // CON, NUL, COM1... cannot be created on Windows
+            if (result.Length > maxLength) result = result.Substring(0, maxLength).TrimEnd('.', ' ');
             return result;
         }
     }

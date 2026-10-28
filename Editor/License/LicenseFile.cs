@@ -41,8 +41,12 @@ namespace OnAirDeck.UnityManager
             return path;
         }
 
-        /// <summary>True when there is no license yet, it is unreadable, or it expires within RefreshWindowSeconds.</summary>
-        public static bool NeedsRefresh(string productFolder, long nowUnix)
+        /// <summary>
+        /// True when there is no license yet, it is unreadable, it expires within RefreshWindowSeconds, or it was issued to
+        /// another account (<paramref name="userId"/>) or, when the file carries a "device" field, another PC
+        /// (<paramref name="deviceHash"/>). Empty userId or deviceHash skips that comparison.
+        /// </summary>
+        public static bool NeedsRefresh(string productFolder, long nowUnix, string userId = null, string deviceHash = null)
         {
             var path = PathFor(productFolder);
             if (!File.Exists(path)) return true;
@@ -50,9 +54,58 @@ namespace OnAirDeck.UnityManager
             try { text = File.ReadAllText(path); }
             catch (IOException) { return true; }
             catch (UnauthorizedAccessException) { return true; }
+            return IsDue(text, nowUnix, userId, deviceHash);
+        }
+
+        /// <summary>The decision of <see cref="NeedsRefresh"/> for a license string already read. Does not verify the signature.</summary>
+        public static bool IsDue(string licenseText, long nowUnix, string userId, string deviceHash)
+        {
             long exp;
-            if (!TryReadExpiry(text, out exp)) return true;
-            return exp - nowUnix < RefreshWindowSeconds;
+            if (!TryReadExpiry(licenseText, out exp)) return true;
+            if (exp - nowUnix < RefreshWindowSeconds) return true;
+            var json = PayloadJson(licenseText);
+            if (json == null) return true;
+            string value;
+            if (!string.IsNullOrEmpty(userId) && (!TryReadString(json, "user_id", out value) || !string.Equals(value, userId, StringComparison.OrdinalIgnoreCase)))
+                return true;
+            if (!string.IsNullOrEmpty(deviceHash) && TryReadString(json, "device", out value) && !string.Equals(value, deviceHash, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
+        }
+
+        /// <summary>A top-level string field of the license payload (not verified); false when absent or malformed.</summary>
+        internal static bool TryReadPayloadString(string licenseText, string field, out string value)
+        {
+            value = null;
+            var json = PayloadJson(licenseText);
+            return json != null && TryReadString(json, field, out value);
+        }
+
+        private static string PayloadJson(string license)
+        {
+            if (string.IsNullOrEmpty(license)) return null;
+            var dot = license.IndexOf('.');
+            if (dot <= 0) return null;
+            try { return Encoding.UTF8.GetString(FromBase64Url(license.Substring(0, dot).Trim())); }
+            catch (FormatException) { return null; }
+        }
+
+        /// <summary>Minimal extractor for a top-level plain string field (ids and hashes: no escapes expected).</summary>
+        internal static bool TryReadString(string json, string field, out string value)
+        {
+            value = null;
+            var key = "\"" + field + "\"";
+            var at = json.IndexOf(key, StringComparison.Ordinal);
+            if (at < 0) return false;
+            var i = json.IndexOf(':', at + key.Length);
+            if (i < 0) return false;
+            i++;
+            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+            if (i >= json.Length || json[i] != '"') return false;
+            var end = json.IndexOf('"', i + 1);
+            if (end < 0) return false;
+            value = json.Substring(i + 1, end - i - 1);
+            return true;
         }
 
         /// <summary>Reads "exp" (unix seconds) out of the payload half. Does not verify the signature.</summary>

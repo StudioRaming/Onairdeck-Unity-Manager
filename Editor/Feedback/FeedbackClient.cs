@@ -53,12 +53,25 @@ namespace OnAirDeck.UnityManager
             var packages = new List<string>();
             try
             {
+#if UNITY_2021_1_OR_NEWER
                 foreach (var info in PackageInfo.GetAllRegisteredPackages())
                 {
                     if (info == null || string.IsNullOrEmpty(info.name)) continue;
                     if (!IsOnAirDeckPackage(info.name)) continue;
                     packages.Add(info.name + "@" + info.version);
                 }
+#else
+                // Unity 2019.4 / 2020 have no GetAllRegisteredPackages: read the folders under Packages/ (embedded and VPM packages).
+                var root = PackageInstallService.ProjectRoot;
+                var packagesFolder = System.IO.Path.Combine(root, "Packages");
+                if (System.IO.Directory.Exists(packagesFolder))
+                    foreach (var dir in System.IO.Directory.GetDirectories(packagesFolder))
+                    {
+                        var name = System.IO.Path.GetFileName(dir);
+                        if (!IsOnAirDeckPackage(name)) continue;
+                        packages.Add(name + "@" + InstalledPackages.InstalledVersion(root, name));
+                    }
+#endif
             }
             catch (Exception e)
             {
@@ -143,16 +156,7 @@ namespace OnAirDeck.UnityManager
 
         private static string ReadError(string json)
         {
-            if (string.IsNullOrEmpty(json)) return null;
-            try
-            {
-                var parsed = JsonUtility.FromJson<ErrorResponse>(json);
-                return parsed != null ? parsed.error : null;
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+            return ApiErrorParser.ReadErrorCode(json);
         }
     }
 }

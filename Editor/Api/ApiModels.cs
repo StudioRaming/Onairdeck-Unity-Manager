@@ -45,6 +45,17 @@ namespace OnAirDeck.UnityManager
         public string license_id;
         public string name;
         public string[] rights;
+        public int max_devices;       // 0 = no device limit
+        public int devices_used;      // devices holding a seat on this license
+        public bool this_device;      // this PC holds a seat
+        public string seller_id = "";
+        public string seller_name = "";
+        public string thumbnail_url = "";   // first linked product thumbnail, or ""
+        public string source = "";          // "grant" or "own" (the sellers own license); "" from an older server
+        public string description = "";     // plain text, at most 4000 chars; "" when none
+        public string product_url = "";     // public product page; "" when the product is not public
+
+        public bool IsOwn { get { return source == "own"; } }
         public LicenseVersionEntry[] versions;   // active versions, newest first, at most 20
     }
 
@@ -55,7 +66,7 @@ namespace OnAirDeck.UnityManager
         public string version_label;
         public string file_name;
         public long file_size;
-        public string released_at;
+        public string released_at = "";
         public string release_notes;
         public string package_name;      // "" unless file_name looks like <package>-<version>.zip
         public string package_version;   // "" likewise
@@ -77,11 +88,38 @@ namespace OnAirDeck.UnityManager
         public PurchaseFile[] files;
         public bool downloaded;
         public bool update_available;
+        public string thumbnail_url = "";
+        public string seller_id = "";
+        public string seller_name = "";
+        public string category = "";
+        public string purchased_at = "";   // ISO 8601 UTC (an own product: its creation time)
+        public string source = "";         // "purchase" or "own" (the sellers own product); "" from an older server
+        public string description = "";    // plain text, at most 4000 chars; "" when none
+        public string product_url = "";    // public product page; "" when the product is not public
+        public PurchaseVersion[] versions = new PurchaseVersion[0]; // file history, newest first (one entry when there is no history)
 
+        public bool IsOwn { get { return source == "own"; } }
+
+        /// <summary>An own product is downloaded by product_id + file_id, a purchase by item_id.</summary>
         public bool CanDownload
         {
-            get { return !string.IsNullOrEmpty(item_id) && files != null && files.Length > 0; }
+            get
+            {
+                if (files == null || files.Length == 0) return false;
+                return IsOwn ? !string.IsNullOrEmpty(product_id) : !string.IsNullOrEmpty(item_id);
+            }
         }
+    }
+
+    /// <summary>One entry of a purchased product's file history.</summary>
+    [Serializable]
+    internal class PurchaseVersion
+    {
+        public string file_id = "";
+        public string version = "";
+        public string released_at = "";
+        public string notes = "";
+        public long size_bytes;
     }
 
     [Serializable]
@@ -106,6 +144,15 @@ namespace OnAirDeck.UnityManager
     internal class LicenseDownloadRequest
     {
         public string license_version_id;
+        public string client;
+    }
+
+    // POST plugin-download { product_id, file_id, client } (the sellers own product; never with item_id or license_version_id)
+    [Serializable]
+    internal class OwnProductDownloadRequest
+    {
+        public string product_id;
+        public string file_id;
         public string client;
     }
 

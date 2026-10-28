@@ -6,7 +6,7 @@ namespace OnAirDeck.License
 {
     /// <summary>
     /// The check a seller's editor code calls: <c>OnAirDeckLicense.Check("&lt;product id&gt;")</c>.
-    /// Valid means: OnAirDeck Unity Manager is signed in on this computer (its session marker exists)
+    /// Valid means: Atelier Manager is signed in on this computer (its session marker exists)
     /// and a license file under Assets/StudioRaming_Onairdeck/ carries a valid OnAirDeck signature for
     /// this product, for that account, and for the current time. Works offline.
     /// Honest limit: this is a client-side check. It stops casual sharing; it cannot stop someone who
@@ -18,7 +18,7 @@ namespace OnAirDeck.License
         public const string InstallRoot = "Assets/StudioRaming_Onairdeck";
         public const string SessionMarkerFolder = "OnAirDeck";
         public const string SessionMarkerFile = "session.json";
-        public const string SignInHint = "Sign in with OnAirDeck Unity Manager (Window > OnAirDeck Unity Manager) and reopen this tool. If the license is missing, download the asset again from the Manager.";
+        public const string SignInHint = "Sign in with Atelier Manager (Window > Atelier Manager) and reopen this tool. If the license is missing, download the asset again from the Manager.";
 
         /// <summary>Unity project root. Null means the current directory, which the Unity Editor keeps at the project folder.</summary>
         public static string ProjectRoot;
@@ -87,7 +87,7 @@ namespace OnAirDeck.License
 
             var candidates = FindLicenseFiles(productId);
             if (candidates.Count == 0)
-                return LicenseCheckResult.Fail(LicenseStatus.LicenseMissing, "No OnAirDeck license for this product was found under " + InstallRoot + "/. Download the asset again with OnAirDeck Unity Manager.");
+                return LicenseCheckResult.Fail(LicenseStatus.LicenseMissing, "No OnAirDeck license for this product was found under " + InstallRoot + "/. Download the asset again with Atelier Manager.");
 
             // Newest expiry first; the first valid one wins, otherwise report the newest one's problem.
             LicenseCheckResult first = null;

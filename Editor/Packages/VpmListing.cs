@@ -75,7 +75,12 @@ namespace OnAirDeck.UnityManager
         public static void RequireHttps(string url)
         {
             Uri uri;
-            if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps)
+            if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out uri))
+                throw new PackageInstallException("Refusing a package download that is not an HTTPS URL.");
+#if ATELIER_DEV_SERVER
+            if (uri.Scheme == Uri.UriSchemeHttp && DevServer.IsLoopback(uri)) return;   // a local stack only; never in a normal install
+#endif
+            if (uri.Scheme != Uri.UriSchemeHttps)
                 throw new PackageInstallException("Refusing a package download that is not an HTTPS URL.");
         }
 
