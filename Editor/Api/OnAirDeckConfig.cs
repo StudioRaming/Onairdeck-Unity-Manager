@@ -10,8 +10,8 @@ namespace OnAirDeck.UnityManager
     internal static class OnAirDeckConfig
     {
         public const string WebsiteUrl = "https://onairdeck.com";
-        public const string FunctionsUrl = "https://sptkmcrpgdvoegbfzqqq.supabase.co/functions/v1";
-        public const string PublishableKey = "sb_publishable_b7oL6JAwAWOSQS-B4a8JXA_NYO0bzw6";
+        public const string FunctionsUrl = "https://pxxhdnsqezitxlkievhf.supabase.co/functions/v1";
+        public const string PublishableKey = "sb_publishable_SdtMMXg2e0zHhubDu1SLxw_0zbQgv4-";
 
         /// <summary>
         /// Sent as ?client= on the sign-in URL for diagnostics only. The consent page deliberately
