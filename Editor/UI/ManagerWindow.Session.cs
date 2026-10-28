@@ -32,6 +32,7 @@ namespace OnAirDeck.UnityManager
                 _purchases = null;
                 _licenses = null;
                 _entries = null;
+                ClearDevices();
                 _loadFailed = false;
                 _licensesRefreshed = false;
                 SessionMarker.Write(session.userId);
@@ -111,6 +112,7 @@ namespace OnAirDeck.UnityManager
             _purchases = null;
             _licenses = null;
             _entries = null;
+            ClearDevices();
             _visible = new List<CatalogEntry>();
             _lines = new List<ListLine>();
             _selectedKey = "";

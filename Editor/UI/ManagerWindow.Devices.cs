@@ -12,6 +12,7 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private DevicesResponse _devices;
         [NonSerialized] private bool _devicesLoading;
         [NonSerialized] private string _devicesError;
+        [NonSerialized] private bool _devicesStale;
         [NonSerialized] private bool _removing;
 
         // ------------------------------------------------------------ loading and removing
@@ -28,10 +29,13 @@ namespace OnAirDeck.UnityManager
         {
             if (_session == null || _devicesLoading) return;
             _devicesLoading = true;
+            _devicesStale = false;
             var token = _session.token;
             try
             {
-                _devices = await OnAirDeckApi.GetDevicesAsync(token);
+                var devices = await OnAirDeckApi.GetDevicesAsync(token);
+                if (_session == null || _session.token != token) return;   // signed out or switched account meanwhile
+                _devices = devices;
                 _devicesError = null;
             }
             catch (SessionExpiredException e)
@@ -46,8 +50,36 @@ namespace OnAirDeck.UnityManager
             finally
             {
                 _devicesLoading = false;
+                if (_devicesStale) Defer(LoadDevices);
                 Repaint();
             }
+        }
+
+        /// <summary>A license was issued or renewed (this window or a background renewal): reload a device list already shown.</summary>
+        private void OnLicenseIssued()
+        {
+            if (_devices != null || _devicesLoading) ReloadDevices();
+        }
+
+        /// <summary>Loads the device list again, keeping the shown one until the answer comes; a load already running reloads once more.</summary>
+        private void ReloadDevices()
+        {
+            if (_devicesLoading) _devicesStale = true;
+            else LoadDevices();
+        }
+
+        private void ClearDevices()
+        {
+            _devices = null;
+            _devicesError = null;
+            _devicesStale = false;
+        }
+
+        private DeviceLimitLicense LimitOf(string licenseId)
+        {
+            if (_devices == null || _devices.limits == null) return null;
+            foreach (var limit in _devices.limits) if (limit != null && limit.license_id == licenseId) return limit;
+            return null;
         }
 
         private async void RemoveDevice(DeviceEntry device)
@@ -67,8 +99,7 @@ namespace OnAirDeck.UnityManager
                     try { await DeviceLimitNotice.RetryAsync(); }
                     catch (Exception e) { if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error); }
                 }
-                _devices = null;
-                LoadDevices();
+                ReloadDevices();
                 LoadEntries(false);
             }
             catch (SessionExpiredException e)
@@ -253,7 +284,10 @@ namespace OnAirDeck.UnityManager
             if (_devices == null && !_devicesLoading && _devicesError == null) Defer(LoadDevices);
             GUILayout.BeginHorizontal();
             GUILayout.Label(ManagerText.TabDev, SRStyles.Strong, GUILayout.ExpandWidth(true));
-            GUILayout.Label(DeviceCount(entry.DevicesUsed, entry.MaxDevices), SRStyles.Muted, GUILayout.ExpandWidth(false));
+            // The device endpoint is newer than the product list (it reloads after every issue and release).
+            var limit = LimitOf(entry.LicenseId);
+            var count = limit != null ? DeviceCount(limit.used, limit.max_devices) : DeviceCount(entry.DevicesUsed, entry.MaxDevices);
+            GUILayout.Label(count, SRStyles.Muted, GUILayout.ExpandWidth(false));
             GUILayout.EndHorizontal();
             GUILayout.Space(SRMetrics.Space4);
             if (_devices == null)

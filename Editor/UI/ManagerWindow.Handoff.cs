@@ -29,6 +29,7 @@ namespace OnAirDeck.UnityManager
             _handoffHooked = true;
             EditorApplication.update += PollHandoff;
             LicenseRenewalStatus.Changed += OnRenewalChanged;
+            LicenseRenewalStatus.Issued += OnLicenseIssued;
         }
 
         private void UnhookHandoff()
@@ -37,6 +38,7 @@ namespace OnAirDeck.UnityManager
             _handoffHooked = false;
             EditorApplication.update -= PollHandoff;
             LicenseRenewalStatus.Changed -= OnRenewalChanged;
+            LicenseRenewalStatus.Issued -= OnLicenseIssued;
         }
 
         private void OnRenewalChanged()

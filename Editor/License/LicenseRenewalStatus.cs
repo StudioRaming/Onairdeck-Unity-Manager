@@ -29,6 +29,9 @@ namespace OnAirDeck.UnityManager
     {
         public static event Action Changed;
 
+        /// <summary>A license was issued or renewed: the server may have counted this PC on it again, so device lists are stale.</summary>
+        public static event Action Issued;
+
         private static readonly Dictionary<string, RenewalRefusal> Refused = new Dictionary<string, RenewalRefusal>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Every license currently refused, in no particular order.</summary>
@@ -65,6 +68,8 @@ namespace OnAirDeck.UnityManager
         public static void Succeed(string licenseId)
         {
             if (licenseId != null && Refused.Remove(licenseId)) RaiseChanged();
+            var issued = Issued;
+            if (issued != null) issued();
         }
 
         /// <summary>Keeps only the refusals of licenses still in the account (a sign-out or a removed license drops its card).</summary>
