@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.1.0 development version (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.1.0 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL and self-update paths in Unity 2021.3.45f2. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
 
 ## Requirements
 
@@ -204,11 +204,14 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
 - [ ] Package install (0.5.0) in a real Unity 2021.3 and 2022.3 editor: fresh install from the Manager alone, pair update, mismatch repair, interrupted install rolled back on the next load, legacy `Assets/` core refused, domain reload during the swap, `Client.Resolve()` timing, the Packages section layout.
 - [ ] Feedback (0.6.0) in a real editor after `plugin-feedback` is deployed: send each kind with and without Console errors, check the row in the admin bug-report tab, the 429 message after 5 sends, and the section at the minimum window size.
-- [ ] Import `Atelier-Manager-<version>.unitypackage` into a fresh project and confirm Unity accepts the `Packages/` pathnames.
-- [ ] Install the package **from the git URL** in a fresh Unity 2021.3.18f1 project (every test so far used "Add package from disk").
+- [x] Import `Atelier-Manager-0.1.0.unitypackage` into a project without the Manager (Unity 2021.3.45f2, 2026-10-29): embedded 0.1.0, 203 files, compiles, window opens.
+- [x] Install the package **from the git URL** (`#<commit>`) into a project without the Manager (Unity 2021.3.45f2, 2026-10-29): source Git 0.1.0, compiles, no Console errors.
+- [x] Self-update of an embedded install, 0.1.0 to 0.1.1 from a local test server (Unity 2021.3.45f2, 2026-10-29): folder replaced, script reload, "Updated to 0.1.1", no leftover folder. The update banner survives script reloads.
+- [x] Device limit against a local server (Unity 2021.3.45f2, 2026-10-29): the over-limit screen, releasing a device from it, the action going on after the release, the device tab refreshing after a license is issued.
+- [ ] Self-update of a git URL install (`Client.Add` with the next tag) in a real editor.
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
 - [x] Repository made public (2026-10-08).
-- [ ] Choose and push the release tag.
+- [x] Release tag `0.1.0` (2026-10-29).
 
 Once a release is tagged, install a fixed version with `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<release-tag>` rather than following a moving branch.
 
