@@ -13,6 +13,8 @@ namespace OnAirDeck.UnityManager
         {
             DevServer.ReadPref = key => EditorPrefs.GetString(key, "");
             LicenseVerifier.DevPublicKeyPem = () => DevServer.LicensePublicKeyPem;
+            // Products' offline Check() reads the same marker the dev sign-in writes; read once per script reload.
+            if (DevServer.Redirected) OnAirDeckLicense.SessionMarkerPath = SessionMarker.DefaultPath;
             Debug.LogWarning("[Atelier Manager] ATELIER_DEV_SERVER is defined: the Atelier.Dev.* EditorPrefs can redirect the server, the license key and the device identity. Remove the define for a real install.");
         }
     }

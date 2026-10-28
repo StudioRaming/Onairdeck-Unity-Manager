@@ -41,6 +41,19 @@ namespace OnAirDeck.UnityManager
         public static string LicensePublicKeyPem { get { return Pick(LicensePublicKeyPemPref, "", false); } }
         public static string DeviceSalt { get { return Pick(DeviceSaltPref, "", false); } }
 
+        /// <summary>True when a dev build talks to another server than the real one. The sign-in and the session marker
+        /// then live under separate names, so a local-stack sign-in never replaces the real one (and a local 401 never clears it).</summary>
+        public static bool Redirected
+        {
+            get { return Enabled && !string.Equals(FunctionsUrl, OnAirDeckConfig.FunctionsUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase); }
+        }
+
+        /// <summary>The real EditorPrefs key or folder name, or its ".Dev" twin while <see cref="Redirected"/>.</summary>
+        public static string Separate(string realName)
+        {
+            return Redirected ? realName + ".Dev" : realName;
+        }
+
         private static string Pick(string pref, string fallback, bool isUrl)
         {
 #if ATELIER_DEV_SERVER

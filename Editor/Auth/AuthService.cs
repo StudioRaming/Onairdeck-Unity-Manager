@@ -48,7 +48,7 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static Task SignOutAsync(SavedSession session)
         {
-            return SignOutAsync(session, SessionStore.DefaultKey);
+            return SignOutAsync(session, SessionStore.ActiveKey);
         }
 
         /// <summary>Same as above with an explicit EditorPrefs key (verification uses a throwaway key).</summary>

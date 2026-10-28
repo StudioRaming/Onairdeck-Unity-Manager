@@ -9,7 +9,7 @@ internal static class DevChecks
 {
     public static void Run(Action<string, Action> check)
     {
-        check("dev server: without ATELIER_DEV_SERVER the Atelier.Dev.* prefs are ignored (constants, plain device hash)", PrefsIgnoredOrApplied);
+        check("dev server: without ATELIER_DEV_SERVER the Atelier.Dev.* prefs are ignored (constants, plain device hash); a redirected dev build signs in under separate key and marker names", PrefsIgnoredOrApplied);
         check("dev server: a PEM public key (SubjectPublicKeyInfo and PKCS#1) parses to the same RSA key; garbage does not", PemKeys);
     }
 
@@ -41,6 +41,10 @@ internal static class DevChecks
             var refused = false;
             try { PackageDownloadChecks.RequireHttps("http://example.com/x"); } catch (PackageInstallException) { refused = true; }
             Require(refused);
+            // A redirected dev build keeps its sign-in and marker apart from the real ones.
+            Require(DevServer.Redirected);
+            Equal("OnAirDeck.UnityManager.Session.Dev", DevServer.Separate("OnAirDeck.UnityManager.Session"));
+            Equal(SessionMarker.FolderName + ".Dev", System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(SessionMarker.DefaultPath)));
 #else
             Require(!DevServer.Enabled);
             Equal(OnAirDeckConfig.FunctionsUrl, DevServer.FunctionsUrl);
@@ -50,7 +54,13 @@ internal static class DevChecks
             var refused = false;
             try { PackageDownloadChecks.RequireHttps("http://127.0.0.1:54321/storage/v1/x"); } catch (PackageInstallException) { refused = true; }
             Require(refused);                                                                    // a normal install never accepts plain http
+            Require(!DevServer.Redirected);
 #endif
+            // Unless a dev build is really redirected, the real sign-in key and marker folder are used.
+            DevServer.ReadPref = key => "";
+            Require(!DevServer.Redirected);
+            Equal("OnAirDeck.UnityManager.Session", DevServer.Separate("OnAirDeck.UnityManager.Session"));
+            Equal(SessionMarker.FolderName, System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(SessionMarker.DefaultPath)));
             // The device hash with no salt is the plain hash in every build.
             Equal(DeviceIdentityCore.Hash("abc123"), DeviceIdentityCore.Hash("abc123", ""));
             Equal(DeviceIdentityCore.Hash("abc123"), DeviceIdentityCore.Hash("abc123", null));

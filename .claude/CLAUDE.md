@@ -13,8 +13,10 @@ This folder is the Unity package repo **StudioRaming/Onairdeck-Unity-Manager** (
 Commits and pushes must be StudioRaming. The global gitconfig on this PC is a different account on purpose, so this repo has its own local `user.name`/`user.email`/`credential.https://github.com.username`. Push without the Git Credential Manager prompt:
 
 ```
-git -c credential.helper= -c 'credential.helper=!f() { echo username=StudioRaming; echo "password=$GITHUB_TOKEN"; }; f' push
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push
 ```
+
+(2026-10-29: the older `password=$GITHUB_TOKEN` helper failed with "Invalid username or token"; the gh helper above uses the signed-in StudioRaming gh account.)
 
 ## Code rules
 

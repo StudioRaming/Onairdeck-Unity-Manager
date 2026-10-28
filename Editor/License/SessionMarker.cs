@@ -22,7 +22,7 @@ namespace OnAirDeck.UnityManager
             get
             {
                 var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                return Path.Combine(Path.Combine(local, FolderName), FileName);
+                return Path.Combine(Path.Combine(local, DevServer.Separate(FolderName)), FileName);
             }
         }
 
