@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.6.0 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
+> Status: 0.6.1 development version. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1. Download verification tools are in `Tools~/Verification`; the release checks below track the remaining work before public release.
 
 ## Requirements
 
