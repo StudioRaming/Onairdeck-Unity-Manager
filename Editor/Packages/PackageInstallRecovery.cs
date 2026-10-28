@@ -25,7 +25,9 @@ namespace OnAirDeck.UnityManager
                 if (message == null) return;
                 SessionState.SetString(PackageInstallService.ReportKey, message);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + message);
+#if UNITY_2021_1_OR_NEWER
                 Client.Resolve();
+#endif
                 AssetDatabase.Refresh();
             }
             catch (Exception e)

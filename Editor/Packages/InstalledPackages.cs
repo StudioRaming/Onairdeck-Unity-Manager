@@ -47,6 +47,39 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// True when the package is in this project by any route: a folder under Packages/ (embedded or VPM), or an entry in
+        /// Packages/manifest.json or Packages/vpm-manifest.json (git, registry, VPM resolved into the package cache).
+        /// </summary>
+        public static bool IsInstalled(string projectRoot, string packageName)
+        {
+            if (string.IsNullOrEmpty(packageName)) return false;
+            if (Read(projectRoot, packageName) != null) return true;
+            var quoted = "\"" + packageName + "\"";
+            foreach (var file in new[] { "manifest.json", "vpm-manifest.json" })
+            {
+                try
+                {
+                    var path = Path.Combine(projectRoot, "Packages", file);
+                    if (!File.Exists(path)) continue;
+                    var text = File.ReadAllText(path, Encoding.UTF8);
+                    var at = 0;
+                    while ((at = text.IndexOf(quoted, at, StringComparison.Ordinal)) >= 0)
+                    {
+                        var i = at + quoted.Length;
+                        while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+                        if (i < text.Length && text[i] == ':') return true;
+                        at += quoted.Length;
+                    }
+                }
+                catch (Exception e)
+                {
+                    if (!(e is IOException) && !(e is UnauthorizedAccessException)) throw;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// A message when the package was installed the old way (a plain folder under Assets/) and so
         /// must be migrated first, otherwise null.
         /// </summary>

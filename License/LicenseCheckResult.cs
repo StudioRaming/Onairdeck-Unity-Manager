@@ -6,7 +6,7 @@ namespace OnAirDeck.License
     public enum LicenseStatus
     {
         Valid = 0,
-        /// <summary>No OnAirDeck Unity Manager session marker: nobody is signed in on this computer.</summary>
+        /// <summary>No Atelier Manager session marker: nobody is signed in on this computer.</summary>
         NotSignedIn,
         /// <summary>No onairdeck.license for this product under Assets/StudioRaming_Onairdeck/.</summary>
         LicenseMissing,

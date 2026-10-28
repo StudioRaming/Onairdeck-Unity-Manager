@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using OnAirDeck.UnityManager.Theme;
 using UnityEditor;
@@ -6,130 +7,383 @@ using UnityEngine;
 
 namespace OnAirDeck.UnityManager
 {
-    /// <summary>Window ▸ OnAirDeck Unity Manager — sign in, purchases, download into the project.</summary>
-    /// <remarks>Drawn with the StudioRaming Editor Theme (Editor/UI/Theme): every colour comes from SRTheme.P, so the
-    /// window matches MingPainter / MaskMaker on both editor skins. Layout stays GUILayout-based.</remarks>
+    /// <summary>
+    /// Window ▸ Atelier Manager: sign in, list the products of the account, download or install them into the project.
+    /// Two panes at wide widths (list 320px, detail), one pane below 640px. Drawn with the StudioRaming Editor Theme
+    /// (Editor/UI/Theme); sizes the theme has no token for are in <see cref="ManagerLayout"/>, copy is in <see cref="ManagerText"/>.
+    /// </summary>
+    /// <remarks>
+    /// Split by responsibility: core and routing (this file), Session (sign in/out, load), Screens (full-window screens),
+    /// List, Detail, Bars, Dialogs, Devices (device manager, limit screen, devices tab), Hover (thumbnail preview),
+    /// Batch, Actions (download/install), Feedback (the ask screen), Packages (entry points from other packages).
+    /// Click handlers do their work through <see cref="Defer"/>, i.e. at the start of the next layout pass, so the control
+    /// list of one OnGUI call never differs between the layout and the repaint event.
+    /// </remarks>
     internal sealed partial class ManagerWindow : EditorWindow
     {
-        // Unity serializes an EditorWindow's private fields across script reloads. Everything that
-        // describes in-flight work is marked [NonSerialized]: the awaiting code is gone after a
-        // reload, so a restored "downloading" / "signing in" flag would leave the window stuck
-        // with disabled buttons and no way out.
+        private enum View { Main = 0, Devices = 1, Ask = 2 }
+
+        // Unity serializes an EditorWindow's private fields across script reloads. Everything that describes in-flight work
+        // is [NonSerialized]: the awaiting code is gone after a reload, so a restored "busy" flag would leave the window stuck.
         private SavedSession _session;
+        private int _view;
+        private string _selectedKey = "";
+        private int _tab;
+        private string _search = "";
+        private int _sort;
+        private int _filter;
+        private string _sellerFilter = "";
+        private bool _showDetail;
+        private Vector2 _listScroll;
+        private Vector2 _detailScroll;
+
         [NonSerialized] private bool _signingIn;
         [NonSerialized] private bool _signingOut;
         [NonSerialized] private string _signInUrl;
         [NonSerialized] private CancellationTokenSource _signInCancel;
+        [NonSerialized] private double _signInStarted;
+        [NonSerialized] private double _signInLastTick;
+        [NonSerialized] private string _timeoutText;
 
         [NonSerialized] private PurchaseItem[] _purchases;
-        [NonSerialized] private bool _loadingPurchases;
-        private string _search = "";
-        private Vector2 _scroll;
+        [NonSerialized] private LicenseEntry[] _licenses;
+        [NonSerialized] private List<CatalogEntry> _entries;
+        [NonSerialized] private List<CatalogEntry> _visible = new List<CatalogEntry>();
+        [NonSerialized] private List<ListLine> _lines = new List<ListLine>();
+        [NonSerialized] private List<string> _sellers = new List<string>();
+        [NonSerialized] private HashSet<string> _favorites = new HashSet<string>();
+        [NonSerialized] private HashSet<string> _collapsed = new HashSet<string>();
+        [NonSerialized] private HashSet<string> _markers = new HashSet<string>();
+        [NonSerialized] private bool _entriesDirty = true;
+        [NonSerialized] private bool _linesDirty = true;
+        [NonSerialized] private bool _loading;
+        [NonSerialized] private bool _loadFailed;
+        [NonSerialized] private string _loadError;
+        [NonSerialized] private bool _licensesRefreshed;
+        [NonSerialized] private string _pendingLicenseId;
 
-        [NonSerialized] private string _downloadingItemId;
-        [NonSerialized] private string _progressLabel = "";
-        [NonSerialized] private float _progress;
-        [NonSerialized] private CancellationTokenSource _downloadCancel;
+        [NonSerialized] private UpdateState _update;
+        [NonSerialized] private UnityEditor.PackageManager.Requests.AddRequest _applyingUpdate;
 
         private string _message;
         private MessageType _messageType = MessageType.None;
 
-        private UpdateState _update;
-        private UnityEditor.PackageManager.Requests.AddRequest _applyingUpdate;
-        private bool _licensesRefreshed;
+        private readonly Queue<Action> _deferred = new Queue<Action>();
 
-        private GUIStyle _purchaseTitleStyle;
-        private GUIStyle _detailsStyle;
-        private bool _stylesDark;
-
-        [MenuItem("Window/OnAirDeck Unity Manager")]
+        [MenuItem("Window/Atelier Manager")]
         public static void Open()
         {
             var window = GetWindow<ManagerWindow>();
-            window.titleContent = new GUIContent("OnAirDeck");
-            window.minSize = new Vector2(SRMetrics.InspectorMin + 105f, 360);
+            window.titleContent = new GUIContent(ManagerText.AppTitle);
+            window.minSize = new Vector2(ManagerLayout.WindowMinWidth, ManagerLayout.WindowMinHeight);
             window.Show();
+        }
+
+        [InitializeOnLoadMethod]
+        private static void RegisterSeams()
+        {
+            // The API and bridge files (Editor/Api) stay UI-free; the window registers what they call.
+            AtelierManagerApi.OpenWindow = Open;
+            AtelierManagerApi.CloseWindows = CloseAll;
+            AtelierManagerApi.SelectLicense = OpenFor;
+            SRLanguage.RegisterWindowType(typeof(ManagerWindow));
+        }
+
+        private static void CloseAll()
+        {
+            foreach (var window in Resources.FindObjectsOfTypeAll<ManagerWindow>())
+                if (window != null) window.Close();
+        }
+
+        /// <summary>Opens the window and selects the product of this license id (lock-screen request, contract v8).</summary>
+        internal static void OpenFor(string licenseId)
+        {
+            if (string.IsNullOrEmpty(licenseId)) return;
+            Open();
+            var window = GetWindow<ManagerWindow>();
+            window._pendingLicenseId = licenseId;
+            window._view = (int)View.Main;
+            window.ApplyPendingSelection();
+            window.Repaint();
         }
 
         private void OnEnable()
         {
+            titleContent = new GUIContent(ManagerText.AppTitle);
             _session = SessionStore.Load();
             // The runtime license check reads this marker as proof of a signed-in Manager.
             if (_session != null) SessionMarker.Write(_session.userId); else SessionMarker.Clear();
             _licensesRefreshed = false;
-            _purchaseTitleStyle = null;
-            _detailsStyle = null;
-            wantsMouseMove = true; // themed buttons and rows draw hover states
+            _entriesDirty = true;
+            _linesDirty = true;
+            wantsMouseMove = true;   // hover states of rows, buttons and the thumbnail preview
+            ThumbnailCache.Changed += OnExternalChange;
+            FavoritesStore.Changed += OnFavoritesChanged;
+            PurchaseWatcher.Changed += OnExternalChange;
+            PurchaseWatcher.Refreshed += OnWatcherRefreshed;
+            UpdateCheckService.Changed += OnExternalChange;
+            DeviceLimitNotice.Changed += OnExternalChange;
+            SRLanguage.Changed += OnLanguageChanged;
+            PurchaseWatcher.SetWindowOpen(true);
             OnEnablePackages();
+            HookHandoff();
             CheckForUpdate();
+        }
+
+        private void OnDisable()
+        {
+            ThumbnailCache.Changed -= OnExternalChange;
+            FavoritesStore.Changed -= OnFavoritesChanged;
+            PurchaseWatcher.Changed -= OnExternalChange;
+            PurchaseWatcher.Refreshed -= OnWatcherRefreshed;
+            UpdateCheckService.Changed -= OnExternalChange;
+            DeviceLimitNotice.Changed -= OnExternalChange;
+            SRLanguage.Changed -= OnLanguageChanged;
+            PurchaseWatcher.SetWindowOpen(false);
+            // Closing the window (or a script reload) abandons in-progress work.
+            CancelSignIn();
+            CancelWork();
+            EditorApplication.update -= PollApplyingUpdate;
+            EditorApplication.update -= SignInTick;
+            UnhookHandoff();
         }
 
         private void OnFocus()
         {
             // A package folder can change outside the window (VCC, another editor, a rollback).
-            RefreshInstalledPackages();
+            RefreshInstalledState();
+            PurchaseWatcher.NotifyWindowFocused();
         }
 
-        private void OnDisable()
+        private void OnExternalChange()
         {
-            // Closing the window (or a script reload) abandons in-progress work.
-            CancelSignIn();
-            CancelDownload();
-            CancelPackageInstall();
-            EditorApplication.update -= PollApplyingUpdate;
+            Repaint();
         }
+
+        private void OnFavoritesChanged()
+        {
+            _linesDirty = true;
+            _entriesDirty = true;
+            Repaint();
+        }
+
+        private void OnLanguageChanged()
+        {
+            titleContent = new GUIContent(ManagerText.AppTitle);
+            _linesDirty = true;
+            Repaint();
+        }
+
+        /// <summary>The background watcher fetched a fresh list: show it instead of loading again.</summary>
+        private void OnWatcherRefreshed(PurchasesResponse response)
+        {
+            if (_session == null || response == null || _loading) return;
+            ApplyResponse(response);
+            Repaint();
+        }
+
+        // ------------------------------------------------------------ OnGUI
 
         private void OnGUI()
         {
-            // Text styles come from the theme (skin-aware); rebuilt when the editor skin changes.
-            if (_purchaseTitleStyle == null || _stylesDark != SRTheme.Dark)
+            var e = Event.current;
+            if (e.type == EventType.Layout)
             {
-                _stylesDark = SRTheme.Dark;
-                _purchaseTitleStyle = new GUIStyle(SRStyles.Strong) { wordWrap = true };
-                _detailsStyle = new GUIStyle(SRStyles.Small) { wordWrap = true };
+                RunDeferred();
+                RebuildIfNeeded();
             }
 
             SRGui.WindowBackground(this);
-            Rect tools = SRGui.Header(SRProduct.OnAirDeck, "O", "OnAirDeck Unity Manager", "Download the assets you bought on OnAirDeck.");
-            if (SRGui.Button(new Rect(tools.xMax - 110f, tools.y, 110f, tools.height), new GUIContent("onairdeck.com", OnAirDeckConfig.WebsiteUrl), SRButtonKind.Ghost, SRButtonSize.Default))
-                Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
+            var tools = SRGui.Header(SRProduct.OnAirDeck, "A", ManagerText.AppTitle, ManagerText.Tagline);
+            DrawHeaderTools(tools);
 
-            GUILayout.Space(SRMetrics.Space8);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(SRMetrics.Space12);
-            EditorGUILayout.BeginVertical();
-
-            DrawUpdateBanner();
-
-            if (_update != null && _update.MustUpdate)
-            {
-                // Below the server's minimum: the endpoints may refuse this version, so stop here.
-                SRGui.HelpBox("This version of the Manager is no longer supported. Update to continue.", SRTone.Warning);
-            }
-            else if (_signingIn) DrawSigningIn();
-            else if (_session != null) DrawSignedIn();
-            else DrawSignedOut();
-
-            if (!string.IsNullOrEmpty(_message))
-            {
-                GUILayout.Space(SRMetrics.Space4);
-                SRGui.HelpBox(_message, Tone(_messageType));
-                // A result (an install report, for one) stays until replaced; let the user clear it once read.
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    GUILayout.FlexibleSpace();
-                    if (ActionButton("Dismiss")) SetMessage(null, MessageType.None);
-                }
-            }
-
-            if (_session == null || _signingIn) GUILayout.FlexibleSpace();
-            GUILayout.Space(SRMetrics.Space12);
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(SRMetrics.Space12);
-            EditorGUILayout.EndHorizontal();
+            var top = SRMetrics.Header + SRMetrics.AccentLine;
+            var body = new Rect(0f, top, position.width, Mathf.Max(0f, position.height - top));
+            BeginHoverFrame();
+            DrawBody(body);
+            // Drawn last, over everything else, and only while the pointer is over a thumbnail.
+            DrawHoverPreview();
+            UpdateHover(e);
         }
 
-        /// <summary>Unity's message types mapped onto the theme's tones.</summary>
+        private void DrawBody(Rect body)
+        {
+            var notice = DeviceLimitNotice.Current;
+            if ((_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired))
+                DrawRequiredUpdate(body);
+            else if (_signingIn) DrawSigningIn(body);
+            else if (_session == null)
+            {
+                if (_timeoutText != null) DrawTimeout(body); else DrawSignedOut(body);
+            }
+            else if (notice != null && notice.Kind == NoticeKind.DeviceLimit) DrawDeviceLimit(body, notice);
+            else if (_view == (int)View.Devices) DrawDeviceManager(body);
+            else if (_view == (int)View.Ask) DrawAsk(body);
+            else if (_entries == null) { if (_loadFailed) DrawLoadError(body); else DrawLoading(body); }
+            else if (_entries.Count == 0 && !_loading) DrawEmpty(body);
+            else DrawMain(body);
+        }
+
+        // ------------------------------------------------------------ deferred clicks
+
+        /// <summary>Runs <paramref name="action"/> at the start of the next layout pass (never in the middle of a draw).</summary>
+        private void Defer(Action action)
+        {
+            _deferred.Enqueue(action);
+            Repaint();
+        }
+
+        private void RunDeferred()
+        {
+            while (_deferred.Count > 0)
+            {
+                var action = _deferred.Dequeue();
+                try { action(); }
+                catch (ExitGUIException) { throw; }
+                catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Window action failed: " + e.Message); }
+            }
+        }
+
+        // ------------------------------------------------------------ data
+
+        private void RebuildIfNeeded()
+        {
+            if (_entriesDirty && (_purchases != null || _licenses != null)) RebuildEntries();
+            if (_linesDirty) RebuildLines();
+        }
+
+        private void RebuildEntries()
+        {
+            _entriesDirty = false;
+            var root = PackageInstallService.ProjectRoot;
+            _entries = ManagerCatalog.Build(_purchases, _licenses, name => InstalledPackages.InstalledVersion(root, name), _markers);
+            _sellers = ManagerCatalog.Sellers(_entries);
+            if (_sellerFilter.Length > 0 && !_sellers.Contains(_sellerFilter)) _sellerFilter = "";
+            _favorites = new HashSet<string>();
+            var userId = _session != null ? _session.userId : "";
+            foreach (var entry in _entries)
+            {
+                var favorite = entry.Kind == FavoriteKind.Purchase ? FavoritesStore.IsFavorite(userId, entry.Purchase) : FavoritesStore.IsFavorite(userId, entry.License);
+                if (favorite) _favorites.Add(entry.Key);
+            }
+            _linesDirty = true;
+            ApplyPendingSelection();
+        }
+
+        private void RebuildLines()
+        {
+            _linesDirty = false;
+            if (_entries == null) { _lines = new List<ListLine>(); _visible = new List<CatalogEntry>(); return; }
+            var visible = new List<CatalogEntry>();
+            var seller = _sellerFilter;
+            foreach (var entry in _entries)
+                if (ManagerCatalog.Matches(entry, _search, (FilterMode)_filter, seller, _favorites.Contains(entry.Key))) visible.Add(entry);
+            ManagerCatalog.Sort(visible, (SortMode)_sort);
+            _visible = visible;
+            _lines = ManagerCatalog.Group(visible, (SortMode)_sort, entry => _favorites.Contains(entry.Key), _collapsed,
+                ManagerText.FavGroup, ManagerText.AllGroup, ManagerText.OtherSeller);
+        }
+
+        private void MarkDirty()
+        {
+            _entriesDirty = true;
+            _linesDirty = true;
+            Repaint();
+        }
+
+        private void ApplyResponse(PurchasesResponse response)
+        {
+            _purchases = response.purchases ?? new PurchaseItem[0];
+            _licenses = response.licenses ?? new LicenseEntry[0];
+            _loadFailed = false;
+            RefreshInstalledState();
+        }
+
+        /// <summary>Re-reads what this project has installed (package folders and product markers) and re-checks version mismatches.</summary>
+        private void RefreshInstalledState()
+        {
+            var root = PackageInstallService.ProjectRoot;
+            try { _markers = ProductMarkers.Scan(root); }
+            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Product marker scan failed: " + e.Message); _markers = new HashSet<string>(); }
+            _mismatches = FindMismatches(root);
+            _pendingRestores = LegacyMove.PendingRestores();
+            MarkDirty();
+        }
+
+        private CatalogEntry FindEntry(string key)
+        {
+            if (_entries == null || string.IsNullOrEmpty(key)) return null;
+            foreach (var entry in _entries) if (entry.Key == key) return entry;
+            return null;
+        }
+
+        private CatalogEntry SelectedEntry()
+        {
+            var entry = FindEntry(_selectedKey);
+            if (entry != null) return entry;
+            // Wide window: the detail pane always shows something (the first row) so it is never an empty frame.
+            return _visible.Count > 0 && !IsNarrow(position.width) ? _visible[0] : null;
+        }
+
+        private static bool IsNarrow(float width)
+        {
+            return width < ManagerLayout.NarrowBelow;
+        }
+
+        private void Select(CatalogEntry entry, bool markSeen)
+        {
+            _selectedKey = entry.Key;
+            _tab = 0;
+            _detailScroll = Vector2.zero;
+            _showDetail = true;
+            _view = (int)View.Main;
+            if (markSeen && _session != null && PurchaseWatcher.IsUnseen(entry.Key))
+                PurchaseWatcher.MarkSeen(_session.userId, new[] { entry.Key });
+            Repaint();
+        }
+
+        private void ApplyPendingSelection()
+        {
+            if (_entries == null) return;
+            if (!string.IsNullOrEmpty(_pendingLicenseId))
+            {
+                var id = _pendingLicenseId;
+                _pendingLicenseId = null;
+                var entry = FindEntry(FavoritesLogic.EntryKey(FavoriteKind.License, id));
+                if (entry != null)
+                {
+                    _search = "";
+                    _filter = (int)FilterMode.All;
+                    _sellerFilter = "";
+                    _linesDirty = true;
+                    Select(entry, true);
+                }
+                else
+                {
+                    SetMessage(ManagerText.NotOwned, MessageType.Info);
+                }
+            }
+            else if (_pendingFocus && !string.IsNullOrEmpty(_focusPackage))
+            {
+                _pendingFocus = false;
+                foreach (var entry in _entries)
+                {
+                    if (entry.PackageName != _focusPackage) continue;
+                    Select(entry, false);
+                    break;
+                }
+            }
+        }
+
+        // ------------------------------------------------------------ messages
+
+        private void SetMessage(string text, MessageType type)
+        {
+            _message = text;
+            _messageType = type;
+            Repaint();
+        }
+
         private static SRTone Tone(MessageType type)
         {
             switch (type)
@@ -141,385 +395,10 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        /// <summary>Themed button. Primary = the one action the row/screen is about; the rest are secondary.</summary>
-        private static bool ActionButton(string label, bool expand = false, bool primary = false)
+        /// <summary>True for the refusals the device screens and bars already show (no second message for them).</summary>
+        private static bool IsNoticeRefusal(Exception e)
         {
-            var kind = primary ? SRButtonKind.Primary : SRButtonKind.Secondary;
-            if (expand) return SRGui.Button(new GUIContent(label), kind, SRButtonSize.Large, GUILayout.ExpandWidth(true), GUILayout.Height(SRMetrics.ButtonLarge));
-            // The theme measures the label with the style that draws it, so longer states never clip.
-            return SRGui.Button(new GUIContent(label), kind, SRButtonSize.Large);
-        }
-
-        // ---------- self-update ----------
-
-        private async void CheckForUpdate()
-        {
-            try
-            {
-                var state = await UpdateService.CheckOncePerSessionAsync();
-                if (state != null) _update = state;
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update check failed: " + e.Message);
-            }
-            Repaint();
-        }
-
-        private void DrawUpdateBanner()
-        {
-            if (_update == null || !_update.UpdateAvailable) return;
-            var latest = _update.Response.latest;
-            var text = "Version " + latest.version + " is available (you have " + _update.CurrentVersion + ").";
-            if (!string.IsNullOrEmpty(latest.notes)) text += "\n" + latest.notes;
-            SRGui.HelpBox(text, _update.MustUpdate ? SRTone.Warning : SRTone.Info);
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                var updating = _applyingUpdate != null || _applyingSelfUpdate;
-                GUI.enabled = _update.CanApply && !updating && !_installingPackage;
-                if (ActionButton(updating ? "Updating…" : "Update", false, true)) ApplyUpdate();
-                GUI.enabled = true;
-                if (!_update.CanApply && !string.IsNullOrEmpty(_update.ApplyBlockedReason))
-                    GUILayout.Label(_update.ApplyBlockedReason, _detailsStyle, GUILayout.ExpandWidth(true));
-            }
-            EditorGUILayout.Space();
-        }
-
-        private void ApplyUpdate()
-        {
-            if (_update != null && _update.UseEmbedded)
-            {
-                ApplyEmbeddedUpdate();
-                return;
-            }
-            _applyingUpdate = UpdateService.Apply(_update);
-            if (_applyingUpdate == null) return;
-            SetMessage("Updating the OnAirDeck Unity Manager… Unity will reload scripts when it finishes.", MessageType.Info);
-            EditorApplication.update += PollApplyingUpdate;
-        }
-
-        private void PollApplyingUpdate()
-        {
-            if (_applyingUpdate == null || !_applyingUpdate.IsCompleted) return;
-            EditorApplication.update -= PollApplyingUpdate;
-            var request = _applyingUpdate;
-            _applyingUpdate = null;
-            if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
-                SetMessage("Updated to " + request.Result.version + ".", MessageType.Info);
-            else
-                SetMessage("Update failed: " + (request.Error != null ? request.Error.message : "unknown error"), MessageType.Error);
-        }
-
-        // ---------- sign in / out ----------
-
-        private void DrawSignedOut()
-        {
-            SRGui.HelpBox("Sign in with your OnAirDeck account to see your purchases.", SRTone.Info);
-            if (ActionButton("Sign in with browser", true, true)) SignIn();
-        }
-
-        private void DrawSigningIn()
-        {
-            SRGui.HelpBox("Approve the request in your browser, then come back to Unity.\nWaiting up to 3 minutes…", SRTone.Info);
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUI.enabled = !string.IsNullOrEmpty(_signInUrl);
-                if (ActionButton("Open sign-in page again")) Application.OpenURL(_signInUrl);
-                GUI.enabled = true;
-                if (ActionButton("Cancel")) CancelSignIn();
-            }
-        }
-
-        private void DrawSignedIn()
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                var who = string.IsNullOrEmpty(_session.email) ? "your OnAirDeck account" : _session.email;
-                GUILayout.Label("Signed in as " + who, SRStyles.Muted, GUILayout.ExpandWidth(true));
-                GUI.enabled = !_signingOut && _downloadingItemId == null;
-                if (ActionButton(_signingOut ? "Signing out…" : "Sign out")) SignOut();
-                GUI.enabled = true;
-            }
-
-            EditorGUILayout.Space();
-            DrawPackages();
-            DrawPurchases();
-            DrawFeedback();
-        }
-
-        private async void SignIn()
-        {
-            CancelSignIn();
-            _signInCancel = new CancellationTokenSource();
-            var cancel = _signInCancel.Token;
-            _signingIn = true;
-            _signInUrl = null;
-            SetMessage(null, MessageType.None);
-
-            try
-            {
-                var session = await AuthService.SignInAsync(url => { _signInUrl = url; Repaint(); }, cancel);
-                _session = session;
-                _purchases = null;
-                _licenses = null;
-                _licensesRefreshed = false;
-                SessionMarker.Write(session.userId);
-                SetMessage("Signed in.", MessageType.Info);
-            }
-            catch (OperationCanceledException)
-            {
-                SetMessage("Sign-in was cancelled.", MessageType.None);
-            }
-            catch (Exception e)
-            {
-                SetMessage(e.Message, MessageType.Error);
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sign-in failed: " + e.Message);
-            }
-            finally
-            {
-                _signingIn = false;
-                _signInUrl = null;
-                Repaint();
-            }
-        }
-
-        private void CancelSignIn()
-        {
-            if (_signInCancel == null) return;
-            _signInCancel.Cancel();
-            _signInCancel.Dispose();
-            _signInCancel = null;
-        }
-
-        private async void SignOut()
-        {
-            _signingOut = true;
-            var session = _session;
-            try
-            {
-                await AuthService.SignOutAsync(session);
-                SetMessage("Signed out.", MessageType.Info);
-            }
-            finally
-            {
-                _session = null;
-                _purchases = null;
-                _licenses = null;
-                _signingOut = false;
-                SessionMarker.Clear();
-                Repaint();
-            }
-        }
-
-        private void OnSessionExpired(string message)
-        {
-            SessionStore.Clear();
-            SessionMarker.Clear();
-            _session = null;
-            _purchases = null;
-            _licenses = null;
-            SetMessage(message, MessageType.Warning);
-        }
-
-        // ---------- purchases ----------
-
-        private void DrawPurchases()
-        {
-            if (_purchases == null && !_loadingPurchases) LoadPurchases();
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.Label("Purchases", SRStyles.Section, GUILayout.ExpandWidth(false));
-                GUILayout.Space(SRMetrics.Space8);
-                _search = SRGui.SearchField(_search, "Search purchases", GUILayout.MinWidth(40));
-                GUILayout.Space(SRMetrics.Space4);
-                GUI.enabled = !_loadingPurchases && _downloadingItemId == null;
-                if (ActionButton(_loadingPurchases ? "Loading…" : "Refresh")) LoadPurchases();
-                GUI.enabled = true;
-            }
-
-            if (_downloadingItemId != null)
-            {
-                SRGui.ProgressBar(_progress, _progressLabel);
-                if (ActionButton("Cancel download", true)) CancelDownload();
-            }
-
-            if (_purchases == null)
-            {
-                SRGui.HelpBox(_loadingPurchases ? "Loading your purchases…" : "Could not load purchases.", _loadingPurchases ? SRTone.Neutral : SRTone.Danger);
-                return;
-            }
-            if (_purchases.Length == 0)
-            {
-                // A license from a BOOTH claim lists its packages above but has no OnAirDeck order.
-                if (_packages != null && _packages.Count > 0)
-                    SRGui.EmptyState("No other downloads", "Your licensed packages are listed above.", null, 120f);
-                else
-                    SRGui.EmptyState("No purchases yet", "Assets you buy on OnAirDeck will appear here.", null, 120f);
-                return;
-            }
-
-            var filter = (_search ?? "").Trim();
-            _scroll = EditorGUILayout.BeginScrollView(_scroll);
-            var shown = 0;
-            foreach (var item in _purchases)
-            {
-                if (filter.Length > 0 && (item.name ?? "").IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                shown++;
-                DrawPurchaseRow(item);
-            }
-            if (shown == 0) GUILayout.Label("No purchases match \"" + filter + "\".", SRStyles.Center);
-            EditorGUILayout.EndScrollView();
-        }
-
-        private void DrawPurchaseRow(PurchaseItem item)
-        {
-            SRGui.BeginCard();
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    GUILayout.Label(item.name ?? "", _purchaseTitleStyle, GUILayout.ExpandWidth(true));
-                    if (item.update_available) SRGui.BadgeLayout("Update available", SRTone.Warning);
-                    else if (item.downloaded) SRGui.BadgeLayout("Downloaded", SRTone.Success);
-                }
-
-                var details = item.date ?? "";
-                if (item.files != null && item.files.Length > 0)
-                    details += "  ·  " + item.files.Length + " file" + (item.files.Length == 1 ? "" : "s");
-
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    GUILayout.Label(details, _detailsStyle, GUILayout.ExpandWidth(true));
-                    if (item.CanDownload)
-                    {
-                        var busy = _downloadingItemId != null;
-                        var thisOne = _downloadingItemId == item.item_id;
-                        GUI.enabled = !busy;
-                        var label = thisOne ? "Downloading…" : item.downloaded ? "Download again" : "Download";
-                        if (ActionButton(label, false, !item.downloaded)) Download(item);
-                        GUI.enabled = true;
-                    }
-                    else
-                    {
-                        GUILayout.Label("Not available in Unity", SRStyles.Mini, GUILayout.ExpandWidth(false));
-                    }
-                }
-            }
-            SRGui.EndCard();
-            GUILayout.Space(SRMetrics.Space4);
-        }
-
-        private async void LoadPurchases()
-        {
-            if (_session == null) return;
-            _loadingPurchases = true;
-            Repaint();
-            try
-            {
-                var response = await OnAirDeckApi.GetPurchasesAndLicensesAsync(_session.token);
-                _purchases = response.purchases;
-                SetLicenses(response.licenses);
-                RefreshLicenses();
-            }
-            catch (SessionExpiredException e)
-            {
-                OnSessionExpired(e.Message);
-            }
-            catch (Exception e)
-            {
-                _purchases = null;
-                SetMessage(e.Message, MessageType.Error);
-            }
-            finally
-            {
-                _loadingPurchases = false;
-                Repaint();
-            }
-        }
-
-        /// <summary>Once per window open: re-issue licenses for items installed here that are missing one or expire soon.</summary>
-        private async void RefreshLicenses()
-        {
-            if (_licensesRefreshed || _session == null || _purchases == null) return;
-            _licensesRefreshed = true;
-            try
-            {
-                var refreshed = await LicenseService.RefreshInstalledAsync(_session.token, _purchases);
-                if (refreshed > 0) Debug.Log(OnAirDeckConfig.LogPrefix + "Refreshed " + refreshed + " license file" + (refreshed == 1 ? "" : "s") + ".");
-            }
-            catch (SessionExpiredException e)
-            {
-                OnSessionExpired(e.Message);
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License refresh failed: " + e.Message);
-            }
-        }
-
-        // ---------- download ----------
-
-        private async void Download(PurchaseItem item)
-        {
-            if (_session == null || _downloadingItemId != null) return;
-
-            // The first download makes the purchase non-refundable (same rule as the website).
-            if (!item.downloaded && !EditorUtility.DisplayDialog(
-                    "Download " + item.name,
-                    "Downloading makes this purchase non-refundable, the same as downloading on onairdeck.com.\n\nLoose files and ZIPs will be placed in " + Installer.ProductFolder(item.name) + ".\nUnity packages open Unity's import dialog and use the paths stored in the package.",
-                    "Download", "Cancel"))
-            {
-                return;
-            }
-
-            CancelDownload();
-            _downloadCancel = new CancellationTokenSource();
-            var cancel = _downloadCancel.Token;
-            _downloadingItemId = item.item_id;
-            _progress = 0f;
-            _progressLabel = "Preparing…";
-            SetMessage(null, MessageType.None);
-
-            try
-            {
-                var summary = await DownloadService.DownloadItemAsync(_session.token, item,
-                    (name, p) => { _progressLabel = name + "  " + Mathf.RoundToInt(p * 100) + "%"; _progress = p; Repaint(); }, cancel);
-                item.downloaded = true;
-                item.update_available = false;
-                SetMessage(item.name + ": " + summary, MessageType.Info);
-            }
-            catch (OperationCanceledException)
-            {
-                SetMessage("Download cancelled.", MessageType.None);
-            }
-            catch (SessionExpiredException e)
-            {
-                OnSessionExpired(e.Message);
-            }
-            catch (Exception e)
-            {
-                SetMessage(e.Message, MessageType.Error);
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Download failed: " + e.Message);
-            }
-            finally
-            {
-                _downloadingItemId = null;
-                if (_downloadCancel != null) { _downloadCancel.Dispose(); _downloadCancel = null; }
-                Repaint();
-            }
-        }
-
-        private void CancelDownload()
-        {
-            if (_downloadCancel == null) return;
-            _downloadCancel.Cancel();
-        }
-
-        private void SetMessage(string text, MessageType type)
-        {
-            _message = text;
-            _messageType = type;
-            Repaint();
+            return e is DeviceLimitException || e is DeviceReleasedException || e is ManagerUpdateRequiredException;
         }
     }
 }

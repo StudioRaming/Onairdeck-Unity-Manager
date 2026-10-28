@@ -13,6 +13,22 @@ namespace OnAirDeck.UnityManager
         public string client;
     }
 
+    // POST plugin-license { product_id, client } for the sellers own product (the contract names no field; item_id is empty there)
+    [Serializable]
+    internal class OwnProductLicenseRequest
+    {
+        public string product_id;
+        public string client;
+    }
+
+    // POST plugin-license { license_id, client } for a seller license (contract v4); the payload product_id is the license id
+    [Serializable]
+    internal class SellerLicenseRequest
+    {
+        public string license_id;
+        public string client;
+    }
+
     /// <summary>The signed half of onairdeck.license, as the server describes it (informational here).</summary>
     [Serializable]
     internal class LicensePayload

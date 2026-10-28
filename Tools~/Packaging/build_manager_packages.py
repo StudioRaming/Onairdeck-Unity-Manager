@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Builds the Git-free install files of the OnAirDeck Unity Manager (standard library only).
+"""Builds the Git-free install files of the Atelier Manager (standard library only).
 
     python Tools~/Packaging/build_manager_packages.py [--out DIR] [--version X.Y.Z]
 
 Writes, into --out (default Tools~/Packaging/out):
 
-  OnAirDeck-Unity-Manager-<version>.unitypackage   every file at Packages/com.studioraming.manager/<relative path>,
+  Atelier-Manager.unitypackage             the same bytes without the version, so
+                                                   releases/latest/download/Atelier-Manager.unitypackage is a stable link
+  Atelier-Manager-<version>.unitypackage   every file at Packages/com.studioraming.manager/<relative path>,
                                                    keeping the GUIDs in the committed .meta files
   com.studioraming.manager-<version>.zip           the package root at the zip root (what the Manager's own
                                                    self-update and PackageZip validation expect)
@@ -22,6 +24,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
 import zipfile
@@ -270,17 +273,22 @@ def main():
         files, assets = plan(root, out_dir)
         os.makedirs(out_dir, exist_ok=True)
         zip_path = os.path.join(out_dir, PACKAGE_NAME + "-" + version + ".zip")
-        pkg_path = os.path.join(out_dir, "OnAirDeck-Unity-Manager-" + version + ".unitypackage")
+        pkg_path = os.path.join(out_dir, "Atelier-Manager-" + version + ".unitypackage")
         build_zip(root, files, zip_path)
         build_unitypackage(root, assets, pkg_path)
+        latest_path = os.path.join(out_dir, "Atelier-Manager.unitypackage")
+        shutil.copyfile(pkg_path, latest_path)
         errors = check_zip(root, files, zip_path, version) + check_unitypackage(root, assets, pkg_path, version)
+        with open(pkg_path, "rb") as a, open(latest_path, "rb") as b:
+            if a.read() != b.read():
+                errors.append("version-less unitypackage differs from the versioned one")
     except BuildError as error:
         print("BUILD FAILED: " + str(error))
         return 1
     if errors:
         print("SELF-CHECK FAILED:\n  " + "\n  ".join(errors))
         return 1
-    for path in (zip_path, pkg_path):
+    for path in (zip_path, pkg_path, latest_path):
         with open(path, "rb") as fh:
             digest = sha256(fh.read())
         print("%s  %d bytes  sha256 %s" % (path, os.path.getsize(path), digest))

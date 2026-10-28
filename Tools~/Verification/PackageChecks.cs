@@ -821,7 +821,7 @@ internal static class PackageChecks
         var before = Snapshot(project);
 
         // The add-on alone would duplicate the stray file's GUID: refused before anything moves.
-        Throws<PackageInstallException>(() => PackageTransaction.Execute(project, new[] { addon }, Now), "already use GUIDs", "alone");
+        Throws<PackageInstallException>(() => PackageTransaction.Execute(project, new[] { addon }, Now), "cannot be installed in a project that has " + Core, "alone");
         Equal(before, Snapshot(project));
         Require(!File.Exists(PackageTransaction.JournalPath(project)) && !Directory.Exists(PackageTransaction.BackupRoot(project)));
 

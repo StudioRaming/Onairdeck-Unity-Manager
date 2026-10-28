@@ -18,6 +18,11 @@ namespace OnAirDeck.UnityManager
         /// <summary>package.json name and version of the container; "" when there is none or it cannot be read.</summary>
         public string PackageName = "";
         public string PackageVersion = "";
+        /// <summary>
+        /// Under Assets/: project-relative path of the nearest ancestor folder that holds a package.json (an external package imported into
+        /// Assets, never the old product install); "" when the file is in plain Assets content. PackageName/PackageVersion describe it.
+        /// </summary>
+        public string AssetsPackage = "";
     }
 
     /// <summary>An installed package that holds colliding files and could be put back in place by reinstalling it.</summary>
@@ -112,14 +117,42 @@ namespace OnAirDeck.UnityManager
             return candidates;
         }
 
+        /// <summary>
+        /// Why the install is refused. Files inside a package folder (another vendor's, or a stub) get one line per
+        /// package, in the user's language: they are never offered for moving. Leftover files under Assets/ keep the
+        /// path list.
+        /// </summary>
         public static string Refusal(IList<GuidCollision> collisions)
         {
+            var language = LegacyInstallText.Language();
+            var perPackage = new List<string>();
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var assets = new List<GuidCollision>();
+            foreach (var collision in collisions)
+            {
+                if (collision.Container.Length == 0 && collision.AssetsPackage.Length == 0) { assets.Add(collision); continue; }
+                var folderPath = collision.Container.Length > 0 ? collision.Container : collision.AssetsPackage;
+                var label = collision.PackageName.Length > 0 ? collision.PackageName : Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, '/'));
+                int n;
+                counts.TryGetValue(label, out n);
+                if (n == 0) perPackage.Add(label);
+                counts[label] = n + 1;
+            }
             var sb = new StringBuilder();
-            sb.Append("Cannot install: ").Append(collisions.Count).Append(" file(s) elsewhere in the project already use GUIDs that the new package brings, which would break references. Remove or migrate them first. Up to ")
-              .Append(ShownPaths).Append(" shown:");
-            for (var i = 0; i < Math.Min(ShownPaths, collisions.Count); i++)
-                sb.Append("\n  ").Append(collisions[i].Path).Append(" (").Append(collisions[i].Guid).Append(")");
-            if (collisions.Count > ShownPaths) sb.Append("\n  and ").Append(collisions.Count - ShownPaths).Append(" more");
+            foreach (var label in perPackage)
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(LegacyInstallText.ForeignRefusal(language, label, counts[label]));
+            }
+            if (assets.Count > 0)
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append("Cannot install: ").Append(assets.Count).Append(" file(s) under Assets/ still use GUIDs that the new package brings, which would break references. Up to ")
+                  .Append(ShownPaths).Append(" shown:");
+                for (var i = 0; i < Math.Min(ShownPaths, assets.Count); i++)
+                    sb.Append("\n  ").Append(assets[i].Path).Append(" (").Append(assets[i].Guid).Append(")");
+                if (assets.Count > ShownPaths) sb.Append("\n  and ").Append(assets.Count - ShownPaths).Append(" more");
+            }
             return sb.ToString();
         }
 
@@ -135,11 +168,24 @@ namespace OnAirDeck.UnityManager
                 var manifest = ReadManifest(folder);
                 if (manifest != null) { name = manifest.Name; version = manifest.Version; }
             }
-            var pending = new Stack<string>();
-            pending.Push(folder);
+            // Each folder carries the nearest package boundary above it (an ancestor with a package.json under Assets).
+            var pending = new Stack<KeyValuePair<string, string>>();
+            pending.Push(new KeyValuePair<string, string>(folder, ""));
             while (pending.Count > 0)
             {
-                var current = pending.Pop();
+                var entry = pending.Pop();
+                var current = entry.Key;
+                var boundary = entry.Value;
+                if (container.Length == 0 && boundary.Length == 0 && !SamePath(current, folder) && File.Exists(Path.Combine(current, "package.json")))
+                    boundary = Path.GetFullPath(current).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace('\\', '/');
+                var boundaryName = name;
+                var boundaryVersion = version;
+                if (boundary.Length > 0)
+                {
+                    var inner = ReadManifest(Path.Combine(root, boundary.Replace('/', Path.DirectorySeparatorChar)));
+                    boundaryName = inner != null ? inner.Name : "";
+                    boundaryVersion = inner != null ? inner.Version : "";
+                }
                 foreach (var meta in Directory.EnumerateFiles(current, "*.meta"))
                 {
                     var guid = ReadGuid(meta);
@@ -149,16 +195,31 @@ namespace OnAirDeck.UnityManager
                         Guid = guid,
                         Path = Path.GetFullPath(meta).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace('\\', '/'),
                         Container = container,
-                        PackageName = name,
-                        PackageVersion = version
+                        PackageName = boundaryName,
+                        PackageVersion = boundaryVersion,
+                        AssetsPackage = boundary
                     });
                 }
                 foreach (var child in Directory.EnumerateDirectories(current))
                 {
                     if (Ignored(Path.GetFileName(child)) || excluded.Contains(Normalize(child))) continue;
-                    pending.Push(child);
+                    pending.Push(new KeyValuePair<string, string>(child, boundary));
                 }
             }
+        }
+
+        private static bool SamePath(string a, string b) { return Normalize(a) == Normalize(b); }
+
+        /// <summary>Every GUID in the .meta files of an extracted package folder.</summary>
+        public static HashSet<string> ReadFolderGuids(string folder)
+        {
+            var guids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var meta in Directory.EnumerateFiles(folder, "*.meta", SearchOption.AllDirectories))
+            {
+                var guid = ReadGuid(meta);
+                if (guid != null) guids.Add(guid);
+            }
+            return guids;
         }
 
         private static PackageManifest ReadManifest(string folder)
@@ -181,6 +242,9 @@ namespace OnAirDeck.UnityManager
         {
             return Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant();
         }
+
+        /// <summary>The GUID of one .meta file, null when unreadable.</summary>
+        internal static string GuidOfMeta(string metaPath) { return ReadGuid(metaPath); }
 
         private static string ReadGuid(string metaPath)
         {

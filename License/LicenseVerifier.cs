@@ -31,12 +31,96 @@ namespace OnAirDeck.License
         {
             get
             {
+#if ATELIER_DEV_SERVER
+                // Developer builds only: a local stack signs with its own key. Never defined in a normal install.
+                RSAParameters devKey;
+                var pem = DevPublicKeyPem == null ? null : DevPublicKeyPem();
+                if (!string.IsNullOrWhiteSpace(pem) && TryParsePublicKeyPem(pem, out devKey)) return devKey;
+#endif
                 return new RSAParameters
                 {
                     Modulus = Convert.FromBase64String(ModulusBase64),
                     Exponent = Convert.FromBase64String(ExponentBase64)
                 };
             }
+        }
+
+#if ATELIER_DEV_SERVER
+        /// <summary>Set by the Manager's DevServerHook: the PEM of a local stack's public key, or empty.</summary>
+        internal static Func<string> DevPublicKeyPem;
+#endif
+
+        /// <summary>Reads an RSA public key from PEM (SubjectPublicKeyInfo "PUBLIC KEY" or PKCS#1 "RSA PUBLIC KEY"). False when it is not one.</summary>
+        internal static bool TryParsePublicKeyPem(string pem, out RSAParameters key)
+        {
+            key = new RSAParameters();
+            try
+            {
+                var base64 = new System.Text.StringBuilder();
+                foreach (var raw in (pem ?? "").Replace("\r", "").Split('\n'))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("-----", StringComparison.Ordinal)) continue;
+                    base64.Append(line);
+                }
+                var der = Convert.FromBase64String(base64.ToString());
+                int tag, start, length;
+                if (!Tlv(der, 0, der.Length, out tag, out start, out length) || tag != 0x30) return false;
+                var end = start + length;
+                int innerTag, innerStart, innerLength;
+                if (!Tlv(der, start, end, out innerTag, out innerStart, out innerLength)) return false;
+                if (innerTag == 0x30)
+                {
+                    // SubjectPublicKeyInfo: { algorithm, BIT STRING { 0x00, RSAPublicKey } }
+                    int bitTag, bitStart, bitLength;
+                    if (!Tlv(der, innerStart + innerLength, end, out bitTag, out bitStart, out bitLength) || bitTag != 0x03 || bitLength < 2) return false;
+                    var bitEnd = bitStart + bitLength;
+                    if (!Tlv(der, bitStart + 1, bitEnd, out tag, out start, out length) || tag != 0x30) return false;
+                    end = start + length;
+                    if (!Tlv(der, start, end, out innerTag, out innerStart, out innerLength)) return false;
+                }
+                if (innerTag != 0x02) return false;
+                int exponentTag, exponentStart, exponentLength;
+                if (!Tlv(der, innerStart + innerLength, end, out exponentTag, out exponentStart, out exponentLength) || exponentTag != 0x02) return false;
+                key = new RSAParameters
+                {
+                    Modulus = Unsigned(der, innerStart, innerLength),
+                    Exponent = Unsigned(der, exponentStart, exponentLength)
+                };
+                return key.Modulus.Length >= 128 && key.Exponent.Length > 0;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool Tlv(byte[] data, int position, int end, out int tag, out int start, out int length)
+        {
+            tag = 0; start = 0; length = 0;
+            if (position < 0 || position + 2 > end || end > data.Length) return false;
+            tag = data[position];
+            int size = data[position + 1];
+            var at = position + 2;
+            if (size >= 0x80)
+            {
+                var count = size & 0x7f;
+                if (count < 1 || count > 3 || at + count > end) return false;
+                size = 0;
+                for (var i = 0; i < count; i++) size = (size << 8) | data[at++];
+            }
+            if (size < 0 || at + size > end) return false;
+            start = at;
+            length = size;
+            return true;
+        }
+
+        private static byte[] Unsigned(byte[] data, int start, int length)
+        {
+            while (length > 1 && data[start] == 0) { start++; length--; }
+            var result = new byte[length];
+            Array.Copy(data, start, result, 0, length);
+            return result;
         }
 
         /// <summary>
@@ -69,7 +153,7 @@ namespace OnAirDeck.License
             }
 
             if (!VerifySignature(payload, signature, publicKey))
-                return result.With(LicenseStatus.InvalidSignature, "The license signature is not OnAirDeck's. Download the asset again with OnAirDeck Unity Manager.");
+                return result.With(LicenseStatus.InvalidSignature, "The license signature is not OnAirDeck's. Download the asset again with Atelier Manager.");
 
             // Only trust the payload after the signature proves it left the server unchanged.
             var fields = ParsePayload(payload);
@@ -96,7 +180,7 @@ namespace OnAirDeck.License
             if (iat > nowUnix + ClockSkewSeconds)
                 return result.With(LicenseStatus.NotYetValid, "The license was issued in the future; check this computer's clock.");
             if (nowUnix >= exp)
-                return result.With(LicenseStatus.Expired, "The license has expired. Open OnAirDeck Unity Manager to renew it.");
+                return result.With(LicenseStatus.Expired, "The license has expired. Open Atelier Manager to renew it.");
 
             return result.With(LicenseStatus.Valid, "Licensed to the signed-in OnAirDeck account.");
         }

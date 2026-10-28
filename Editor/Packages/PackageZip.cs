@@ -16,6 +16,10 @@ namespace OnAirDeck.UnityManager
         public readonly List<KeyValuePair<string, string>> VpmDependencies = new List<KeyValuePair<string, string>>();
         /// <summary>The same dependencies with the value exactly as package.json wrote it ("=0.1.16" or "0.1.16"), same order.</summary>
         public readonly List<KeyValuePair<string, string>> VpmDependenciesRaw = new List<KeyValuePair<string, string>>();
+        /// <summary>Contract v9: "atelier": {"replacesAssetFolders": [...]} as written; unchecked, LegacyInstall applies the guard rails.</summary>
+        public readonly List<string> ReplacesAssetFolders = new List<string>();
+        /// <summary>"atelier": {"legacyInventory": "&lt;path in zip&gt;"}: the file listing exactly what the old Assets install held; "" when absent.</summary>
+        public string LegacyInventory = "";
     }
 
     /// <summary>
@@ -115,8 +119,45 @@ namespace OnAirDeck.UnityManager
                     manifest.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(pair.Key, raw));
                 }
             }
+            object atelier;
+            var atelierMap = fields.TryGetValue("atelier", out atelier) ? atelier as Dictionary<string, object> : null;
+            if (atelierMap != null) manifest.LegacyInventory = MiniJson.GetString(atelierMap, "legacyInventory") ?? "";
+            object replaces;
+            var list = atelierMap != null && atelierMap.TryGetValue("replacesAssetFolders", out replaces) ? replaces as List<object> : null;
+            if (list != null)
+                foreach (var entry in list)
+                {
+                    var text = entry as string;
+                    if (!string.IsNullOrEmpty(text)) manifest.ReplacesAssetFolders.Add(text);
+                }
             return manifest;
         }
+
+        public const long MaxInventoryBytes = 8L * 1024 * 1024;
+
+        /// <summary>Reads one file of the zip (a validated entry, at most <paramref name="maxBytes"/>). Throws when it is missing or too large.</summary>
+        public static byte[] ReadEntry(string zipPath, string relative, long maxBytes)
+        {
+            using (var stream = File.OpenRead(zipPath))
+            using (var archive = OpenArchive(stream))
+            {
+                var wanted = (relative ?? "").Replace('\\', '/').Trim('/');
+                foreach (var entry in ValidatedEntries(archive))
+                {
+                    if (entry.IsDirectory || !string.Equals(entry.Relative, wanted, StringComparison.Ordinal)) continue;
+                    if (entry.Source.Length > maxBytes) throw new PackageInstallException("The package file " + wanted + " is unreasonably large.");
+                    using (var input = entry.Source.Open())
+                    using (var memory = new MemoryStream())
+                    {
+                        input.CopyTo(memory);
+                        return memory.ToArray();
+                    }
+                }
+            }
+            throw new PackageInstallException("The package has no file " + NormalizeEntry(relative) + ".");
+        }
+
+        private static string NormalizeEntry(string relative) { return (relative ?? "").Replace('\\', '/').Trim('/'); }
 
         private sealed class ValidEntry
         {

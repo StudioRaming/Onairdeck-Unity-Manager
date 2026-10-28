@@ -15,7 +15,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <CheckTfm Condition="'$(CheckTfm)' == ''">netstandard2.1</CheckTfm>
-    <CheckDefines Condition="'$(CheckDefines)' == ''">UNITY_EDITOR;UNITY_2020_2_OR_NEWER</CheckDefines>
+    <CheckDefines Condition="'$(CheckDefines)' == ''">UNITY_EDITOR;UNITY_2020_2_OR_NEWER;UNITY_2021_1_OR_NEWER</CheckDefines>
     <UnityManaged Condition="'$(UnityManaged)' == ''">C:/Program Files/Unity/Hub/Editor/2021.3.18f1/Editor/Data/Managed/UnityEngine</UnityManaged>
     <TargetFramework>$(CheckTfm)</TargetFramework>
     <LangVersion>7.3</LangVersion>
@@ -34,6 +34,8 @@
     <Reference Include="$(UnityManaged)/UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="$(UnityManaged)/UnityEngine.IMGUIModule.dll" Private="false" />
     <Reference Include="$(UnityManaged)/UnityEngine.JSONSerializeModule.dll" Private="false" />
+    <Reference Include="$(UnityManaged)/UnityEngine.ImageConversionModule.dll" Private="false" />
+    <Reference Include="$(UnityManaged)/UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="$(UnityManaged)/UnityEngine.UnityWebRequestModule.dll" Private="false" />
     <Reference Include="$(UnityManaged)/UnityEditor.CoreModule.dll" Private="false" />
     <Reference Include="$(UnityManaged)/UnityEditor.dll" Private="false" />

@@ -42,9 +42,12 @@ namespace OnAirDeck.UnityManager
         public readonly List<InstalledEntry> Installed = new List<InstalledEntry>();
         public bool ManifestUpdated;
         public string ManifestBackup = "";
+        /// <summary>Set when the product's own installer took over (legacy hand-off). Not an install success: the installer finishes the job.</summary>
+        public string HandedOff = "";
 
         public string Describe()
         {
+            if (HandedOff.Length > 0) return HandedOff;
             var sb = new StringBuilder();
             foreach (var entry in Installed)
             {
@@ -413,7 +416,7 @@ namespace OnAirDeck.UnityManager
         // opens freshly written files for a moment after they are closed. Measured on 2026-10-26 with Defender on:
         // 8 of 80 add-on extractions failed the first move with "access denied", and every one moved on a retry
         // within 135 ms. So a move is retried for a short while; anything that is not a transient lock fails at once.
-        private static void MoveEntry(string source, string destination)
+        internal static void MoveEntry(string source, string destination)
         {
             var isFolder = Directory.Exists(source);
             var waited = 0;

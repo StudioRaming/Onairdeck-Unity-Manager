@@ -25,20 +25,39 @@ namespace OnAirDeck.UnityManager
             get { return Path.GetDirectoryName(Application.dataPath); }
         }
 
-        /// <summary>Installs one OnAirDeck package version plus the dependencies it names, then resolves and refreshes once.</summary>
+        /// <summary>
+        /// Installs one OnAirDeck package version plus the dependencies it names, then resolves and refreshes once.
+        /// <paramref name="licenses"/> is the account license list of the caller (the window last plugin-purchases): a dependency
+        /// that one of those license versions offers at the exact version is downloaded from there before the public listings are
+        /// tried. Null keeps the old behavior (listings only). After the install the license files are ensured for that list.
+        /// A missing dependency throws <see cref="DependencyUnavailableException"/> (Kind says whether to offer the website).
+        /// </summary>
         public static async Task<InstallReport> InstallAsync(
-            string sessionToken, LicenseVersionEntry version, Action<string, float> onProgress, CancellationToken cancel)
+            string sessionToken, LicenseVersionEntry version, Action<string, float> onProgress, CancellationToken cancel, LicenseEntry[] licenses = null, bool userInitiated = true,
+            Func<LegacyPlan, bool> confirmLegacy = null)
         {
             if (!version.IsPackage) throw new PackageInstallException("This version is not an installable package.");
+            LegacyHandoff.ThrowIfWaiting();
             var root = ProjectRoot;
-            var refusal = InstalledPackages.LegacyRefusal(root, version.package_name);
-            if (refusal != null) throw new PackageInstallException(refusal);
+            LegacyMove legacyMove = null;
+            var collisionCheck = false;
 
             var cacheFolders = new List<string>();
             try
             {
                 Report(onProgress, "Requesting the download…", 0f);
-                var files = await OnAirDeckApi.RequestLicenseVersionDownloadAsync(sessionToken, version.version_id);
+                DownloadFile[] files;
+                try
+                {
+                    files = await OnAirDeckApi.RequestLicenseVersionDownloadAsync(sessionToken, version.version_id, userInitiated);
+                }
+                catch (Exception e)
+                {
+                    // A device-limit or update-required refusal reaches the window; retrying runs the whole install again.
+                    DeviceLimitNotice.Report(e, version.package_name + " " + version.package_version,
+                        async () => (object)await InstallAsync(sessionToken, version, onProgress, cancel, licenses, true, confirmLegacy), "install:" + version.package_name);
+                    throw;
+                }
                 var file = PickFile(files, version);
                 PackageDownloadChecks.RequireHttps(file.url);
                 var zip = await Downloader.DownloadAsync(file.url, PathSafety.SafeFileName(file.file_name),
@@ -49,11 +68,31 @@ namespace OnAirDeck.UnityManager
                 var manifest = PackageZip.Validate(zip, version.package_name, version.package_version);
 
                 var items = new List<InstallItem>();
+                Func<Task<object>> retry = async () => (object)await InstallAsync(sessionToken, version, onProgress, cancel, licenses, true, confirmLegacy);
                 await CollectDependenciesAsync(root, manifest, items, new Dictionary<string, string>(), new Dictionary<string, VpmListing>(),
-                    cacheFolders, onProgress, cancel, 0);
+                    cacheFolders, onProgress, cancel, 0, sessionToken, licenses, retry, userInitiated);
                 items.Add(new InstallItem { Name = version.package_name, Version = version.package_version, ZipPath = zip });
+                // Contract v9: an older copy under Assets/ is moved to the backup after consent (never from a background caller).
+                LegacyHandoffRequest handoff;
+                legacyMove = LegacyInstall.Prepare(root, ProbesFor(root, items, version, licenses), userInitiated, confirmLegacy, DateTime.Now, out handoff);
+                if (handoff != null)
+                {
+                    // The product's own installer cleans up and installs; the Manager imports it and waits (LegacyHandoff). Nothing is moved.
+                    await LegacyHandoffRunner.StartAsync(sessionToken, handoff, onProgress, cancel, userInitiated);
+                    return new InstallReport { HandedOff = LegacyInstallText.HandedOff(LegacyInstallText.Language(), handoff.Product) };
+                }
+                collisionCheck = legacyMove != null;
                 await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
-                return Apply(root, items, onProgress, cancel);
+                collisionCheck = false;
+                var report = Apply(root, items, onProgress, cancel);
+                if (legacyMove != null) legacyMove.MarkInstalled();
+                await EnsureLicenseFilesQuietlyAsync(sessionToken, licenses, userInitiated);
+                return report;
+            }
+            catch (Exception e)
+            {
+                if (legacyMove == null) throw;
+                throw RestoreLegacy(legacyMove, e, collisionCheck);
             }
             finally
             {
@@ -68,6 +107,7 @@ namespace OnAirDeck.UnityManager
         public static async Task<InstallReport> SelfUpdateAsync(
             string downloadUrl, string packageName, string version, string packageFolder, Action<string, float> onProgress, CancellationToken cancel)
         {
+            LegacyHandoff.ThrowIfWaiting();
             var root = ProjectRoot;
             PackageDownloadChecks.RequireHttps(downloadUrl);
             if (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))
@@ -86,7 +126,7 @@ namespace OnAirDeck.UnityManager
 
                 var items = new List<InstallItem>();
                 await CollectDependenciesAsync(root, manifest, items, new Dictionary<string, string>(), new Dictionary<string, VpmListing>(),
-                    cacheFolders, onProgress, cancel, 0);
+                    cacheFolders, onProgress, cancel, 0, null, null, null, false);
                 items.Add(new InstallItem { Name = packageName, Version = version, ZipPath = zip, TargetFolder = packageFolder });
                 await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
                 return Apply(root, items, onProgress, cancel);
@@ -97,6 +137,57 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        // One probe per item of the install; the requested package carries its license id (the marker rule needs it).
+        internal static List<LegacyProbe> ProbesFor(string root, List<InstallItem> items, LicenseVersionEntry version, LicenseEntry[] licenses)
+        {
+            var licenseId = "";
+            var display = version.package_name;
+            LegacyInstallerFile installer = null;
+            LegacyInstallerFile zipFile = null;
+            if (licenses != null)
+                foreach (var license in licenses)
+                    foreach (var candidate in license.versions ?? new LicenseVersionEntry[0])
+                        if (candidate.version_id == version.version_id)
+                        {
+                            licenseId = license.license_id ?? "";
+                            if (!string.IsNullOrEmpty(license.name)) display = license.name;
+                            installer = LegacyInstallerFile.ForLegacyCase(root, version.package_name, version, license.versions);
+                            if (installer != null) zipFile = LegacyInstallerFile.OfVersion(version);
+                        }
+            var probes = new List<LegacyProbe>();
+            foreach (var item in items)
+            {
+                var main = item.Name == version.package_name;
+                probes.Add(new LegacyProbe
+                {
+                    Name = item.Name, Version = item.Version, ZipPath = item.ZipPath, TargetFolder = item.TargetFolder,
+                    Display = main ? display : item.Name, LicenseId = main ? licenseId : "", Installer = main ? installer : null, Zip = main ? zipFile : null
+                });
+            }
+            return probes;
+        }
+
+        // The install did not happen: the moved old install goes back, and the message says so.
+        internal static Exception RestoreLegacy(LegacyMove move, Exception failure, bool stillColliding)
+        {
+            var language = LegacyInstallText.Language();
+            var failed = move.Restore();
+            try { AssetDatabase.Refresh(); } catch (Exception) { }
+            if (failure is OperationCanceledException) return failure;
+            var reason = stillColliding
+                ? LegacyInstallText.StillColliding(language) + "\n" + failure.Message
+                : LegacyInstallText.InstallFailedRestored(language, failure.Message);
+            if (failed.Count > 0) reason += "\n" + LegacyInstallText.RestoreIncomplete(language, move.BackupFolder);
+            return new PackageInstallException(reason, failure);
+        }
+
+        // A license file that cannot be written must not fail an install that already succeeded; a refusal shows in the notice.
+        private static async Task EnsureLicenseFilesQuietlyAsync(string sessionToken, LicenseEntry[] licenses, bool userInitiated)
+        {
+            try { await LicenseService.EnsureLicenseFilesAsync(sessionToken, licenses, userInitiated); }
+            catch (Exception) { }
+        }
+
         private static InstallReport Apply(string root, List<InstallItem> items, Action<string, float> onProgress, CancellationToken cancel)
         {
             cancel.ThrowIfCancellationRequested();
@@ -104,7 +195,9 @@ namespace OnAirDeck.UnityManager
             var report = PackageTransaction.Execute(root, items, DateTime.Now);
             // A reload follows Refresh, so the window's own code may never see this result: leave it where the next load can show it.
             SessionState.SetString(ReportKey, report.Describe());
-            Client.Resolve();
+#if UNITY_2021_1_OR_NEWER
+            Client.Resolve();   // older editors resolve the changed manifest on the refresh below
+#endif
             AssetDatabase.Refresh();
             Report(onProgress, "Done", 1f);
             return report;
@@ -183,7 +276,8 @@ namespace OnAirDeck.UnityManager
         // Dependencies are added before the packages that need them, so the swap order is dependency first.
         private static async Task CollectDependenciesAsync(
             string root, PackageManifest manifest, List<InstallItem> items, Dictionary<string, string> planned,
-            Dictionary<string, VpmListing> listings, List<string> cacheFolders, Action<string, float> onProgress, CancellationToken cancel, int depth)
+            Dictionary<string, VpmListing> listings, List<string> cacheFolders, Action<string, float> onProgress, CancellationToken cancel, int depth,
+            string sessionToken, LicenseEntry[] licenses, Func<Task<object>> retry, bool userInitiated)
         {
             if (depth > MaxDependencyDepth) throw new PackageInstallException("The dependency chain is too deep.");
             foreach (var dependency in manifest.VpmDependencies)
@@ -198,19 +292,45 @@ namespace OnAirDeck.UnityManager
                 if (InstalledPackages.InstalledVersion(root, dependency.Key) == dependency.Value) continue;
                 planned[dependency.Key] = dependency.Value;
 
-                var refusal = InstalledPackages.LegacyRefusal(root, dependency.Key);
-                if (refusal != null) throw new PackageInstallException(refusal);
-
-                var listed = await FindInListingsAsync(dependency.Key, dependency.Value, listings, cancel);
-                PackageDownloadChecks.RequireHttps(listed.Url);
+                // Order: installed (skipped above), then a license version of this account, then the trusted listings.
+                var resolution = await DependencyResolver.ResolveAsync(dependency.Key, dependency.Value, "", licenses,
+                    () => FindInListingsAsync(dependency.Key, dependency.Value, listings, cancel));
                 var label = dependency.Key + " " + dependency.Value;
-                var zip = await Downloader.DownloadAsync(listed.Url, PathSafety.SafeFolderName(dependency.Key + "-" + dependency.Value, "dependency") + ".zip",
-                    p => Report(onProgress, "Downloading " + label, 0.6f * p), cancel);
-                cacheFolders.Add(Path.GetDirectoryName(zip));
-                PackageDownloadChecks.RequireSha256(zip, listed.Sha256, label);
-                var depManifest = PackageZip.Validate(zip, dependency.Key, dependency.Value);
+                string zip;
+                PackageManifest depManifest;
+                if (resolution.Source == DependencySource.LicenseVersion)
+                {
+                    var licenseVersion = resolution.LicenseVersion;
+                    DownloadFile[] files;
+                    try
+                    {
+                        files = await OnAirDeckApi.RequestLicenseVersionDownloadAsync(sessionToken, licenseVersion.version_id, userInitiated);
+                    }
+                    catch (Exception e)
+                    {
+                        // The device gate applies here too; a refusal reaches the window and its retry runs the whole install again.
+                        if (!(e is OperationCanceledException)) DeviceLimitNotice.Report(e, label, retry, "install-dependency");
+                        throw;
+                    }
+                    var file = PickFile(files, licenseVersion);
+                    PackageDownloadChecks.RequireHttps(file.url);
+                    zip = await Downloader.DownloadAsync(file.url, PathSafety.SafeFileName(file.file_name),
+                        p => Report(onProgress, "Downloading " + label, 0.6f * p), cancel);
+                    cacheFolders.Add(Path.GetDirectoryName(zip));
+                    depManifest = PackageZip.Validate(zip, dependency.Key, dependency.Value);
+                }
+                else
+                {
+                    var listed = resolution.Listed;
+                    PackageDownloadChecks.RequireHttps(listed.Url);
+                    zip = await Downloader.DownloadAsync(listed.Url, PathSafety.SafeFolderName(dependency.Key + "-" + dependency.Value, "dependency") + ".zip",
+                        p => Report(onProgress, "Downloading " + label, 0.6f * p), cancel);
+                    cacheFolders.Add(Path.GetDirectoryName(zip));
+                    PackageDownloadChecks.RequireSha256(zip, listed.Sha256, label);
+                    depManifest = PackageZip.Validate(zip, dependency.Key, dependency.Value);
+                }
 
-                await CollectDependenciesAsync(root, depManifest, items, planned, listings, cacheFolders, onProgress, cancel, depth + 1);
+                await CollectDependenciesAsync(root, depManifest, items, planned, listings, cacheFolders, onProgress, cancel, depth + 1, sessionToken, licenses, retry, userInitiated);
                 items.Add(new InstallItem { Name = dependency.Key, Version = dependency.Value, ZipPath = zip });
             }
         }
@@ -239,8 +359,10 @@ namespace OnAirDeck.UnityManager
                 var found = listing.Find(name, version);
                 if (found != null) return found;
             }
-            throw new PackageInstallException("Version " + version + " of " + name + " is not in the trusted package listing."
-                + (lastError != null ? " (" + lastError + ")" : ""));
+            // Null means every listing was read and none has it; an unreadable listing is an error (not "not published").
+            if (lastError != null)
+                throw new PackageInstallException("Version " + version + " of " + name + " is not in the trusted package listing. (" + lastError + ")");
+            return null;
         }
 
         private static void Report(Action<string, float> onProgress, string label, float progress)

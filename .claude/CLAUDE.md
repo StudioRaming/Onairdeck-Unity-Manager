@@ -1,4 +1,4 @@
-# OnAirDeck Unity Manager — working notes
+# Atelier Manager (formerly OnAirDeck Unity Manager) — working notes
 
 This folder is the Unity package repo **StudioRaming/Onairdeck-Unity-Manager** (GitHub, owner account StudioRaming / studioraming@gmail.com). Package id `com.studioraming.manager`.
 
@@ -13,8 +13,10 @@ This folder is the Unity package repo **StudioRaming/Onairdeck-Unity-Manager** (
 Commits and pushes must be StudioRaming. The global gitconfig on this PC is a different account on purpose, so this repo has its own local `user.name`/`user.email`/`credential.https://github.com.username`. Push without the Git Credential Manager prompt:
 
 ```
-git -c credential.helper= -c 'credential.helper=!f() { echo username=StudioRaming; echo "password=$GITHUB_TOKEN"; }; f' push
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push
 ```
+
+(2026-10-29: the older `password=$GITHUB_TOKEN` helper failed with "Invalid username or token"; the gh helper above uses the signed-in StudioRaming gh account.)
 
 ## Code rules
 
@@ -27,5 +29,5 @@ git -c credential.helper= -c 'credential.helper=!f() { echo username=StudioRamin
 - Every file and folder in the package needs a committed `.meta` (git packages are immutable; Unity ignores assets without one). New files: write a `.meta` with a fresh random 32-hex `guid` (MonoImporter for .cs, AssemblyDefinitionImporter for .asmdef, folderAsset for folders, TextScriptImporter for .md) — or let Unity create them by adding the package from disk in a test project.
 - **Compile check without Unity:** `dotnet build` in `Tools~/CompileCheck` (C# 7.3 against the 2021.3.18f1 DLLs; both code paths documented in the .csproj). Unity batch mode does NOT work here unless Unity Hub is signed in ("Access token is unavailable" → license failure), so the dotnet check is the default; the user still tests interactively in Unity.
 - Sanitize every server-supplied file name or zip entry before writing under `Assets/` (no `..`, rooted, or drive paths).
-- Backend endpoints: `https://sptkmcrpgdvoegbfzqqq.supabase.co/functions/v1/plugin-*` with the public publishable key as `apikey`, and the opaque session token as `Authorization: Bearer`. Login page: `https://onairdeck.com/plugin-auth`.
+- Backend endpoints: `https://pxxhdnsqezitxlkievhf.supabase.co/functions/v1/plugin-*` (Seoul project; the old Mumbai project `sptkmcrpgdvoegbfzqqq` no longer receives updates) with the public publishable key as `apikey`, and the opaque session token as `Authorization: Bearer`. Login page: `https://onairdeck.com/plugin-auth`.
 - Reference implementation: the Warudo plugin in the sibling `..\Warudo_sr_plugin_fix` checkout, `Assets\StudioRaming\StudioRamingPlugin.cs` (sign-in) and `StudioRamingPlugin.Vdesk.Download.cs` (download).

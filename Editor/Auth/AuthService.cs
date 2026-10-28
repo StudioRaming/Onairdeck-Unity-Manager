@@ -26,7 +26,7 @@ namespace OnAirDeck.UnityManager
 
             using (var listener = LoopbackListener.Start())
             {
-                var url = OnAirDeckConfig.WebsiteUrl + "/plugin-auth" +
+                var url = DevServer.SiteUrl + "/plugin-auth" +
                           "?redirect_uri=" + Uri.EscapeDataString(listener.RedirectUri) +
                           "&state=" + Uri.EscapeDataString(state) +
                           "&code_challenge=" + Uri.EscapeDataString(challenge) +
@@ -48,7 +48,7 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static Task SignOutAsync(SavedSession session)
         {
-            return SignOutAsync(session, SessionStore.DefaultKey);
+            return SignOutAsync(session, SessionStore.ActiveKey);
         }
 
         /// <summary>Same as above with an explicit EditorPrefs key (verification uses a throwaway key).</summary>

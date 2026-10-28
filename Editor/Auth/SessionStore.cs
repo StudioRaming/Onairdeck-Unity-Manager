@@ -14,9 +14,12 @@ namespace OnAirDeck.UnityManager
     {
         internal const string DefaultKey = "OnAirDeck.UnityManager.Session";
 
+        /// <summary>DefaultKey, or its ".Dev" twin while a dev build points at a local server (see DevServer.Redirected).</summary>
+        internal static string ActiveKey { get { return DevServer.Separate(DefaultKey); } }
+
         public static SavedSession Load()
         {
-            return Load(DefaultKey);
+            return Load(ActiveKey);
         }
 
         // The key overloads exist so verification can use a throwaway EditorPrefs key without
@@ -52,13 +55,13 @@ namespace OnAirDeck.UnityManager
                 email = response.email ?? "",
                 expiresAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + lifetime,
             };
-            EditorPrefs.SetString(DefaultKey, JsonUtility.ToJson(session));
+            EditorPrefs.SetString(ActiveKey, JsonUtility.ToJson(session));
             return session;
         }
 
         public static void Clear()
         {
-            Clear(DefaultKey);
+            Clear(ActiveKey);
         }
 
         internal static void Clear(string key)

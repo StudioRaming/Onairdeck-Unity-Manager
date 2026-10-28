@@ -39,6 +39,13 @@ internal static class Program
             AuthChecks.Run(Check);
             LicenseChecks.Run(Check, _project);
             PackageChecks.Run(Check, _project);
+            DeviceChecks.Run(Check);
+            CatalogChecks.Run(Check);
+            ServiceChecks.Run(Check, _project);
+            ReviewChecks.Run(Check);
+            MarkerChecks.Run(Check, _project);
+            LegacyChecks.Run(Check, _project);
+            DevChecks.Run(Check);
         }
         finally
         {
