@@ -75,19 +75,19 @@ namespace OnAirDeck.UnityManager
 
         // ------------------------------------------------------------ the main buttons of the detail pane
 
-        /// <summary>The newest installable package version of a license entry, or null.</summary>
-        private static LicenseVersionEntry NewestPackage(CatalogEntry entry)
+        /// <summary>The package version a license entry offers by default (the newest release, see BuildKinds.IndexOfOffered), or null.</summary>
+        private static LicenseVersionEntry OfferedPackage(CatalogEntry entry)
         {
             foreach (var row in entry.Versions)
-                if (row.License != null && row.License.IsPackage) return row.License;
+                if (row.Latest && row.License != null && row.License.IsPackage) return row.License;
             return null;
         }
 
-        /// <summary>The newest non-package (.unitypackage or other file) version of a license entry, or null.</summary>
-        private static LicenseVersionEntry NewestFileVersion(CatalogEntry entry)
+        /// <summary>The non-package (.unitypackage or other file) version a license entry offers by default, or null.</summary>
+        private static LicenseVersionEntry OfferedFileVersion(CatalogEntry entry)
         {
             foreach (var row in entry.Versions)
-                if (row.License != null && !row.License.IsPackage) return row.License;
+                if (row.Latest && row.License != null && !row.License.IsPackage) return row.License;
             return null;
         }
 
@@ -96,11 +96,11 @@ namespace OnAirDeck.UnityManager
             if (entry.Kind == FavoriteKind.Purchase) DoDownload(entry);
             else
             {
-                var version = NewestPackage(entry);
+                var version = OfferedPackage(entry);
                 if (version != null) DoInstall(entry, version);
                 else
                 {
-                    var file = NewestFileVersion(entry);
+                    var file = OfferedFileVersion(entry);
                     if (file != null) DoInstallFile(entry, file);
                 }
             }

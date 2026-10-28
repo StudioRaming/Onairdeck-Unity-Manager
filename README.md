@@ -36,6 +36,7 @@ Package Manager fetches the package with Git, so Git must be installed. To pin a
 5. Each download also saves a signed `onairdeck.license` in the product folder, and while you are signed in a small `OnAirDeck/session.json` marker lives in your local app-data folder (no token inside). Assets that check their license need both; the Manager refreshes the license file silently when it is about to expire.
 6. When a newer Manager is published, the window shows **Update**. Packages installed from a git URL update in place; a Manager installed from the unitypackage, the zip or VCC replaces its own folder (see below) and, under VCC, also sets its version in `Packages/vpm-manifest.json`; a copy added with **Add package from disk…** must be updated by hand. The banner stays for the whole Editor session, script reloads included.
 7. **Device limit.** A seller can limit a license to a number of computers (MingToon and its URP add-on: 3). A computer is one PC, whatever Unity version or project; the Manager sends a hash of the hardware id and the computer name with each signed-in request, never the id itself. On a computer over the limit, sign-in and the purchase list still work, but download, package install and license files for that license are refused until you release one of your other computers (in the Manager, or on the My Page of onairdeck.com). An OnAirDeck Unity Manager of 0.6.1 or older (the former name) cannot be used with a limited license and asks you to update.
+8. **Preview, beta and hotfix.** Install and Update use the newest release. A preview or beta (`0.1.15-preview.1`, `0.1.15-beta.1`) carries a chip in the Versions tab and is installed only when you pick it there; once a project runs one, newer previews and betas are offered as updates, and so is the next release. A hotfix is an ordinary newer version (for example 0.1.16) and is marked Hotfix when the seller's label says so.
 
 Downloads made before 0.2.1 stay in their existing folders. Download again to place loose files or ZIP contents in the new folder. The manager does not move existing assets or their `.meta` files.
 
@@ -135,6 +136,7 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 5. 다운로드 시 상품 폴더에 서명된 `onairdeck.license` 파일이 함께 저장되고, 로그인 중에는 로컬 앱데이터 폴더에 `OnAirDeck/session.json` 표식(토큰은 포함되지 않음)이 유지됩니다. 라이선스를 확인하는 에셋은 이 두 파일이 필요하며, 만료가 가까워지면 매니저가 자동으로 갱신합니다.
 6. 새 버전의 매니저가 공개되면 창에 **Update** 버튼이 표시됩니다. git URL로 설치한 패키지는 그 자리에서 업데이트되고, unitypackage나 zip으로 설치한 매니저는 스스로 폴더를 교체하며(아래 참고), **Add package from disk…**로 추가한 복사본은 직접 갱신해야 합니다. 알림은 스크립트를 다시 불러와도 Editor를 끌 때까지 남습니다.
 7. **기기 제한.** 판매자는 라이선스를 쓸 수 있는 컴퓨터 수를 제한할 수 있습니다(MingToon과 URP 애드온은 3대). 기기는 Unity 버전이나 프로젝트와 무관하게 PC 한 대입니다. 매니저는 로그인된 요청마다 하드웨어 ID의 해시와 컴퓨터 이름만 보내고 ID 자체는 보내지 않습니다. 제한을 넘은 컴퓨터에서도 로그인과 구매 목록은 되지만, 그 라이선스의 다운로드·패키지 설치·라이선스 파일 발급은 다른 컴퓨터를 해제할 때까지 거부됩니다(매니저 또는 onairdeck.com 마이페이지에서 해제). 0.6.1 이하 OnAirDeck Unity Manager(이전 이름)는 제한된 라이선스를 쓸 수 없어 업데이트를 안내합니다.
+8. **프리뷰·베타·핫픽스.** 설치와 업데이트는 가장 새 정식판을 씁니다. 프리뷰나 베타(`0.1.15-preview.1`, `0.1.15-beta.1`)는 버전 탭에 표시가 붙고, 거기서 직접 골라야 설치됩니다. 프리뷰나 베타를 쓰는 프로젝트에는 더 새 프리뷰·베타와 다음 정식판이 업데이트로 표시됩니다. 핫픽스는 번호가 올라간 일반 버전(예: 0.1.16)이며, 판매자가 라벨에 핫픽스라고 적으면 표시가 붙습니다.
 
 판매자는 활성 Plus 멤버십이 있어야 Atelier 상품 편집기의 파일별 **Unity download**를 켤 수 있습니다. 구매자에게는 Plus가 필요하지 않습니다. 구매 옵션에 포함되지 않은 파일과 외부 링크는 Unity에서 다운로드할 수 없습니다. 이전 버전으로 받은 파일은 기존 폴더에 남습니다.
 
@@ -171,6 +173,7 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 5. ダウンロード時に署名付きの `onairdeck.license` が商品フォルダーに保存され、サインイン中はローカルのアプリデータフォルダーに `OnAirDeck/session.json` のマーカー（トークンは含みません）が置かれます。ライセンスを確認するアセットにはこの2つのファイルが必要で、期限が近づくとマネージャーが自動的に更新します。
 6. 新しいバージョンのマネージャーが公開されると、ウィンドウに **Update** ボタンが表示されます。git URLでインストールしたパッケージはその場で更新され、unitypackageやzipで入れたマネージャーは自分のフォルダーを置き換えます（下記参照）。**Add package from disk…** で追加したコピーは手動で更新してください。通知はスクリプトを再読み込みしても、Editorを閉じるまで残ります。
 7. **台数制限。** 出品者はライセンスを使えるコンピューターの台数を制限できます（MingToonとURPアドオンは3台）。1台とは、Unityのバージョンやプロジェクトに関係なくPC 1台です。マネージャーはサインイン中のリクエストごとにハードウェアIDのハッシュとコンピューター名だけを送り、IDそのものは送りません。上限を超えたコンピューターでもサインインと購入一覧は使えますが、そのライセンスのダウンロード、パッケージのインストール、ライセンスファイルの発行は、別のコンピューターを解除するまで拒否されます（マネージャー、またはonairdeck.comのマイページで解除）。0.6.1以前のOnAirDeck Unity Manager（旧名称）は制限付きライセンスを使えず、更新を案内します。
+8. **プレビュー・ベータ・ホットフィックス。** インストールと更新には最新の正式版が使われます。プレビューやベータ（`0.1.15-preview.1`、`0.1.15-beta.1`）はバージョンタブに表示が付き、そこで選んだときだけインストールされます。プレビューやベータを使っているプロジェクトには、より新しいプレビュー・ベータと次の正式版が更新として表示されます。ホットフィックスは番号が上がった通常のバージョン（例: 0.1.16）で、出品者がラベルにホットフィックスと書くと表示が付きます。
 
 出品者は有効なPlusメンバーシップで、Atelierの商品編集画面の各ファイルの **Unity download** を有効にできます。購入者にPlusは不要です。購入オプションに含まれないファイルや外部リンクはUnityからダウンロードできません。以前のバージョンで取得したファイルは元のフォルダーに残ります。
 

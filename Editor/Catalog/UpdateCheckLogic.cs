@@ -63,7 +63,7 @@ namespace OnAirDeck.UnityManager
                     if (version == null || !version.IsPackage) continue;
                     var installed = installedVersion(version.package_name) ?? "";
                     if (installed.Length == 0) continue;
-                    if (IsPrerelease(version.package_version) && !IsPrerelease(installed)) continue;
+                    if (PackageVersion.IsPrerelease(version.package_version) && !PackageVersion.IsPrerelease(installed)) continue;
                     if (PackageVersion.Compare(version.package_version, installed) <= 0) continue;
                     UpdateCandidate current;
                     if (best.TryGetValue(version.package_name, out current) && PackageVersion.Compare(version.package_version, current.Latest) <= 0) continue;
@@ -82,11 +82,6 @@ namespace OnAirDeck.UnityManager
             names.Sort(StringComparer.Ordinal);
             foreach (var name in names) found.Add(best[name]);
             return found;
-        }
-
-        private static bool IsPrerelease(string version)
-        {
-            return !string.IsNullOrEmpty(version) && version.IndexOf('-') >= 0;
         }
     }
 }

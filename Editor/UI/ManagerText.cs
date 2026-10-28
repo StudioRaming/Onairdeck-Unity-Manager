@@ -64,6 +64,10 @@ namespace OnAirDeck.UnityManager
         public static string ChipNew { get { return Pick("새 버전", "New Version", "新バージョン"); } }
         public static string ChipInst { get { return Pick("설치됨", "Installed", "インストール済み"); } }
         public static string ChipLatest { get { return Pick("최신", "Up to Date", "最新"); } }
+        public static string ChipHotfix { get { return Pick("핫픽스", "Hotfix", "ホットフィックス"); } }
+        public static string ChipPreview { get { return Pick("프리뷰", "Preview", "プレビュー"); } }
+        public static string ChipBeta { get { return Pick("베타", "Beta", "ベータ"); } }
+        public static string ChipPrerelease { get { return Pick("사전 공개", "Pre-release", "先行版"); } }
         public static string BGet { get { return Pick("받기", "Download", "ダウンロード"); } }
         public static string BAgain { get { return Pick("다시 받기", "Download Again", "もう一度ダウンロード"); } }
         public static string BInst { get { return Pick("설치", "Install", "インストール"); } }

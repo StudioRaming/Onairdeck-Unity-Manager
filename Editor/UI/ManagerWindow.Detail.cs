@@ -111,7 +111,7 @@ namespace OnAirDeck.UnityManager
 
             if (_cleanupRequired.Contains(entry.Key))
             {
-                var version = NewestPackage(entry);
+                var version = OfferedPackage(entry);
                 if (SRGui.HelpBox(ManagerText.CleanupNeeded, SRTone.Warning, ManagerText.BInst) && version != null && !Busy)
                     Defer(() => DoInstall(entry, version));
                 GUILayout.Space(SRMetrics.Space6);
@@ -239,7 +239,7 @@ namespace OnAirDeck.UnityManager
                         Defer(() => PrimaryAction(entry));
                 }
             }
-            if (primary == null && entry.IsLicense && !entry.HasPackageVersions && NewestFileVersion(entry) != null)
+            if (primary == null && entry.IsLicense && !entry.HasPackageVersions && OfferedFileVersion(entry) != null)
             {
                 using (new GUIEnabledScope(!busy))
                 {
@@ -338,6 +338,19 @@ namespace OnAirDeck.UnityManager
             GUILayout.EndHorizontal();
         }
 
+        /// <summary>The chip text of a build kind, or null for a release.</summary>
+        private static string KindChip(BuildKind kind)
+        {
+            switch (kind)
+            {
+                case BuildKind.Hotfix: return ManagerText.ChipHotfix;
+                case BuildKind.Preview: return ManagerText.ChipPreview;
+                case BuildKind.Beta: return ManagerText.ChipBeta;
+                case BuildKind.Prerelease: return ManagerText.ChipPrerelease;
+                default: return null;
+            }
+        }
+
         private void DrawVersionsTab(CatalogEntry entry, float width)
         {
             if (entry.Versions.Count == 0)
@@ -351,6 +364,8 @@ namespace OnAirDeck.UnityManager
                 SRGui.BeginCard();
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(row.Label, SRStyles.Strong, GUILayout.ExpandWidth(false));
+                var kindChip = KindChip(row.Kind);
+                if (kindChip != null) SRGui.BadgeLayout(kindChip, row.Kind == BuildKind.Hotfix ? SRTone.Info : SRTone.Warning);
                 if (row.Installed) SRGui.BadgeLayout(ManagerText.ChipInst, SRTone.Success);
                 GUILayout.Label(row.Date, SRStyles.Muted, GUILayout.ExpandWidth(true));
                 if (row.License != null && !row.Installed)

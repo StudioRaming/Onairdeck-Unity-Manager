@@ -19,6 +19,7 @@ internal static class CatalogChecks
         check("thumbnails: eviction is oldest first and stops at the cap", ThumbEviction);
         check("update check: throttle (session, 6 hours, signed in, clock moved back)", Throttle);
         check("update check: purchases and installed packages with a newer version", FindUpdates);
+        check("versions: a release is offered before a preview or beta unless a prerelease is installed; hotfix and kind chips", OfferedVersion);
         check("batch: order, progress text, results", BatchOrder);
         check("batch: cancel stops after the current item", BatchCancel);
         check("batch: a failed item does not stop the rest; a rejected session does", BatchFailures);
@@ -167,6 +168,53 @@ internal static class CatalogChecks
         Equal("pkg.e", found[2].Name);
         Equal("1.0.0", found[2].Latest);
         Equal(0, UpdateCheckLogic.Find(null, null, n => "").Count);
+    }
+
+    private static void OfferedVersion()
+    {
+        Func<string, LicenseVersionEntry[], LicenseEntry> license = (id, versions) =>
+            new LicenseEntry { license_id = id, name = id, versions = versions };
+        var mixed = new[] { V("pkg.a", "0.1.15-preview.1"), V("pkg.a", "0.1.14"), V("pkg.a", "0.1.15-beta.1") };
+
+        // Not installed: the newest release is offered, the preview and beta only carry their chips.
+        var entry = ManagerCatalog.Build(null, new[] { license("L1", mixed) }, n => "", null)[0];
+        Equal("0.1.14", entry.LatestVersion);
+        Equal(EntryState.None, entry.State);
+        Equal("0.1.15-preview.1", entry.Versions[0].Label);
+        Equal(BuildKind.Preview, entry.Versions[0].Kind);
+        Equal(BuildKind.Beta, entry.Versions[1].Kind);
+        Require(!entry.Versions[0].Latest && !entry.Versions[1].Latest && entry.Versions[2].Latest);
+
+        // A stable install of the newest release is up to date, not offered the preview.
+        entry = ManagerCatalog.Build(null, new[] { license("L1", mixed) }, n => "0.1.14", null)[0];
+        Equal("0.1.14", entry.LatestVersion);
+        Equal(EntryState.Latest, entry.State);
+
+        // A project already on a prerelease is offered the newest of all.
+        entry = ManagerCatalog.Build(null, new[] { license("L1", mixed) }, n => "0.1.15-beta.1", null)[0];
+        Equal("0.1.15-preview.1", entry.LatestVersion);
+        Equal(EntryState.New, entry.State);
+
+        // Only previews: the newest preview is offered.
+        entry = ManagerCatalog.Build(null, new[] { license("L1", new[] { V("pkg.a", "0.2.0-preview.1"), V("pkg.a", "0.2.0-preview.2") }) }, n => "", null)[0];
+        Equal("0.2.0-preview.2", entry.LatestVersion);
+
+        // A hotfix is a normal patch release; its label adds the chip.
+        var hotfix = V("pkg.a", "0.1.16");
+        hotfix.version_label = "0.1.15 Hotfix 1";
+        entry = ManagerCatalog.Build(null, new[] { license("L1", new[] { hotfix, V("pkg.a", "0.1.15") }) }, n => "0.1.15", null)[0];
+        Equal("0.1.16", entry.LatestVersion);
+        Equal(EntryState.New, entry.State);
+        Equal(BuildKind.Hotfix, entry.Versions[0].Kind);
+
+        // Files (.unitypackage): the label decides; the newest non-beta file is offered.
+        Func<string, string, string, LicenseVersionEntry> file = (id, label, at) =>
+            new LicenseVersionEntry { version_id = id, version_label = label, file_name = "MaskMaker.unitypackage", released_at = at };
+        entry = ManagerCatalog.Build(null, new[] { license("L2", new[] {
+            file("f1", "2.0.0", "2026-10-01T00:00:00Z"), file("f2", "2.1.0 beta", "2026-10-20T00:00:00Z") }) }, n => "", null)[0];
+        Equal("2.0.0", entry.LatestVersion);
+        Equal(BuildKind.Beta, entry.Versions[0].Kind);
+        Require(!entry.Versions[0].Latest && entry.Versions[1].Latest);
     }
 
     // ---------- batch ----------
