@@ -23,6 +23,8 @@ https://github.com/StudioRaming/Onairdeck-Unity-Manager.git
 
 Package Manager fetches the package with Git, so Git must be installed. To pin a version, append a tag: `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<tag>`.
 
+**VRChat Creator Companion (VCC):** add the listing `https://studioraming.github.io/atelier-package-manager/index.json` (or click **Add to VCC** on https://studioraming.github.io/atelier-package-manager/), then add **Atelier Manager** to the project. The listing lives in [StudioRaming/atelier-package-manager](https://github.com/StudioRaming/atelier-package-manager); each entry is the release zip with its SHA-256.
+
 ## Use
 
 1. Open **Window ▸ Atelier Manager** and click **Sign in with browser**. Approve the request on onairdeck.com. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
@@ -32,7 +34,7 @@ Package Manager fetches the package with Git, so Git must be installed. To pin a
    - `.zip` files are extracted, and other files are copied, into `Assets/StudioRaming_Onairdeck/<Product>/`.
 4. **Update available** appears when the seller replaced a file after your last download.
 5. Each download also saves a signed `onairdeck.license` in the product folder, and while you are signed in a small `OnAirDeck/session.json` marker lives in your local app-data folder (no token inside). Assets that check their license need both; the Manager refreshes the license file silently when it is about to expire.
-6. When a newer Manager is published, the window shows **Update**. Packages installed from a git URL update in place; a Manager installed from the unitypackage or zip replaces its own folder (see below); a copy added with **Add package from disk…** must be updated by hand. The banner stays for the whole Editor session, script reloads included.
+6. When a newer Manager is published, the window shows **Update**. Packages installed from a git URL update in place; a Manager installed from the unitypackage, the zip or VCC replaces its own folder (see below) and, under VCC, also sets its version in `Packages/vpm-manifest.json`; a copy added with **Add package from disk…** must be updated by hand. The banner stays for the whole Editor session, script reloads included.
 7. **Device limit.** A seller can limit a license to a number of computers (MingToon and its URP add-on: 3). A computer is one PC, whatever Unity version or project; the Manager sends a hash of the hardware id and the computer name with each signed-in request, never the id itself. On a computer over the limit, sign-in and the purchase list still work, but download, package install and license files for that license are refused until you release one of your other computers (in the Manager, or on the My Page of onairdeck.com). An OnAirDeck Unity Manager of 0.6.1 or older (the former name) cannot be used with a limited license and asks you to update.
 
 Downloads made before 0.2.1 stay in their existing folders. Download again to place loose files or ZIP contents in the new folder. The manager does not move existing assets or their `.meta` files.
@@ -209,6 +211,8 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] Self-update of an embedded install, 0.1.0 to 0.1.1 from a local test server (Unity 2021.3.45f2, 2026-10-29): folder replaced, script reload, "Updated to 0.1.1", no leftover folder. The update banner survives script reloads.
 - [x] Device limit against a local server (Unity 2021.3.45f2, 2026-10-29): the over-limit screen, releasing a device from it, the action going on after the release, the device tab refreshing after a license is issued.
 - [ ] Self-update of a git URL install (`Client.Add` with the next tag) in a real editor.
+- [x] VCC listing `atelier-package-manager` published (2026-10-29): live `index.json` lists 0.1.0, and the zip it points at matches the listed SHA-256.
+- [ ] Install through VCC and self-update a VCC install (`vpm-manifest.json` version follows) in a real VCC project.
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
 - [x] Repository made public (2026-10-08).
 - [x] Release tag `0.1.0` (2026-10-29).
