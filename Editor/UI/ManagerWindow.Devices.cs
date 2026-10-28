@@ -96,7 +96,11 @@ namespace OnAirDeck.UnityManager
                 if (notice != null && notice.Kind == NoticeKind.DeviceLimit)
                 {
                     // The refused action goes on with the freed seat; it may raise the screen again when another license is still full.
-                    try { await DeviceLimitNotice.RetryAsync(); }
+                    try
+                    {
+                        await DeviceLimitNotice.RetryAsync();
+                        if (DeviceLimitNotice.Current == null) SetMessage(ManagerText.DeviceFreedRetried, MessageType.Info);
+                    }
                     catch (Exception e) { if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error); }
                 }
                 ReloadDevices();

@@ -34,6 +34,7 @@ namespace OnAirDeck.UnityManager
         public static string StNewFile { get { return Pick("새 {l} 버전이 있어요", "New version {l} is available", "新しいバージョン {l} があります"); } }
         public static string ReissueLicense { get { return Pick("라이선스 다시 받기", "Get License Again", "ライセンスを再取得"); } }
         public static string LicenseReissued { get { return Pick("라이선스를 다시 받았어요.", "The license was renewed.", "ライセンスを更新しました。"); } }
+        public static string DeviceFreedRetried { get { return Pick("기기를 뺐어요. 이제 이 PC에서 쓸 수 있어요.", "The device was removed. This PC can use it now.", "デバイスを外しました。このPCで使えるようになりました。"); } }
 
         public static string Cancelled { get { return Pick("취소했어요.", "Cancelled.", "キャンセルしました。"); } }
         public static string Declined { get { return Pick("설치하지 않았어요. 바뀐 것은 없어요.", "Not installed. Nothing was changed.", "インストールしませんでした。変更はありません。"); } }
