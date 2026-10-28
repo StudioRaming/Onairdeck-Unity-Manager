@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.1] - 2026-10-28
+
+- **OnAirDeck moved its backend to Seoul.** `FunctionsUrl` and the publishable key now point at the Seoul Supabase project (`pxxhdnsqezitxlkievhf`). Sign-in, purchases, downloads, package installs and feedback all go there; 0.6.0 and older call the old Mumbai project, which no longer receives updates, so update to 0.6.1. Licence files issued before the move stay valid (same signing key). After updating, sign in again once.
+
 ## [0.6.0] - 2026-10-27
 
 - **Feedback / 문의.** A new section at the bottom of the window (signed in only, collapsed until opened) sends a bug report, a feature request or a question to OnAirDeck, where it lands in the admin bug-report list with the account. Kind popup (Bug / Feature request / Question), a message of up to 4000 characters, an optional error code of up to 200, a toggle **Attach recent Console errors (N)**, the environment shown read-only before sending, **Send** (disabled while sending or while the message is empty or too long) and the result below it with a short reference. Too many messages (more than 5 in 10 minutes) get their own message; an expired sign-in signs out as everywhere else. The draft survives a script reload.
