@@ -37,6 +37,7 @@
     <Compile Include="../../Editor/Packages/LegacyHandler.cs" />
     <Compile Include="../../Editor/Packages/LegacyHandoff.cs" />
     <Compile Include="../../Editor/Packages/MingToonLegacyCleanup.cs" />
+    <Compile Include="../../Editor/Download/UnityPackageArchive.cs" />
     <Compile Include="../../Editor/Packages/DependencyResolver.cs" />
     <Compile Include="../../Editor/License/LicenseFilePlan.cs" />
     <Compile Include="../../Editor/Catalog/PurchaseWatcherLogic.cs" />
@@ -60,6 +61,8 @@
     <Compile Include="../../Editor/Packages/PackageInstallException.cs" />
     <Compile Include="../../Editor/Packages/PackageTransaction.cs" />
     <Compile Include="../../Editor/Packages/PackageVersion.cs" />
+    <Compile Include="../../Editor/Packages/BuildKind.cs" />
+    <Compile Include="../../Editor/UI/ManagerCatalog.cs" />
     <Compile Include="../../Editor/Packages/PackageZip.cs" />
     <Compile Include="../../Editor/Packages/VpmListing.cs" />
     <Compile Include="../../Editor/Packages/VpmManifestUpdater.cs" />

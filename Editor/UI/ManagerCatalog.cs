@@ -20,7 +20,8 @@ namespace OnAirDeck.UnityManager
         public LicenseVersionEntry License;   // package version: install this
         public PurchaseVersion Purchase;      // file version
         public bool Installed;
-        public bool Latest;
+        public bool Latest;                   // the version offered by default (licenses: the newest release, see BuildKinds.IndexOfOffered)
+        public BuildKind Kind;                // licenses: release, hotfix, preview, beta or other prerelease (its chip)
     }
 
     /// <summary>A purchase or a seller license as the window lists it (key "p:&lt;id&gt;" / "l:&lt;id&gt;", the same keys the favorites and the new-purchase watcher use).</summary>
@@ -41,7 +42,7 @@ namespace OnAirDeck.UnityManager
         public readonly List<VersionRow> Versions = new List<VersionRow>();   // newest first
         public string PackageName = "";       // license: the package of its newest package version
         public string InstalledVersion = "";  // license: what this project has
-        public string LatestVersion = "";
+        public string LatestVersion = "";     // license: the version offered by default, which is never a preview or beta unless one is installed or nothing else exists
         public EntryState State = EntryState.None;
         public int MaxDevices;
         public int DevicesUsed;
@@ -159,6 +160,11 @@ namespace OnAirDeck.UnityManager
             if (versions.Count == 0 && files.Count == 0 && !marker && license.max_devices <= 0) return null;
             versions.Sort((a, b) => PackageVersion.Compare(b.package_version, a.package_version));
             var newest = versions.Count > 0 ? versions[0] : null;
+            var installed = newest != null && installedVersion != null ? (installedVersion(newest.package_name) ?? "") : "";
+            // A preview or beta is offered only to a project that already runs a prerelease, or when there is nothing else.
+            var packageKinds = versions.ConvertAll(v => BuildKinds.OfPackage(v.package_version, v.version_label));
+            var offeredIndex = BuildKinds.IndexOfOffered(packageKinds, PackageVersion.IsPrerelease(installed));
+            var offered = offeredIndex >= 0 ? versions[offeredIndex] : null;
             var entry = new CatalogEntry
             {
                 Key = key,
@@ -172,14 +178,14 @@ namespace OnAirDeck.UnityManager
                 IsOwn = license.IsOwn,
                 MaxDevices = license.max_devices,
                 DevicesUsed = license.devices_used,
-                PackageName = newest != null ? newest.package_name : "",
-                LatestVersion = newest != null ? newest.package_version : "",
+                PackageName = offered != null ? offered.package_name : "",
+                LatestVersion = offered != null ? offered.package_version : "",
             };
-            var installed = newest != null && installedVersion != null ? (installedVersion(newest.package_name) ?? "") : "";
             entry.InstalledVersion = installed;
             DateTime latest = DateTime.MinValue;
-            foreach (var v in versions)
+            for (var i = 0; i < versions.Count; i++)
             {
+                var v = versions[i];
                 DateTime when;
                 if (TryParseDate(v.released_at, out when) && when > latest) latest = when;
                 entry.Versions.Add(new VersionRow
@@ -190,25 +196,32 @@ namespace OnAirDeck.UnityManager
                     Size = v.file_size,
                     License = v,
                     Installed = installed.Length > 0 && v.package_name == newest.package_name && v.package_version == installed,
-                    Latest = entry.Versions.Count == 0,
+                    Latest = i == offeredIndex,
+                    Kind = packageKinds[i],
                 });
             }
             files.Sort((a, b) => string.CompareOrdinal(b.released_at ?? "", a.released_at ?? ""));
-            foreach (var v in files)
+            // A file has no version to parse: its label says whether it is a preview or beta, and the newest other file is offered.
+            var fileLabels = files.ConvertAll(v => string.IsNullOrEmpty(v.version_label) ? (v.file_name ?? "") : v.version_label);
+            var fileKinds = fileLabels.ConvertAll(l => BuildKinds.OfLabel(l));
+            var offeredFile = BuildKinds.IndexOfOffered(fileKinds, false);
+            for (var i = 0; i < files.Count; i++)
             {
+                var v = files[i];
                 DateTime when;
                 if (TryParseDate(v.released_at, out when) && when > latest) latest = when;
                 entry.Versions.Add(new VersionRow
                 {
-                    Label = string.IsNullOrEmpty(v.version_label) ? (v.file_name ?? "") : v.version_label,
+                    Label = fileLabels[i],
                     Date = FormatDate(v.released_at),
                     Notes = v.release_notes ?? "",
                     Size = v.file_size,
                     License = v,
-                    Latest = entry.Versions.Count == 0,
+                    Latest = i == offeredFile,
+                    Kind = fileKinds[i],
                 });
             }
-            if (versions.Count == 0 && entry.Versions.Count > 0) entry.LatestVersion = entry.Versions[0].Label;
+            if (versions.Count == 0 && offeredFile >= 0) entry.LatestVersion = fileLabels[offeredFile];
             entry.SortDate = latest;
             entry.State = StateOfPackage(installed, entry.LatestVersion);
             if (entry.State == EntryState.None && marker) entry.State = EntryState.Latest;   // installed as a .unitypackage (no version to compare)

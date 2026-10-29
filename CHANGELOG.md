@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1]
+
+- **A product update whose files keep the installed time is re-imported.** A .unitypackage carries its file times and Unity keeps them; an overwritten file whose time did not change was not re-imported, so an update packed with the same fixed time as the installed version left the old DLL loaded. `PackageImportQueue` records the package files that already exist before the import and force-imports those that still carry the same time once it completes (a fresh install re-imports nothing). The tar.gz reader is shared in `UnityPackageArchive`.
+- **Versions tab.** The chips and the date have a gap, and the notes shown open are those of the version Install picks.
+- **Preview, beta and hotfix builds are told apart.** A package version with a semver prerelease part (`0.1.15-preview.1`, `-beta.N`, any other such as `-rc.1`) gets a Preview, Beta or Pre-release chip in the Versions tab and is no longer the default Install or Update for a project that runs a release; it is installed when picked by hand. A project already on a prerelease is offered the newest of all (the update check already worked this way), and a package with no release yet offers its newest prerelease. A hotfix is an ordinary patch release, since semver has no hotfix rank; a seller label with the word hotfix, 핫픽스 or ホットフィックス adds a Hotfix chip. A file version (.unitypackage) has no version to parse, so the same words in its label decide (whole words, so "Preset" is not a preview) and the newest non-prerelease file is the default. Rules in `Editor/Packages/BuildKind.cs`; checks in `Tools~/Verification` (build kinds, offered version).
+
 ## [0.1.0]
 
 - **First version under the new name Atelier Manager** (formerly OnAirDeck Unity Manager 0.6.1). The package id `com.studioraming.manager`, the namespaces, `onairdeck.license` and the EditorPrefs keys are unchanged. Display name, README titles (EN/KO/JA), user-facing messages and release file names (`Atelier-Manager-<version>.unitypackage`, `Atelier-Manager.unitypackage`) use the new name; the zip stays `com.studioraming.manager-<version>.zip`.

@@ -17,6 +17,8 @@ namespace OnAirDeck.UnityManager
         private const string Key = "OnAirDeck.UnityManager.PendingImports";
         private const string InteractiveKey = "OnAirDeck.UnityManager.InteractiveImports";
         private static bool _importing;
+        // The package's files that existed before its import, with their write times (see ReimportUnchanged).
+        private static Dictionary<string, DateTime> _overwritten;
 
         static PackageImportQueue()
         {
@@ -51,6 +53,7 @@ namespace OnAirDeck.UnityManager
             if (list.Count == 0) return;
 
             _importing = true;
+            _overwritten = ExistingFiles(list[0]);
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
@@ -59,7 +62,46 @@ namespace OnAirDeck.UnityManager
 
         private static void OnCompleted(string packageName)
         {
+            ReimportUnchanged();
             Finish("Imported " + packageName, false);
+        }
+
+        private static Dictionary<string, DateTime> ExistingFiles(string packagePath)
+        {
+            try
+            {
+                var paths = UnityPackageArchive.AssetPaths(packagePath);
+                return paths == null ? null : UnityPackageArchive.ExistingFileTimes(PackageInstallService.ProjectRoot, paths);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not list " + Path.GetFileName(packagePath) + ": " + e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// A .unitypackage carries its file times and Unity keeps them; an overwritten file whose time did not change is not
+        /// re-imported, so an update packed with the same fixed time as the installed version left the old DLL loaded
+        /// (MaskMaker DRM QA, Unity 2022.3, 2026-10-29). Re-imports the package's files that existed before and kept their time.
+        /// </summary>
+        private static void ReimportUnchanged()
+        {
+            var before = _overwritten;
+            _overwritten = null;
+            if (before == null || before.Count == 0) return;
+            var stale = UnityPackageArchive.UnchangedSince(PackageInstallService.ProjectRoot, before);
+            if (stale.Count == 0) return;
+            AssetDatabase.StartAssetEditing();
+            try
+            {
+                foreach (var path in stale) AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            }
+            finally
+            {
+                AssetDatabase.StopAssetEditing();
+            }
+            Debug.Log(OnAirDeckConfig.LogPrefix + "Re-imported " + stale.Count + " file(s) the package overwrote with an unchanged time.");
         }
 
         private static void OnCancelled(string packageName)
@@ -77,6 +119,7 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCompleted -= OnCompleted;
             AssetDatabase.importPackageCancelled -= OnCancelled;
             AssetDatabase.importPackageFailed -= OnFailed;
+            _overwritten = null;
 
             var list = Load();
             if (list.Count > 0)

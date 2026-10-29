@@ -14,6 +14,12 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(version) && Exact.IsMatch(version);
         }
 
+        /// <summary>Whether a version has a prerelease part ("1.0.0-beta.2", "0.1.15-preview.1").</summary>
+        public static bool IsPrerelease(string version)
+        {
+            return !string.IsNullOrEmpty(version) && version.IndexOf('-') >= 0;
+        }
+
         /// <summary>
         /// A vpmDependencies value that pins one version: "X" or "=X" (one leading "="). Anything else
         /// (ranges, wildcards, spaces) is refused. <paramref name="exact"/> is X.

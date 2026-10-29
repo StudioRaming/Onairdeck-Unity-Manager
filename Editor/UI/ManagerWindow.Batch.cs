@@ -19,7 +19,7 @@ namespace OnAirDeck.UnityManager
         private static bool CanBatch(CatalogEntry entry)
         {
             if (entry.Kind == FavoriteKind.Purchase) return entry.Purchase != null && entry.Purchase.CanDownload;
-            return NewestPackage(entry) != null;
+            return OfferedPackage(entry) != null;
         }
 
         private float BatchBarHeightNow()
@@ -101,7 +101,7 @@ namespace OnAirDeck.UnityManager
                 }
                 else
                 {
-                    var version = NewestPackage(entry);
+                    var version = OfferedPackage(entry);
                     versions.Add(version);
                     keyOf[version.package_name + " " + version.package_version] = entry.Key;
                 }

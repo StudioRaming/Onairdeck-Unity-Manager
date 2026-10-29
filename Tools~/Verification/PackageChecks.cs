@@ -25,6 +25,7 @@ internal static class PackageChecks
         Directory.CreateDirectory(_root);
 
         check("package versions: exact form, ranges refused, semver order", VersionRules);
+        check("build kinds: preview, beta and hotfix from version or label; a release is offered before a prerelease", BuildKindRules);
         check("zip: valid package returns its manifest and extracts", ZipValid);
         check("zip: traversal, rooted, drive and backslash entries fail the whole package", ZipUnsafeEntries);
         check("zip: sanitized names, duplicate-by-case entries and a bad zip fail", ZipOddEntries);
@@ -68,6 +69,35 @@ internal static class PackageChecks
         Require(PackageVersion.Compare("1.0.0-beta.2", "1.0.0-beta.10") < 0);
         Require(PackageVersion.Compare("1.0.0-alpha", "1.0.0-beta") < 0);
         Equal(0, PackageVersion.Compare("2.0.0", "2.0.0"));
+        Require(PackageVersion.IsPrerelease("0.1.15-preview.1") && !PackageVersion.IsPrerelease("0.1.15") && !PackageVersion.IsPrerelease(""));
+    }
+
+    private static void BuildKindRules()
+    {
+        // Packages: semver decides; the label can only add the hotfix chip.
+        Equal(BuildKind.Preview, BuildKinds.OfPackage("0.1.15-preview.1", "0.1.15 preview 1"));
+        Equal(BuildKind.Beta, BuildKinds.OfPackage("0.1.14-beta.1", ""));
+        Equal(BuildKind.Prerelease, BuildKinds.OfPackage("1.0.0-rc.1", null));
+        Equal(BuildKind.Release, BuildKinds.OfPackage("0.1.15", "0.1.15 beta"));
+        Equal(BuildKind.Hotfix, BuildKinds.OfPackage("0.1.15", "0.1.14 Hotfix 1"));
+        Equal(BuildKind.Hotfix, BuildKinds.OfPackage("0.1.15", "0.1.14 핫픽스"));
+        // Files: whole words of the seller's label, in any of the three languages.
+        Equal(BuildKind.Beta, BuildKinds.OfLabel("2.0.1 beta"));
+        Equal(BuildKind.Preview, BuildKinds.OfLabel("1.0-Preview.2"));
+        Equal(BuildKind.Preview, BuildKinds.OfLabel("1.1 프리뷰"));
+        Equal(BuildKind.Beta, BuildKinds.OfLabel("1.1ベータ"));
+        Equal(BuildKind.Prerelease, BuildKinds.OfLabel("3.0 RC1"));
+        Equal(BuildKind.Prerelease, BuildKinds.OfLabel("3.0 pre-release"));
+        Equal(BuildKind.Hotfix, BuildKinds.OfLabel("2.0.2-hotfix"));
+        foreach (var plain in new[] { "2.0.0", "Preset pack 2", "Alphabet set", "Betamax", "Archive", "", null })
+            Equal(BuildKind.Release, BuildKinds.OfLabel(plain));
+        // Offered by default: the first release or hotfix of a newest-first list.
+        var list = new List<BuildKind> { BuildKind.Preview, BuildKind.Beta, BuildKind.Hotfix, BuildKind.Release };
+        Equal(2, BuildKinds.IndexOfOffered(list, false));
+        Equal(0, BuildKinds.IndexOfOffered(list, true));
+        Equal(0, BuildKinds.IndexOfOffered(new List<BuildKind> { BuildKind.Preview, BuildKind.Beta }, false));
+        Equal(-1, BuildKinds.IndexOfOffered(new List<BuildKind>(), false));
+        Equal(-1, BuildKinds.IndexOfOffered(null, false));
     }
 
     private static void ZipValid()
