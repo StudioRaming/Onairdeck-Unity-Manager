@@ -23,7 +23,7 @@ https://github.com/StudioRaming/Onairdeck-Unity-Manager.git
 
 Package Manager fetches the package with Git, so Git must be installed. To pin a version, append a tag: `https://github.com/StudioRaming/Onairdeck-Unity-Manager.git#<tag>`.
 
-**VRChat Creator Companion (VCC):** add the listing `https://studioraming.github.io/atelier-package-manager/index.json` (or click **Add to VCC** on https://studioraming.github.io/atelier-package-manager/), then add **Atelier Manager** to the project. The listing lives in [StudioRaming/atelier-package-manager](https://github.com/StudioRaming/atelier-package-manager); each entry is the release zip with its SHA-256.
+Advanced, if you use VRChat Creator Companion (VCC): add the listing `https://studioraming.github.io/atelier-package-manager/index.json`, then add **Atelier Manager** to the project.
 
 ## Use
 
