@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.1.0 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL and self-update paths in Unity 2021.3.45f2. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
+> Status: 0.1.1 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL, both self-update paths (embedded and git) and the import re-import fix in Unity 2021.3.45f2. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
 
 ## Requirements
 
@@ -213,7 +213,9 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] Install the package **from the git URL** (`#<commit>`) into a project without the Manager (Unity 2021.3.45f2, 2026-10-29): source Git 0.1.0, compiles, no Console errors.
 - [x] Self-update of an embedded install, 0.1.0 to 0.1.1 from a local test server (Unity 2021.3.45f2, 2026-10-29): folder replaced, script reload, "Updated to 0.1.1", no leftover folder. The update banner survives script reloads.
 - [x] Device limit against a local server (Unity 2021.3.45f2, 2026-10-29): the over-limit screen, releasing a device from it, the action going on after the release, the device tab refreshing after a license is issued.
-- [ ] Self-update of a git URL install (`Client.Add` with the next tag) in a real editor.
+- [x] Self-update from the released `Atelier-Manager-0.1.0.unitypackage` (embedded 0.1.0) to a 0.1.1 build through the update bar, local test server (Unity 2021.3.45f2, 2026-10-29): zip downloaded, folder replaced (207 files), "Updated to 0.1.1.", still signed in, 0 Console errors.
+- [x] Self-update of a git URL install, `#0.1.0` to the 0.1.1 commit through the update bar (Unity 2021.3.45f2, 2026-10-29): `Client.Add`, script reload, "0.1.1 버전으로 업데이트했어요.", still signed in. The update bar shows only when signed in; a required update also shows when signed out.
+- [x] Import queue re-import (0.1.1, Unity 2021.3.45f2, 2026-10-29): two packages with the same GUIDs and file times; a plain `ImportPackage` keeps the old script and text loaded even after a refresh, the Manager's import queue loads the new ones.
 - [x] VCC listing `atelier-package-manager` published (2026-10-29): live `index.json` lists 0.1.0, and the zip it points at matches the listed SHA-256.
 - [ ] Install through VCC and self-update a VCC install (`vpm-manifest.json` version follows) in a real VCC project.
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
