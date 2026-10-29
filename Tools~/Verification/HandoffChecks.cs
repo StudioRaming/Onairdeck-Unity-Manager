@@ -23,6 +23,7 @@ internal static partial class LegacyChecks
         check("handoff: no matching result 120 s after the import = unsupported installer; busy editor time is not idle time", UnsupportedRule);
         check("handoff: the wait state survives a reload (re-read from the file); the install step is due once, after LegacyRemovedForManager", ReloadSafeWait);
         check("handoff: manager-request.json has the exact shape and no BOM; the installer must say managerCleanup true (tar.gz entry)", RequestAndFlag);
+        check("import queue: lists a .unitypackage's paths; re-imports only overwritten files whose write time did not change", ReimportUnchangedFiles);
         check("handoff: the staged zip extracts to Packages/<package> with the traversal guards; an existing path or a bad zip installs nothing", ExtractionGuard);
         check("handoff: no Manager asmdef or source file references a MingToon assembly or namespace", NoMingToonReference);
         check("renewal status: only HTTP refusals are recorded with a code, success clears, prune keeps account licenses", RenewalStatus);
@@ -365,6 +366,37 @@ internal static partial class LegacyChecks
             gz.Write(bytes, 0, bytes.Length);
         }
         return path;
+    }
+
+    // PackageImportQueue: Unity keeps a package's file times and skips an overwritten file whose time did not change.
+    private static void ReimportUnchangedFiles()
+    {
+        var package = UnityPackage("{}", "Assets\\StudioRaming\\X\\cfg.json");
+        var paths = UnityPackageArchive.AssetPaths(package);
+        Require(paths != null && paths.SequenceEqual(new[] { "Assets/StudioRaming/MingToonInstaller/Other.cs", "Assets/StudioRaming/X/cfg.json" }));
+
+        var p = NewProject();
+        var t0 = new DateTime(2026, 9, 24, 0, 0, 0, DateTimeKind.Utc);
+        foreach (var name in new[] { "Assets/T/Same.dll", "Assets/T/Newer.dll" })
+        {
+            var full = Path.Combine(p, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(full));
+            File.WriteAllText(full, "old");
+            File.SetLastWriteTimeUtc(full, t0);
+        }
+        Directory.CreateDirectory(Path.Combine(p, "Assets/T/Folder.dll"));
+        Put(p, "ProjectSettings/x.asset", "outside");
+        var before = UnityPackageArchive.ExistingFileTimes(p, new[] {
+            "Assets/T/Same.dll", "Assets/T/Newer.dll", "Assets/T/Added.dll", "Assets/T/Folder.dll", "ProjectSettings/x.asset", "../Assets/T/Same.dll" });
+        Require(before.Count == 2 && before.ContainsKey("Assets/T/Same.dll") && before.ContainsKey("Assets/T/Newer.dll"));
+
+        // The import: one file rewritten with the old time (the case Unity skips), one with a new time, one added.
+        File.WriteAllText(Path.Combine(p, "Assets/T/Same.dll"), "new");
+        File.SetLastWriteTimeUtc(Path.Combine(p, "Assets/T/Same.dll"), t0);
+        File.WriteAllText(Path.Combine(p, "Assets/T/Newer.dll"), "new");
+        File.SetLastWriteTimeUtc(Path.Combine(p, "Assets/T/Newer.dll"), t0.AddDays(35));
+        File.WriteAllText(Path.Combine(p, "Assets/T/Added.dll"), "new");
+        Require(UnityPackageArchive.UnchangedSince(p, before).SequenceEqual(new[] { "Assets/T/Same.dll" }));
     }
 
     private static void RequestAndFlag()

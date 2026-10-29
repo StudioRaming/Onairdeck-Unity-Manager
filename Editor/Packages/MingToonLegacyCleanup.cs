@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Text;
 using OnAirDeck.License;
 
@@ -158,76 +157,22 @@ namespace OnAirDeck.UnityManager
         {
             var pathNames = new Dictionary<string, string>();
             var assets = new Dictionary<string, byte[]>();
-            using (var file = File.OpenRead(unityPackagePath))
-            using (var gz = new GZipStream(file, CompressionMode.Decompress))
-            {
-                var header = new byte[512];
-                while (ReadFully(gz, header, 512) == 512)
+            var ok = UnityPackageArchive.Walk(unityPackagePath,
+                (guid, leaf, size) => size <= MaxConfigBytes && (leaf == "pathname" || leaf == "asset"),
+                (guid, leaf, content) =>
                 {
-                    var allZero = true;
-                    for (var i = 0; i < 512; i++) if (header[i] != 0) { allZero = false; break; }
-                    if (allZero) break;
-                    var name = Encoding.UTF8.GetString(header, 0, 100).TrimEnd('\0').Replace('\\', '/');
-                    if (name.StartsWith("./", StringComparison.Ordinal)) name = name.Substring(2);
-                    long size = 0;
-                    foreach (var ch in Encoding.ASCII.GetString(header, 124, 12).Trim('\0', ' '))
-                    {
-                        if (ch < '0' || ch > '7') { size = -1; break; }
-                        size = size * 8 + (ch - '0');
-                    }
-                    if (size < 0) return null;
-                    var typeFlag = (char)header[156];
-                    var padded = (size + 511) / 512 * 512;
-                    var slash = name.IndexOf('/');
-                    var leaf = slash < 0 ? "" : name.Substring(slash + 1);
-                    var guid = slash < 0 ? "" : name.Substring(0, slash);
-                    var wanted = (typeFlag == '0' || typeFlag == '\0') && size <= MaxConfigBytes && (leaf == "pathname" || leaf == "asset");
-                    if (wanted)
-                    {
-                        var data = new byte[padded];
-                        if (ReadFully(gz, data, (int)padded) != padded) return null;
-                        var content = new byte[size];
-                        Array.Copy(data, content, (int)size);
-                        if (leaf == "pathname") pathNames[guid] = Encoding.UTF8.GetString(content).Split('\n')[0].Trim();
-                        else assets[guid] = content;
-                    }
-                    else
-                    {
-                        Skip(gz, padded);
-                    }
-                }
-            }
+                    if (leaf == "pathname") pathNames[guid] = UnityPackageArchive.PathNameOf(content);
+                    else assets[guid] = content;
+                });
+            if (!ok) return null;
             foreach (var pair in pathNames)
             {
-                var path = pair.Value.Replace('\\', '/');
+                var path = pair.Value;
                 byte[] content;
                 if ((path.EndsWith("/" + ConfigEntry, StringComparison.OrdinalIgnoreCase) || string.Equals(path, ConfigEntry, StringComparison.OrdinalIgnoreCase))
                     && assets.TryGetValue(pair.Key, out content)) return content;
             }
             return null;
-        }
-
-        private static int ReadFully(Stream stream, byte[] buffer, int count)
-        {
-            var total = 0;
-            while (total < count)
-            {
-                var read = stream.Read(buffer, total, count - total);
-                if (read <= 0) break;
-                total += read;
-            }
-            return total;
-        }
-
-        private static void Skip(Stream stream, long count)
-        {
-            var buffer = new byte[16384];
-            while (count > 0)
-            {
-                var read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, count));
-                if (read <= 0) throw new EndOfStreamException();
-                count -= read;
-            }
         }
 
         // ---------- the staged packages, kept until the installer has deleted the old install ----------

@@ -37,6 +37,7 @@
     <Compile Include="../../Editor/Packages/LegacyHandler.cs" />
     <Compile Include="../../Editor/Packages/LegacyHandoff.cs" />
     <Compile Include="../../Editor/Packages/MingToonLegacyCleanup.cs" />
+    <Compile Include="../../Editor/Download/UnityPackageArchive.cs" />
     <Compile Include="../../Editor/Packages/DependencyResolver.cs" />
     <Compile Include="../../Editor/License/LicenseFilePlan.cs" />
     <Compile Include="../../Editor/Catalog/PurchaseWatcherLogic.cs" />
