@@ -365,8 +365,17 @@ namespace OnAirDeck.UnityManager
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(row.Label, SRStyles.Strong, GUILayout.ExpandWidth(false));
                 var kindChip = KindChip(row.Kind);
-                if (kindChip != null) SRGui.BadgeLayout(kindChip, row.Kind == BuildKind.Hotfix ? SRTone.Info : SRTone.Warning);
-                if (row.Installed) SRGui.BadgeLayout(ManagerText.ChipInst, SRTone.Success);
+                if (kindChip != null)
+                {
+                    GUILayout.Space(SRMetrics.Space6);
+                    SRGui.BadgeLayout(kindChip, row.Kind == BuildKind.Hotfix ? SRTone.Info : SRTone.Warning);
+                }
+                if (row.Installed)
+                {
+                    GUILayout.Space(SRMetrics.Space6);
+                    SRGui.BadgeLayout(ManagerText.ChipInst, SRTone.Success);
+                }
+                GUILayout.Space(SRMetrics.Space8);
                 GUILayout.Label(row.Date, SRStyles.Muted, GUILayout.ExpandWidth(true));
                 if (row.License != null && !row.Installed)
                 {
@@ -384,7 +393,7 @@ namespace OnAirDeck.UnityManager
                 if (!string.IsNullOrEmpty(row.Notes))
                 {
                     var id = "n|" + entry.Key + "|" + row.Label;
-                    if (i == 0 || _unfolded.Contains(id + "|open"))
+                    if (row.Latest || _unfolded.Contains(id + "|open"))
                     {
                         FoldedText(id, row.Notes, ManagerLayout.NoteLines, width - 2f * SRMetrics.Space12);
                     }
