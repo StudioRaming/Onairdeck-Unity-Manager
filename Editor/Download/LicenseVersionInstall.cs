@@ -51,7 +51,15 @@ namespace OnAirDeck.UnityManager
                 throw;
             }
 
-            var summary = await DownloadService.PlaceFilesAsync(files, Installer.ProductFolder(license.name), onProgress, cancel, interactiveImport, license.name, version.version_label, license.license_id);
+            var record = new InstallRecord
+            {
+                LicenseId = license.license_id,
+                VersionId = version.version_id,
+                Label = string.IsNullOrEmpty(version.version_label) ? (version.file_name ?? "") : version.version_label,
+                ReleasedAt = version.released_at ?? "",
+            };
+            var summary = await DownloadService.PlaceFilesAsync(files, Installer.ProductFolder(license.name), onProgress, cancel, interactiveImport, record,
+                license.name, version.version_label, license.license_id);
             try
             {
                 var path = await LicenseService.IssueSellerLicenseAsync(sessionToken, licenses ?? new[] { license }, license.license_id, userInitiated);

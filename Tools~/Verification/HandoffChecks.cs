@@ -303,7 +303,8 @@ internal static partial class LegacyChecks
 
     private static void ReloadSafeWait()
     {
-        var t0 = new DateTime(2026, 10, 29, 4, 0, 0, DateTimeKind.Utc);
+        // IsWaiting compares with the real clock (NoProgressLimit), so the steps happen just now, not at a fixed date.
+        var t0 = DateTime.UtcNow.AddSeconds(-10);
         string created;
         var p = StartedProject(t0, false, out created);
         // Every call reads the file again: nothing lives in memory, so a domain reload changes nothing. createdUtc is in the state file.

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -27,6 +28,182 @@ internal static class CatalogChecks
         check("batch: cancel while paused skips the rest and clears the notice", BatchCancelPaused);
         check("v3: every request carries X-Atelier-Manager: 1", ManagerHeader);
         check("v3: plugin-purchases body with description, product_url, versions[] parses; older body keeps defaults", ParseV3Purchases);
+        check("file versions: the install record decides new / latest / installed; an installed product without a record is unknown, not latest", FileVersionState);
+        check("install record: atomic file round trip; a malformed file reads as none; a record needs license and version ids", InstallRecordFile);
+        check("install record: a .unitypackage batch is recorded only after all its imports finished; a failed import drops it", PendingImportRecord);
+        check("dates: the server's UTC time is shown as a date in the computer's time zone", LocalDates);
+    }
+
+    // ---------- install records (non-package license versions) ----------
+
+    private static LicenseVersionEntry FileVer(string id, string label, string at)
+    {
+        return new LicenseVersionEntry { version_id = id, version_label = label, file_name = "Product.unitypackage", released_at = at };
+    }
+
+    private static Dictionary<string, InstallRecord> Records(params InstallRecord[] records)
+    {
+        var map = new Dictionary<string, InstallRecord>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in records) map[r.LicenseId] = r;
+        return map;
+    }
+
+    private static void FileVersionState()
+    {
+        var license = new LicenseEntry { license_id = "L3", name = "Product", versions = new[] {
+            FileVer("f1", "2.0.0", "2026-10-01T00:00:00Z"), FileVer("f2", "2.0.1", "2026-10-20T00:00:00Z") } };
+        var marked = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "l3" };
+        Func<Dictionary<string, InstallRecord>, ISet<string>, CatalogEntry> build = (records, markers) =>
+            ManagerCatalog.Build(null, new[] { license }, n => "", markers, records)[0];
+
+        // Installed (marker) but never through this Manager: unknown, not a false "latest".
+        var entry = build(null, marked);
+        Equal(EntryState.Unknown, entry.State);
+        Equal("2.0.1", entry.LatestVersion);
+        Require(!entry.Versions[0].Installed && !entry.Versions[1].Installed);
+
+        // The record names the older version: a new version, and the installed row is marked (rows are newest first).
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "F1", Label = "2.0.0", ReleasedAt = "2026-10-01T00:00:00Z" }), marked);
+        Equal(EntryState.New, entry.State);
+        Equal("2.0.0", entry.InstalledVersion);
+        Require(!entry.Versions[0].Installed && entry.Versions[1].Installed);
+
+        // The record names the offered version: latest.
+        entry = build(Records(new InstallRecord { LicenseId = "l3", VersionId = "f2", Label = "2.0.1", ReleasedAt = "2026-10-20T00:00:00Z" }), marked);
+        Equal(EntryState.Latest, entry.State);
+        Require(entry.Versions[0].Installed);
+
+        // A version no longer listed: newer than the offered one is installed, older is a new version.
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f9", Label = "2.1.0 beta", ReleasedAt = "2026-10-25T00:00:00Z" }), marked);
+        Equal(EntryState.Installed, entry.State);
+        Equal("2.1.0 beta", entry.InstalledVersion);
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f0", Label = "1.0.0", ReleasedAt = "2026-09-01T00:00:00Z" }), marked);
+        Equal(EntryState.New, entry.State);
+
+        // A record without a readable release time and not in the list: unknown, never a guessed "update" to an older file.
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f0", Label = "?", ReleasedAt = "" }), marked);
+        Equal(EntryState.Unknown, entry.State);
+
+        // A listed record is placed by its row, so a version without a release time is still known (no "unknown" next to its
+        // installed row): the older row is a new version.
+        var undated = new LicenseEntry { license_id = "L6", name = "Undated", versions = new[] {
+            FileVer("r2", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("u1", "1.9.0", "") } };
+        entry = ManagerCatalog.Build(null, new[] { undated }, n => "", new HashSet<string> { "L6" },
+            Records(new InstallRecord { LicenseId = "L6", VersionId = "u1", Label = "1.9.0", ReleasedAt = "" }))[0];
+        Equal(EntryState.New, entry.State);
+        Require(entry.Versions[1].Installed && !entry.Versions[0].Installed);
+
+        // The order follows the parsed time, not the text: a fraction or another offset does not make a version look newer.
+        var mixed = new LicenseEntry { license_id = "L7", name = "Mixed", versions = new[] {
+            FileVer("old", "1.0.0", "2026-10-30T08:00:00+09:00"), FileVer("new", "1.0.1", "2026-10-29T23:30:00.5+00:00") } };
+        entry = ManagerCatalog.Build(null, new[] { mixed }, n => "", new HashSet<string> { "L7" },
+            Records(new InstallRecord { LicenseId = "L7", VersionId = "old", Label = "1.0.0" }))[0];
+        Equal("1.0.1", entry.LatestVersion);
+        Equal(EntryState.New, entry.State);
+
+        // A project on a beta file is offered the newest of all (as packages are), so it is not steered back to the release.
+        var withBeta = new LicenseEntry { license_id = "L5", name = "Beta", versions = new[] {
+            FileVer("r1", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("b1", "2.1.0 beta", "2026-10-25T00:00:00Z") } };
+        var onBeta = Records(new InstallRecord { LicenseId = "L5", VersionId = "b1", Label = "2.1.0 beta", ReleasedAt = "2026-10-25T00:00:00Z" });
+        entry = ManagerCatalog.Build(null, new[] { withBeta }, n => "", new HashSet<string> { "L5" }, onBeta)[0];
+        Equal("2.1.0 beta", entry.LatestVersion);
+        Equal(EntryState.Latest, entry.State);
+        // On the release, the beta is not offered and the release is up to date.
+        var onRelease = Records(new InstallRecord { LicenseId = "L5", VersionId = "r1", Label = "2.0.1", ReleasedAt = "2026-10-20T00:00:00Z" });
+        entry = ManagerCatalog.Build(null, new[] { withBeta }, n => "", new HashSet<string> { "L5" }, onRelease)[0];
+        Equal("2.0.1", entry.LatestVersion);
+        Equal(EntryState.Latest, entry.State);
+
+        // No marker: the product is not in this project, whatever the record says.
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f2", ReleasedAt = "2026-10-20T00:00:00Z" }), new HashSet<string>());
+        Equal(EntryState.None, entry.State);
+
+        // Nothing to install (no file versions): an installed product stays latest, as before.
+        var bare = new LicenseEntry { license_id = "L4", name = "Bare", max_devices = 2, versions = new LicenseVersionEntry[0] };
+        entry = ManagerCatalog.Build(null, new[] { bare }, n => "", new HashSet<string> { "L4" }, null)[0];
+        Equal(EntryState.Latest, entry.State);
+    }
+
+    private static void InstallRecordFile()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "atelier-records-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Equal(0, InstallRecords.Load(root).Count);
+            InstallRecords.Save(root, new InstallRecord { LicenseId = "L1", VersionId = "v1", Label = "1.0.0", ReleasedAt = "2026-10-01T00:00:00Z" });
+            InstallRecords.Save(root, new InstallRecord { LicenseId = "L2", VersionId = "v2", Label = "a \"quoted\" label", ReleasedAt = "" });
+            InstallRecords.Save(root, new InstallRecord { LicenseId = "l1", VersionId = "v3", Label = "1.1.0", ReleasedAt = "2026-10-20T00:00:00Z" });
+            var records = InstallRecords.Load(root);
+            Equal(2, records.Count);
+            Equal("v3", records["L1"].VersionId);
+            Equal("a \"quoted\" label", records["l2"].Label);
+            var path = InstallRecords.PathFor(root);
+            Require(path.EndsWith(Path.Combine("ProjectSettings", "OnAirDeck", "installed-versions.json"), StringComparison.Ordinal));
+            Equal(0, Directory.GetFiles(Path.GetDirectoryName(path), "*.tmp").Length);
+
+            Require(!File.Exists(path + ".prev"));   // a normal save leaves no copy in the project
+            File.WriteAllText(path, "{ not json");
+            Equal(0, InstallRecords.Load(root).Count);
+            // Saving over an unreadable file keeps its last copy next to it.
+            InstallRecords.Save(root, new InstallRecord { LicenseId = "L9", VersionId = "v9" });
+            Equal("{ not json", File.ReadAllText(path + ".prev"));
+            Equal(1, InstallRecords.Load(root).Count);
+            File.WriteAllText(path, "{\"licenses\":[{\"license_id\":\"L1\"},{\"license_id\":\"L2\",\"version_id\":\"v2\"}]}");
+            Equal(1, InstallRecords.Load(root).Count);
+
+            Throws(() => InstallRecords.Save(root, new InstallRecord { LicenseId = "L1", VersionId = "" }));
+            Throws(() => InstallRecords.Save(root, new InstallRecord { LicenseId = "", VersionId = "v1" }));
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (Exception) { }
+        }
+    }
+
+    private static void PendingImportRecord()
+    {
+        var record = new InstallRecord { LicenseId = "L1", VersionId = "v2", Label = "2.0.0", ReleasedAt = "2026-10-20T00:00:00Z" };
+        InstallRecord ready;
+
+        // Two packages in one install: recorded after the second one.
+        var state = PendingImportRecords.Add("", new[] { "C:/cache/a.unitypackage", "C:/cache/b.unitypackage" }, "b1", record);
+        state = PendingImportRecords.Finish(state, "C:/cache/a.unitypackage", true, out ready);
+        Equal(null, ready);
+        state = PendingImportRecords.Finish(state, "c:/CACHE/b.unitypackage", true, out ready);
+        Require(ready != null && ready.VersionId == "v2" && ready.Label == "2.0.0" && ready.ReleasedAt == record.ReleasedAt);
+        Equal("", state);
+
+        // One import fails: the batch is dropped, the other package finishing later records nothing.
+        state = PendingImportRecords.Add("", new[] { "C:/cache/c.unitypackage", "C:/cache/d.unitypackage" }, "b2", record);
+        state = PendingImportRecords.Finish(state, "C:/cache/c.unitypackage", false, out ready);
+        Equal(null, ready);
+        state = PendingImportRecords.Finish(state, "C:/cache/d.unitypackage", true, out ready);
+        Equal(null, ready);
+
+        // A package without a record (a purchase download) leaves other batches alone.
+        state = PendingImportRecords.Add("", new[] { "C:/cache/e.unitypackage" }, "b3", record);
+        var unchanged = PendingImportRecords.Finish(state, "C:/cache/other.unitypackage", true, out ready);
+        Equal(null, ready);
+        Equal(state, unchanged);
+        PendingImportRecords.Finish(state, "C:/cache/e.unitypackage", true, out ready);
+        Require(ready != null);
+    }
+
+    private static void LocalDates()
+    {
+        var kst = TimeZoneInfo.CreateCustomTimeZone("Test KST", TimeSpan.FromHours(9), "Test KST", "Test KST");
+        Equal("2026-10-30", ManagerCatalog.FormatDate("2026-10-29T23:30:00Z", kst));
+        Equal("2026-10-29", ManagerCatalog.FormatDate("2026-10-29T23:30:00Z", TimeZoneInfo.Utc));
+        Equal("2026-10-30", ManagerCatalog.FormatDate("2026-10-29T23:30:00+00:00", kst));
+        Equal("", ManagerCatalog.FormatDate("", kst));
+        Equal("not a date", ManagerCatalog.FormatDate("not a date", kst));
+    }
+
+    private static void Throws(Action action)
+    {
+        try { action(); }
+        catch (Exception) { return; }
+        throw new Exception("Expected an exception");
     }
 
     // ---------- favorites ----------

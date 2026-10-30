@@ -4,7 +4,8 @@ using System.Globalization;
 
 namespace OnAirDeck.UnityManager
 {
-    internal enum EntryState { None, Got, New, Installed, Latest }
+    /// <summary>Unknown: a non-package license is installed (its marker is here) but the Manager has no record of which version.</summary>
+    internal enum EntryState { None, Got, New, Installed, Latest, Unknown }
 
     internal enum SortMode { Recent, Name, Seller, Todo }
 
@@ -71,7 +72,8 @@ namespace OnAirDeck.UnityManager
         public const string FavoriteGroupId = "fav";
         public const string AllGroupId = "all";
 
-        public static List<CatalogEntry> Build(PurchaseItem[] purchases, LicenseEntry[] licenses, Func<string, string> installedVersion, ISet<string> markerLicenseIds)
+        public static List<CatalogEntry> Build(PurchaseItem[] purchases, LicenseEntry[] licenses, Func<string, string> installedVersion, ISet<string> markerLicenseIds,
+            IDictionary<string, InstallRecord> installRecords = null)
         {
             var list = new List<CatalogEntry>();
             var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -93,7 +95,7 @@ namespace OnAirDeck.UnityManager
                     if (license == null) continue;
                     var key = FavoritesLogic.EntryKey(FavoriteKind.License, license.license_id);
                     if (key == null || !keys.Add(key)) continue;
-                    var entry = FromLicense(key, license, installedVersion, markerLicenseIds);
+                    var entry = FromLicense(key, license, installedVersion, markerLicenseIds, installRecords);
                     if (entry != null) list.Add(entry);
                 }
             }
@@ -139,7 +141,8 @@ namespace OnAirDeck.UnityManager
             return entry;
         }
 
-        private static CatalogEntry FromLicense(string key, LicenseEntry license, Func<string, string> installedVersion, ISet<string> markerLicenseIds)
+        private static CatalogEntry FromLicense(string key, LicenseEntry license, Func<string, string> installedVersion, ISet<string> markerLicenseIds,
+            IDictionary<string, InstallRecord> installRecords)
         {
             var versions = new List<LicenseVersionEntry>();
             var files = new List<LicenseVersionEntry>();
@@ -200,11 +203,15 @@ namespace OnAirDeck.UnityManager
                     Kind = packageKinds[i],
                 });
             }
-            files.Sort((a, b) => string.CompareOrdinal(b.released_at ?? "", a.released_at ?? ""));
+            files.Sort(NewestFirst);
             // A file has no version to parse: its label says whether it is a preview or beta, and the newest other file is offered.
             var fileLabels = files.ConvertAll(v => string.IsNullOrEmpty(v.version_label) ? (v.file_name ?? "") : v.version_label);
             var fileKinds = fileLabels.ConvertAll(l => BuildKinds.OfLabel(l));
-            var offeredFile = BuildKinds.IndexOfOffered(fileKinds, false);
+            // Only an installed (marked) product has a record that counts; with no marker the files are not in this project.
+            InstallRecord record = null;
+            if (versions.Count == 0 && marker && installRecords != null) installRecords.TryGetValue(license.license_id ?? "", out record);
+            // Like packages: a project that runs a preview or beta file is offered the newest of all, so it is never steered back.
+            var offeredFile = BuildKinds.IndexOfOffered(fileKinds, record != null && BuildKinds.IsPrerelease(BuildKinds.OfLabel(record.Label ?? "")));
             for (var i = 0; i < files.Count; i++)
             {
                 var v = files[i];
@@ -224,8 +231,51 @@ namespace OnAirDeck.UnityManager
             if (versions.Count == 0 && offeredFile >= 0) entry.LatestVersion = fileLabels[offeredFile];
             entry.SortDate = latest;
             entry.State = StateOfPackage(installed, entry.LatestVersion);
-            if (entry.State == EntryState.None && marker) entry.State = EntryState.Latest;   // installed as a .unitypackage (no version to compare)
+            if (versions.Count == 0 && marker && offeredFile >= 0) entry.State = StateOfFiles(entry, files, fileLabels, offeredFile, record);
+            else if (entry.State == EntryState.None && marker) entry.State = EntryState.Latest;   // installed another way, nothing here to compare with
             return entry;
+        }
+
+        /// <summary>
+        /// File versions newest first by their parsed release time, so the order (which picks the offered file and, with a record,
+        /// the state) does not depend on how the time is written (fractions, offset). Unreadable times go last (the server column
+        /// is NOT NULL); two unreadable ones keep the old text order.
+        /// </summary>
+        private static int NewestFirst(LicenseVersionEntry a, LicenseVersionEntry b)
+        {
+            DateTime x, y;
+            var hasX = TryParseDate(a.released_at, out x);
+            var hasY = TryParseDate(b.released_at, out y);
+            if (hasX && hasY) return y.CompareTo(x);
+            if (hasX != hasY) return hasX ? -1 : 1;
+            return string.CompareOrdinal(b.released_at ?? "", a.released_at ?? "");
+        }
+
+        /// <summary>
+        /// A marked (installed) non-package license against the Manager's install record: no record is Unknown; the offered file is
+        /// Latest when it is the recorded version, New when it was released after it, Installed when the record is newer. A listed
+        /// record is placed by its position in the list (newest first, the order the rows show); one no longer listed by its release
+        /// time, and Unknown when either time cannot be read (no guess that could offer an older version as an update). The
+        /// recorded row is marked installed. The file rows follow <paramref name="files"/> after the package rows (none here).
+        /// </summary>
+        private static EntryState StateOfFiles(CatalogEntry entry, List<LicenseVersionEntry> files, List<string> fileLabels, int offeredFile, InstallRecord record)
+        {
+            if (record == null) return EntryState.Unknown;
+            entry.InstalledVersion = record.Label ?? "";
+            var recordIndex = -1;
+            for (var i = 0; i < files.Count; i++)
+            {
+                if (!string.Equals(files[i].version_id, record.VersionId, StringComparison.OrdinalIgnoreCase)) continue;
+                entry.Versions[i].Installed = true;
+                entry.InstalledVersion = fileLabels[i];
+                recordIndex = i;
+            }
+            if (recordIndex >= 0)
+                return recordIndex == offeredFile ? EntryState.Latest : recordIndex > offeredFile ? EntryState.New : EntryState.Installed;
+            var offered = files[offeredFile];
+            DateTime offeredAt, recordedAt;
+            if (!TryParseDate(offered.released_at, out offeredAt) || !TryParseDate(record.ReleasedAt, out recordedAt)) return EntryState.Unknown;
+            return offeredAt > recordedAt ? EntryState.New : EntryState.Installed;
         }
 
         /// <summary>Not installed: None. Older than the newest: New. The newest: Latest (no chip). Newer than any version offered: Installed.</summary>
@@ -244,11 +294,17 @@ namespace OnAirDeck.UnityManager
             return DateTime.TryParse(text ?? "", CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out value);
         }
 
+        /// <summary>The server's UTC time as a date in this computer's time zone (a release at 23:30 UTC is the next day in Korea).</summary>
         public static string FormatDate(string text)
+        {
+            return FormatDate(text, TimeZoneInfo.Local);
+        }
+
+        public static string FormatDate(string text, TimeZoneInfo zone)
         {
             if (string.IsNullOrEmpty(text)) return "";
             DateTime when;
-            if (TryParseDate(text, out when)) return when.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (TryParseDate(text, out when)) return TimeZoneInfo.ConvertTimeFromUtc(when, zone ?? TimeZoneInfo.Local).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             return text.Length > 10 ? text.Substring(0, 10) : text;
         }
 
@@ -287,7 +343,8 @@ namespace OnAirDeck.UnityManager
             switch (e.State)
             {
                 case EntryState.New: return 0;
-                case EntryState.None: return 1;
+                case EntryState.None:
+                case EntryState.Unknown: return 1;
                 default: return 2;
             }
         }
