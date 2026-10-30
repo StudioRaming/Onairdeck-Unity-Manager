@@ -133,6 +133,7 @@ namespace OnAirDeck.UnityManager
             switch (state)
             {
                 case EntryState.New: return SRTone.Warning;
+                case EntryState.Unknown: return SRTone.Info;
                 case EntryState.Got:
                 case EntryState.Installed:
                 case EntryState.Latest: return SRTone.Success;
@@ -148,6 +149,7 @@ namespace OnAirDeck.UnityManager
                 case EntryState.Got: return ManagerText.ChipGot;
                 case EntryState.Installed: return ManagerText.ChipInst;
                 case EntryState.Latest: return ManagerText.ChipLatest;
+                case EntryState.Unknown: return ManagerText.ChipUnknown;
                 default: return ManagerText.ChipNone;
             }
         }
@@ -155,11 +157,12 @@ namespace OnAirDeck.UnityManager
         private static string StatusLine(CatalogEntry e)
         {
             var latest = e.LatestVersion ?? "";
-            if (e.HasPackageVersions)
+            if (e.HasPackageVersions || IsFileLicense(e))
             {
                 switch (e.State)
                 {
                     case EntryState.None: return ManagerText.StPkgNot.Replace("{l}", latest);
+                    case EntryState.Unknown: return ManagerText.StUnknown.Replace("{l}", latest);
                     case EntryState.New: return ManagerText.StNew.Replace("{i}", e.InstalledVersion).Replace("{l}", latest);
                     case EntryState.Installed: return ManagerText.StInst.Replace("{v}", e.InstalledVersion);
                     default: return ManagerText.StLatest.Replace("{v}", e.InstalledVersion);
@@ -193,7 +196,7 @@ namespace OnAirDeck.UnityManager
             if (entry.SellerName.Length > 0) GUILayout.Label(entry.SellerName, SRStyles.Muted);
             GUILayout.Space(SRMetrics.Space4);
             GUILayout.BeginHorizontal();
-            if (entry.HasPackageVersions || entry.Kind == FavoriteKind.Purchase) SRGui.BadgeLayout(StateChip(entry.State), StateTone(entry.State));
+            if (entry.HasPackageVersions || entry.Kind == FavoriteKind.Purchase || IsFileLicense(entry)) SRGui.BadgeLayout(StateChip(entry.State), StateTone(entry.State));
             if (entry.IsOwn) SRGui.BadgeLayout(ManagerText.OwnChip, SRTone.Brand);
             if (entry.HasPackageVersions && entry.PackageName == _focusPackage) SRGui.BadgeLayout(ManagerText.Requested, SRTone.Brand);
             GUILayout.FlexibleSpace();
@@ -239,11 +242,21 @@ namespace OnAirDeck.UnityManager
                         Defer(() => PrimaryAction(entry));
                 }
             }
-            if (primary == null && entry.IsLicense && !entry.HasPackageVersions && OfferedFileVersion(entry) != null)
+            if (primary == null && IsFileLicense(entry))
             {
+                // The offered file version: install, update, or install again over what is there.
+                var fileLabel = ManagerText.BInst;
+                var fileKind = SRButtonKind.Primary;
+                switch (entry.State)
+                {
+                    case EntryState.New: fileLabel = ManagerText.BUpd; break;
+                    case EntryState.Unknown: fileLabel = ManagerText.BInstLatest; break;
+                    case EntryState.Latest:
+                    case EntryState.Installed: fileLabel = ManagerText.BAgain; fileKind = SRButtonKind.Secondary; break;
+                }
                 using (new GUIEnabledScope(!busy))
                 {
-                    if (SRGui.Button(new GUIContent(ManagerText.BInst, tip), SRButtonKind.Primary, SRButtonSize.Large, GUILayout.ExpandWidth(false)))
+                    if (SRGui.Button(new GUIContent(fileLabel, tip), fileKind, SRButtonSize.Large, GUILayout.ExpandWidth(false)))
                         Defer(() => PrimaryAction(entry));
                 }
             }
@@ -264,6 +277,12 @@ namespace OnAirDeck.UnityManager
                 OpenAtelier(entry);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
+        }
+
+        /// <summary>A license installed from its files (.unitypackage or loose files) that offers one: its state comes from the install record.</summary>
+        private static bool IsFileLicense(CatalogEntry entry)
+        {
+            return entry.IsLicense && !entry.HasPackageVersions && OfferedFileVersion(entry) != null;
         }
 
         private bool HasFolder(CatalogEntry entry)

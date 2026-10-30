@@ -152,7 +152,9 @@ namespace OnAirDeck.UnityManager
         {
             if (_session == null || Busy || version == null) return;
             var title = ManagerText.DlgInT.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
-            var message = ManagerText.DlgIn.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
+            // A backup is made only of a package that is already installed.
+            var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
+            var message = text.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
             if (!EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return;
 
             BeginWork(entry.Key);
@@ -207,7 +209,9 @@ namespace OnAirDeck.UnityManager
             if (_session == null || Busy || version == null || entry.License == null) return;
             var label = string.IsNullOrEmpty(version.version_label) ? version.file_name : version.version_label;
             var title = ManagerText.DlgInT.Replace("{n}", entry.Name).Replace("{v}", label);
-            var message = ManagerText.DlgIn.Replace("{n}", entry.Name).Replace("{v}", label);
+            // A .unitypackage or loose files overwrite in place; nothing is backed up either way.
+            var text = entry.State == EntryState.None ? ManagerText.DlgInNew : ManagerText.DlgInFile;
+            var message = text.Replace("{n}", entry.Name).Replace("{v}", label);
             if (!EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return;
 
             BeginWork(entry.Key);

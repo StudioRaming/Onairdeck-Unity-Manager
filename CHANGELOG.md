@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- **A .unitypackage product shows its new version.** A product installed from its files had no version the Manager could read (the `atelier.product.json` marker holds only the license id, and Unity keeps the packed file times), so it always showed as up to date. The Manager now records what it installed in `ProjectSettings/OnAirDeck/installed-versions.json` (`InstallRecords`: license id, version id, label, release time; atomic write; travels with the project). Loose files are recorded once copied, a .unitypackage once its import finished (`PendingImportRecords` in SessionState survives the reload; a cancelled or failed import records nothing). The window compares the record with the offered file: the same version is up to date, a later release is a new version (Update), a recorded version newer than the offered one is installed. An installed product with no record (installed by 0.1.1 or by hand) shows "버전 확인 필요" with Install Latest instead of a false "up to date"; one install through the Manager records it. "Update all" stays packages-only.
+- **Dates in the computer's time zone.** Release, purchase and device "last used" dates were the UTC date, so from 00:00 to 09:00 KST they showed the day before.
+- **Install confirmation says what happens.** A first install no longer promises a backup; installing a .unitypackage or loose files over an existing copy says the files are overwritten without a backup (only a package update keeps the old version in `Library/OnAirDeck/Backup`).
+- Verification: 4 new headless checks (file version state, record file, pending import record, local dates). The handoff reload check compared a fixed 2026-10-29 time with the real clock and failed from then on; it now uses the current time.
+
 ## [0.1.1]
 
 - **A product update whose files keep the installed time is re-imported.** A .unitypackage carries its file times and Unity keeps them; an overwritten file whose time did not change was not re-imported, so an update packed with the same fixed time as the installed version left the old DLL loaded. `PackageImportQueue` records the package files that already exist before the import and force-imports those that still carry the same time once it completes (a fresh install re-imports nothing). The tar.gz reader is shared in `UnityPackageArchive`.
