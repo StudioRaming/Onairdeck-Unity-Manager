@@ -63,6 +63,8 @@ namespace OnAirDeck.UnityManager
         public static string RcUnknown { get { return Pick("버전 확인", "Check", "要確認"); } }
         public static string StUnknown { get { return Pick("설치된 버전을 알 수 없어요 · 최신 {l}. 여기서 한 번 설치하면 다음부터 새 버전을 알려 드려요.", "The installed version is unknown · Latest {l}. Install it here once and new versions are shown from then on.", "インストール済みのバージョンが分かりません · 最新 {l}。ここで一度インストールすると、次から新しいバージョンをお知らせします。"); } }
         public static string BInstLatest { get { return Pick("최신 버전 설치", "Install Latest", "最新版をインストール"); } }
+        // A license version's .unitypackage imports without Unity's import window (DonePkg asks the user to press Import).
+        public static string DonePkgAuto { get { return Pick("다 받았어요. Unity가 이어서 가져와요.", "Done. Unity imports it next.", "ダウンロードできました。続けてUnityが取り込みます。"); } }
         public static string DlgBatchT { get { return Pick("한 번에 받기", "Download Selected", "まとめてダウンロード"); } }
         public static string DlgBatch { get { return Pick("선택한 {n}개를 한 번에 받을까요? 받은 뒤 바로 가져와요. 받으면 환불할 수 없어요.", "Download the {n} selected products at once? They are imported right after the download. You cannot get a refund once downloaded.", "選んだ{n}件をまとめてダウンロードしますか? ダウンロード後すぐにインポートします。ダウンロードすると返金できません。"); } }
         public static string DlgUpdAll { get { return Pick("새 버전이 있는 {n}개를 모두 업데이트할까요? 지금 버전은 자동으로 백업돼요.", "Update all {n} products that have a new version? Current versions are backed up automatically.", "新しいバージョンのある{n}件をすべてアップデートしますか? 今のバージョンは自動でバックアップされます。"); } }

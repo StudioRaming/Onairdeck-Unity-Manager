@@ -100,12 +100,18 @@ namespace OnAirDeck.UnityManager
 
         public bool IsOwn { get { return source == "own"; } }
 
+        /// <summary>
+        /// The server sends every purchased line item; one without Unity files (a WARUDO product, or a product whose files
+        /// now come through its seller license) has nothing to install in Unity, so the Manager does not list it.
+        /// </summary>
+        public bool HasUnityFiles { get { return files != null && files.Length > 0; } }
+
         /// <summary>An own product is downloaded by product_id + file_id, a purchase by item_id.</summary>
         public bool CanDownload
         {
             get
             {
-                if (files == null || files.Length == 0) return false;
+                if (!HasUnityFiles) return false;
                 return IsOwn ? !string.IsNullOrEmpty(product_id) : !string.IsNullOrEmpty(item_id);
             }
         }

@@ -115,7 +115,7 @@ namespace OnAirDeck.UnityManager
             var keys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var item in response.purchases ?? new PurchaseItem[0])
             {
-                if (item == null) continue;
+                if (item == null || !item.HasUnityFiles) continue;
                 var id = !string.IsNullOrEmpty(item.product_id) ? item.product_id : item.item_id;
                 var key = FavoritesLogic.EntryKey(FavoriteKind.Purchase, id);
                 if (key == null || !keys.Add(key)) continue;

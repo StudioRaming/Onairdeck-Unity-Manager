@@ -212,7 +212,7 @@ internal static class ServiceChecks
     private static PurchasesResponse Listing(string[] productIds, string[] licenseIds)
     {
         var purchases = new List<PurchaseItem>();
-        foreach (var id in productIds) purchases.Add(new PurchaseItem { name = "P " + id, product_id = id, item_id = "i-" + id });
+        foreach (var id in productIds) purchases.Add(new PurchaseItem { name = "P " + id, product_id = id, item_id = "i-" + id, files = new[] { new PurchaseFile { file_id = "f" } } });
         var licenses = new List<LicenseEntry>();
         foreach (var id in licenseIds) licenses.Add(new LicenseEntry { license_id = id, name = "L " + id });
         return new PurchasesResponse { purchases = purchases.ToArray(), licenses = licenses.ToArray() };
@@ -252,7 +252,7 @@ internal static class ServiceChecks
         Equal(0, PurchaseWatcherLogic.Diff(stored, Listing(new[] { "a", "c", "b" }, new[] { "L1", "L2" })).Unseen.Count);
 
         // A legacy order without a product id is keyed by its item id; duplicates collapse.
-        var legacy = new PurchasesResponse { purchases = new[] { new PurchaseItem { name = "Old", item_id = "i9" }, new PurchaseItem { name = "Old again", item_id = "i9" }, new PurchaseItem { name = "No id" } }, licenses = new LicenseEntry[0] };
+        var legacy = new PurchasesResponse { purchases = new[] { new PurchaseItem { name = "Old", item_id = "i9", files = new[] { new PurchaseFile { file_id = "f" } } }, new PurchaseItem { name = "Old again", item_id = "i9", files = new[] { new PurchaseFile { file_id = "f" } } }, new PurchaseItem { name = "No id", files = new[] { new PurchaseFile { file_id = "f" } } } }, licenses = new LicenseEntry[0] };
         var entries = PurchaseWatcherLogic.Entries(legacy);
         Equal(1, entries.Count);
         Equal("p:i9", entries[0].Key);

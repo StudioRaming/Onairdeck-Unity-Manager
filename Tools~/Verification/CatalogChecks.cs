@@ -32,6 +32,27 @@ internal static class CatalogChecks
         check("install record: atomic file round trip; a malformed file reads as none; a record needs license and version ids", InstallRecordFile);
         check("install record: a .unitypackage batch is recorded only after all its imports finished; a failed import drops it", PendingImportRecord);
         check("dates: the server's UTC time is shown as a date in the computer's time zone", LocalDates);
+        check("purchases: a line item without Unity files (a WARUDO product) is not listed and not a new entry", NonUnityPurchases);
+    }
+
+    // ---------- purchases without Unity files ----------
+
+    private static void NonUnityPurchases()
+    {
+        var unity = new PurchaseItem { name = "Unity tool", product_id = "p1", item_id = "i1", files = new[] { new PurchaseFile { file_id = "f1" } } };
+        var warudo = new PurchaseItem { name = "[WARUDO] Color Studio", product_id = "p2", item_id = "i2", files = new PurchaseFile[0] };
+        var legacy = new PurchaseItem { name = "Older order", item_id = "", files = null };
+        var license = new LicenseEntry { license_id = "L1", name = "Licensed tool", versions = new[] { FileVer("v1", "1.0.0", "2026-10-29T00:00:00Z") } };
+        var entries = ManagerCatalog.Build(new[] { unity, warudo, legacy }, new[] { license }, n => "", new HashSet<string>());
+        Equal(2, entries.Count);
+        Equal("Unity tool", entries[0].Name);
+        Equal("Licensed tool", entries[1].Name);
+        Require(unity.HasUnityFiles && !warudo.HasUnityFiles && !legacy.HasUnityFiles);
+        // The watcher would otherwise announce a WARUDO purchase as new in Unity.
+        var watched = PurchaseWatcherLogic.Entries(new PurchasesResponse { purchases = new[] { unity, warudo, legacy }, licenses = new[] { license } });
+        Equal(2, watched.Count);
+        Equal("p:p1", watched[0].Key);
+        Equal("l:L1", watched[1].Key);
     }
 
     // ---------- install records (non-package license versions) ----------
@@ -316,7 +337,8 @@ internal static class CatalogChecks
     {
         var purchases = new[]
         {
-            new PurchaseItem { name = "Flagged", update_available = true, item_id = "i1" },
+            new PurchaseItem { name = "Flagged", update_available = true, item_id = "i1", files = new[] { new PurchaseFile { file_id = "f" } } },
+            new PurchaseItem { name = "WARUDO only", update_available = true, item_id = "i3" },   // no Unity files: not an update here
             new PurchaseItem { name = "Quiet", update_available = false, item_id = "i2" },
             null
         };
