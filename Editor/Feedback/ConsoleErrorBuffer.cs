@@ -68,7 +68,8 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// The entries as plain text, oldest first, at most <paramref name="maxBytes"/> of UTF-8. When they do not all fit,
-        /// the newest are kept. Not redacted here: <see cref="FeedbackClient.Build"/> redacts everything it sends.
+        /// the newest are kept, always as whole entries. Not redacted and never cut inside an entry here: <see cref="FeedbackClient.Build"/>
+        /// redacts everything it sends first and cuts after.
         /// </summary>
         public static string Format(int maxBytes)
         {
@@ -81,8 +82,8 @@ namespace OnAirDeck.UnityManager
                 var size = Encoding.UTF8.GetByteCount(block);
                 if (used + size > maxBytes)
                 {
-                    // The newest entry alone is too long: keep its start rather than nothing.
-                    if (blocks.Count == 0) blocks.Add(FeedbackText.CutToBytes(block, maxBytes));
+                    // The newest entry alone is too long: keep it whole, Build cuts it after redaction.
+                    if (blocks.Count == 0) blocks.Add(block);
                     break;
                 }
                 blocks.Add(block);

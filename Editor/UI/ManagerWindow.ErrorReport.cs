@@ -25,10 +25,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private bool _sendingReport;
         [NonSerialized] private string _reportError;
         [NonSerialized] private InstallErrorReport _messageReport;
-        // What the card shows is frozen per revision of the report; Send sends exactly this snapshot.
-        [NonSerialized] private string _excerptKey;
+        // What the card shows is frozen per revision of one card; Send sends exactly this snapshot.
         [NonSerialized] private InstallErrorSnapshot _shot;
-        [NonSerialized] private string _excerpt = "";
 
         /// <summary>Opens the window without taking focus when it is closed; an open window shows the card by itself.</summary>
         internal static void ShowForErrorReport()
@@ -84,23 +82,17 @@ namespace OnAirDeck.UnityManager
         /// <summary>Draws the card and returns the height it took.</summary>
         private float DrawReportCard(Rect body, InstallErrorReport report)
         {
-            var key = report.Product + "@" + report.Version;
-            if (key != _reportKey)
+            // A new card (also one of the same product and version) starts with a clean draft.
+            if (report.CardId != _reportKey)
             {
-                _reportKey = key;
+                _reportKey = report.CardId;
                 _reportNote = "";
                 _reportLogOpen = false;
                 _reportLogScroll = Vector2.zero;
                 _reportError = null;
                 GUIUtility.keyboardControl = 0;
             }
-            var excerptKey = key + "|" + report.Revision;
-            if (excerptKey != _excerptKey || _shot == null)
-            {
-                _excerptKey = excerptKey;
-                _shot = report.TakeSnapshot(FeedbackClient.MaxConsoleLogBytes, FeedbackClient.MaxMessage);
-                _excerpt = _shot.Excerpt;
-            }
+            if (_shot == null || !_shot.BelongsTo(report)) _shot = report.TakeSnapshot(FeedbackClient.MaxConsoleLogBytes, FeedbackClient.MaxMessage, FeedbackClient.LocalContext());
 
             var pad = SRMetrics.Space8;
             var gap = SRMetrics.Space4;
@@ -111,8 +103,8 @@ namespace OnAirDeck.UnityManager
             var text = new GUIStyle(SRStyles.Small) { wordWrap = true };
             text.normal.textColor = colors.Text;
 
-            var titleText = ManagerText.ErTitle.Replace("{n}", report.Product);
-            var reason = report.Headline;
+            var titleText = ManagerText.ErTitle.Replace("{n}", _shot.ProductShown);
+            var reason = _shot.Headline;
             var status = !string.IsNullOrEmpty(_reportError) ? _reportError : _session == null ? ManagerText.ErSignIn : null;
             var titleHeight = title.CalcHeight(new GUIContent(titleText), width);
             var reasonHeight = reason.Length > 0 ? text.CalcHeight(new GUIContent(reason), width) : 0f;
@@ -171,9 +163,9 @@ namespace OnAirDeck.UnityManager
                 SRTheme.Box(box, p.SurfaceSunken, p.LineControl, SRMetrics.RadiusControl);
                 var log = new GUIStyle(SRStyles.Mini) { wordWrap = true };
                 log.normal.textColor = p.Text;
-                var view = new Rect(0f, 0f, box.width - 18f, Mathf.Max(log.CalcHeight(new GUIContent(_excerpt), box.width - 18f) + 4f, box.height));
+                var view = new Rect(0f, 0f, box.width - 18f, Mathf.Max(log.CalcHeight(new GUIContent(_shot.Excerpt), box.width - 18f) + 4f, box.height));
                 _reportLogScroll = GUI.BeginScrollView(box, _reportLogScroll, view);
-                GUI.Label(new Rect(4f, 2f, view.width - 8f, view.height), _excerpt, log);
+                GUI.Label(new Rect(4f, 2f, view.width - 8f, view.height), _shot.Excerpt, log);
                 GUI.EndScrollView();
                 y += logHeight + gap;
             }
@@ -223,7 +215,15 @@ namespace OnAirDeck.UnityManager
         private async void SendReport()
         {
             var shot = _shot;
-            if (InstallErrorReporter.Current == null || shot == null || _session == null || _sendingReport) return;
+            var card = InstallErrorReporter.Current;
+            if (card == null || shot == null || _session == null || _sendingReport) return;
+            // The preview must be the card that is still on top, at the revision the person saw; else show the new one first.
+            if (!shot.BelongsTo(card))
+            {
+                _shot = null;
+                Repaint();
+                return;
+            }
             _sendingReport = true;
             _reportError = null;
             Repaint();
@@ -240,8 +240,8 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                _reportError = e.Message;
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending the install error report failed: " + e.Message);
+                _reportError = FeedbackText.Redact(e.Message, FeedbackClient.LocalContext());
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending the install error report failed: " + _reportError);
             }
             finally
             {

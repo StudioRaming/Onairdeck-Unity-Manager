@@ -114,24 +114,42 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>This PC as <see cref="FeedbackText.Redact"/> needs it: the project folder, the Windows user name and the host name.</summary>
+        public static RedactContext LocalContext()
+        {
+            string user = "", host = "";
+            try
+            {
+                user = Environment.UserName;
+                host = Environment.MachineName;
+            }
+            catch (Exception)
+            {
+                // Redact what can be known.
+            }
+            return new RedactContext(PackageInstallService.ProjectRoot, user, host);
+        }
+
         /// <summary>
-        /// The one request both senders build: the 문의하기 screen and the install error report card. <paramref name="consoleLog"/>
-        /// and <paramref name="message"/> are redacted here, once (<see cref="FeedbackText.Redact(string)"/>), so no caller can send
-        /// an unredacted note, product name or log. The log is cut to <see cref="MaxConsoleLogBytes"/> after redaction.
+        /// The one request both senders build: the 문의하기 screen and the install error report card. Every field that carries text
+        /// of the person, the product or the Console (message, error code, log and each package entry) is redacted here, whole,
+        /// BEFORE it is cut to its limit (<see cref="FeedbackText.Redact"/>), so no caller can send an unredacted note, product
+        /// name or log, and a cut never splits a secret in two.
         /// </summary>
         public static FeedbackRequest Build(FeedbackKind kind, string message, string errorCode, string consoleLog, FeedbackEnvironment env)
         {
             env = env ?? FeedbackEnvironment.Collect();
+            var context = LocalContext();
             return new FeedbackRequest
             {
                 kind = KindValue(kind),
-                message = FeedbackText.CutToChars(FeedbackText.Redact((message ?? "").Trim()), MaxMessage),
-                errorCode = (errorCode ?? "").Trim(),
-                consoleLog = FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? ""), MaxConsoleLogBytes),
+                message = FeedbackText.CutToChars(FeedbackText.Redact((message ?? "").Trim(), context), MaxMessage),
+                errorCode = FeedbackText.CutToChars(FeedbackText.Redact((errorCode ?? "").Trim(), context), MaxErrorCode),
+                consoleLog = FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? "", context), MaxConsoleLogBytes),
                 unityVersion = env.UnityVersion,
                 managerVersion = env.ManagerVersion,
                 os = env.Os,
-                packages = env.Packages ?? new string[0],
+                packages = FeedbackText.RedactEach(env.Packages, context),
             };
         }
 

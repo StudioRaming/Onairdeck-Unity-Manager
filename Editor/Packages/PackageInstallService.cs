@@ -209,7 +209,7 @@ namespace OnAirDeck.UnityManager
             SessionState.SetString(ReportKey, report.Describe());
             if (watchLicenses != null)
                 foreach (var item in items)
-                    if (item.TargetFolder.Length == 0) InstallErrorWatch.Begin(item.Name, LicenseIdOf(watchLicenses, item.Name), item.Version, new[] { "Packages/" + item.Name });
+                    if (item.TargetFolder.Length == 0) InstallErrorWatch.Begin("package:" + item.Name + "@" + item.Version, item.Name, LicenseIdOf(watchLicenses, item.Name), item.Version, new[] { "Packages/" + item.Name });
 #if UNITY_2021_1_OR_NEWER
             Client.Resolve();   // older editors resolve the changed manifest on the refresh below
 #endif

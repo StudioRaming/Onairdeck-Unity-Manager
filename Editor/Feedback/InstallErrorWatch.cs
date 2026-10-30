@@ -57,64 +57,69 @@ namespace OnAirDeck.UnityManager
             // A successful compile ends in a domain reload, so the compile-finished event of the old domain never reached
             // the watches. A watch that saw the compile start and now finds the editor idle lives in the domain it produced.
             var changed = false;
-            foreach (var watch in _watches)
-            {
-                if (watch.CompileStarted && !watch.CompileDone && !EditorApplication.isCompiling)
-                {
-                    watch.CompileFinished(DateTime.UtcNow.Ticks);
-                    changed = true;
-                }
-            }
+            if (!EditorApplication.isCompiling)
+                foreach (var watch in _watches)
+                    if (watch.CompileLostToReload(DateTime.UtcNow.Ticks)) changed = true;
             if (changed) Save();
             UpdateTicking();
         }
 
         /// <summary>
-        /// Starts watching an import. <paramref name="ownedPaths"/> are what the import owns (<see cref="InstallErrorLogic.OwnedPaths"/>).
-        /// A second package of the same product and version joins the watch that is already running.
+        /// Starts watching one import or package install, a job of its own named <paramref name="jobId"/>. <paramref name="ownedPaths"/>
+        /// are what it owns (<see cref="InstallErrorLogic.OwnedPaths"/>). A second package of the same product and version joins the
+        /// watch that is already running without touching the state of its other jobs.
         /// </summary>
-        public static void Begin(string product, string productId, string version, IList<string> ownedPaths)
+        public static void Begin(string jobId, string product, string productId, string version, IList<string> ownedPaths)
         {
             if (string.IsNullOrEmpty(product) || ownedPaths == null || ownedPaths.Count == 0) return;
             Load();
             var now = DateTime.UtcNow.Ticks;
             var state = _watches.Find(w => Matches(w, product, version));
-            if (state != null) state.AddJob(ownedPaths, now);
+            if (state != null) state.AddJob(jobId, ownedPaths, now);
             else
             {
-                state = InstallWatchState.Begin(product, productId, version, ownedPaths, now);
+                state = InstallWatchState.Begin(product, productId, version, jobId, ownedPaths, now);
                 _watches.Add(state);
             }
-            state.Assemblies.Clear();
-            state.Assemblies.AddRange(FindAssemblies(state.Prefixes));
+            RefreshAssemblies(state);
             Save();
             UpdateTicking();
         }
 
-        /// <summary>The import of the product finished (its scripts, if any, compile next).</summary>
-        public static void ImportFinished(string product, string version)
+        /// <summary>The import of the job finished (its scripts, if any, compile next).</summary>
+        public static void ImportFinished(string jobId, string product, string version)
         {
             Load();
             foreach (var watch in _watches)
             {
                 if (!Matches(watch, product, version)) continue;
-                watch.ImportFinished(DateTime.UtcNow.Ticks);
-                watch.Assemblies.Clear();
-                watch.Assemblies.AddRange(FindAssemblies(watch.Prefixes));
+                watch.ImportFinished(jobId, DateTime.UtcNow.Ticks);
+                RefreshAssemblies(watch);
             }
             Save();
         }
 
         /// <summary>
-        /// One import was cancelled or failed: its paths leave the watch. The watch ends when no path of the product is left, so a
-        /// second package of the same product that is still importing keeps being watched.
+        /// One import was cancelled or failed: only its job leaves the watch (its paths, its compile state, its end time). The watch
+        /// ends when its last job does, so another package of the same product that is still importing keeps being watched.
         /// </summary>
-        public static void End(string product, string version, IList<string> ownedPaths)
+        public static void End(string jobId, string product, string version)
         {
             Load();
-            var gone = _watches.RemoveAll(w => Matches(w, product, version) && w.RemoveJob(ownedPaths ?? new string[0]));
+            var gone = false;
+            foreach (var watch in _watches.FindAll(w => Matches(w, product, version)))
+            {
+                if (watch.RemoveJob(jobId)) { _watches.Remove(watch); gone = true; }
+                else RefreshAssemblies(watch);
+            }
             Save();
-            if (gone > 0) UpdateTicking();
+            if (gone) UpdateTicking();
+        }
+
+        private static void RefreshAssemblies(InstallWatchState watch)
+        {
+            watch.Assemblies.Clear();
+            watch.Assemblies.AddRange(FindAssemblies(watch.Prefixes));
         }
 
         private static bool Matches(InstallWatchState watch, string product, string version)
@@ -130,7 +135,7 @@ namespace OnAirDeck.UnityManager
             Load();
             var changed = false;
             foreach (var watch in _watches)
-                if (!watch.CompileStarted) { watch.CompileStarted = true; changed = true; }
+                if (watch.MarkCompileStarted()) changed = true;
             if (changed) Save();
         }
 
@@ -147,7 +152,7 @@ namespace OnAirDeck.UnityManager
                     if (InstallErrorLogic.IsLicenseGateText(message.message)) continue;
                     if (!InstallErrorLogic.IsUnder(message.file, watch.Prefixes) && !InstallErrorLogic.MentionsPath(message.message, watch.Prefixes)) continue;
                     if (report == null) report = NewReport(watch, InstallErrorCodes.CompileFailed);
-                    if (report.Compile.Count < InstallErrorReport.MaxLines) report.Compile.Add(message.message);
+                    report.AddCompile(message.message);
                 }
                 if (report != null) InstallErrorReporter.Offer(report);
             }
@@ -191,7 +196,11 @@ namespace OnAirDeck.UnityManager
             foreach (var item in items) Judge(item);
 
             var now = DateTime.UtcNow.Ticks;
-            if (_watches.RemoveAll(w => !w.IsActive(now)) > 0) Save();
+            var changed = false;
+            foreach (var watch in _watches)
+                if (watch.Prune(now)) { RefreshAssemblies(watch); changed = true; }
+            if (_watches.RemoveAll(w => w.Jobs.Count == 0) > 0) changed = true;
+            if (changed) Save();
             UpdateTicking();
         }
 
@@ -209,7 +218,7 @@ namespace OnAirDeck.UnityManager
                     : named;
                 if (!attributed) continue;
                 var report = NewReport(watch, InstallErrorCodes.Exception);
-                report.Other.Add(item.Type + ": " + item.Condition.TrimEnd() + (item.Stack.Length > 0 ? "\n" + item.Stack : ""));
+                report.AddOther(item.Type + ": " + item.Condition.TrimEnd() + (item.Stack.Length > 0 ? "\n" + item.Stack : ""));
                 InstallErrorReporter.Offer(report);
             }
         }

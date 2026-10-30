@@ -114,7 +114,7 @@ namespace OnAirDeck.UnityManager
             InfoRow(ManagerText.KOs, Or(env.Os));
             InfoRow(ManagerText.KAcc, _session != null ? _session.email : "");
             InfoRow(ManagerText.KDev, DeviceIdentity.DisplayName);
-            InfoRow(ManagerText.KPackages, env.Packages.Length == 0 ? ManagerText.None : string.Join(", ", env.Packages));
+            InfoRow(ManagerText.KPackages, env.Packages.Length == 0 ? ManagerText.None : FeedbackText.Redact(string.Join(", ", env.Packages), FeedbackClient.LocalContext()));
             _feedbackAttachLog = SRGui.ToggleLeft(new GUIContent(ManagerText.AttachLog.Replace("{n}", ConsoleErrorBuffer.Count.ToString())), _feedbackAttachLog);
         }
 
@@ -194,8 +194,8 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                _feedbackError = e.Message;
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending feedback failed: " + e.Message);
+                _feedbackError = FeedbackText.Redact(e.Message, FeedbackClient.LocalContext());
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending feedback failed: " + _feedbackError);
             }
             finally
             {

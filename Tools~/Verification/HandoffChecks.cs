@@ -330,7 +330,7 @@ internal static partial class LegacyChecks
 
     // ---------- the installer contract (MingToonLegacyCleanup) ----------
 
-    private static byte[] Tar(params KeyValuePair<string, byte[]>[] entries)
+    internal static byte[] Tar(params KeyValuePair<string, byte[]>[] entries)
     {
         using (var tar = new MemoryStream())
         {
@@ -373,8 +373,8 @@ internal static partial class LegacyChecks
     private static void ReimportUnchangedFiles()
     {
         var package = UnityPackage("{}", "Assets\\StudioRaming\\X\\cfg.json");
-        var paths = UnityPackageArchive.AssetPaths(package);
-        Require(paths != null && paths.SequenceEqual(new[] { "Assets/StudioRaming/MingToonInstaller/Other.cs", "Assets/StudioRaming/X/cfg.json" }));
+        var paths = UnityPackageArchive.Assets(package);
+        Require(paths != null && paths.Select(a => a.Path).SequenceEqual(new[] { "Assets/StudioRaming/MingToonInstaller/Other.cs", "Assets/StudioRaming/X/cfg.json" }));
 
         var p = NewProject();
         var t0 = new DateTime(2026, 9, 24, 0, 0, 0, DateTimeKind.Utc);

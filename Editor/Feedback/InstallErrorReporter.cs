@@ -70,7 +70,8 @@ namespace OnAirDeck.UnityManager
                 if (state == null || (manual && state != InstallErrorLedger.Sent)) fresh.Add(entry);
             }
             if (fresh.Count == 0) return manual && sentLines > 0 ? OfferResult.Duplicate : OfferResult.Ignored;
-            var incoming = fresh.Count == report.Entries().Count ? report : report.OnlyEntries(fresh);
+            // A copy with a card id of its own, so no caller's report is ever a waiting card.
+            var incoming = report.OnlyEntries(fresh);
 
             var existing = _pending.Find(r => r.SameProduct(incoming));
             if (existing != null)
@@ -96,9 +97,10 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// Sends the frozen <paramref name="shot"/> as a bug through <see cref="FeedbackClient"/> (which redacts message and log) and
-        /// returns the report id. 401 → <see cref="SessionExpiredException"/>. On success every error of the snapshot is recorded as
-        /// sent and only its lines leave the card; lines that joined while it was sending stay as the same product's card.
+        /// Sends the frozen <paramref name="shot"/> as a bug through <see cref="FeedbackClient"/> (which redacts every field) and
+        /// returns the report id. 401 → <see cref="SessionExpiredException"/>. On success the signature of every entry that was in the
+        /// excerpt is recorded as sent, and every waiting card drops each entry with such a signature; entries the excerpt cap cut, and
+        /// errors with another signature that joined while it was sending, stay.
         /// </summary>
         public static async Task<string> SendAsync(string sessionToken, InstallErrorSnapshot shot, string note)
         {
@@ -108,16 +110,16 @@ namespace OnAirDeck.UnityManager
                 FeedbackEnvironment.Collect(new[] { shot.PackageLabel }));
             var id = await FeedbackClient.SendAsync(sessionToken, body);
             Load();
-            foreach (var signature in shot.Signatures) Ledger.Add(signature, InstallErrorLedger.Sent);
-            var card = _pending.Find(r => string.Equals(r.Product, shot.Product, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(r.Version ?? "", shot.Version ?? "", StringComparison.OrdinalIgnoreCase));
-            if (card != null)
-            {
-                if (card.RemoveSent(shot)) _pending.Remove(card);
-                Save();
-                Raise();
-            }
+            foreach (var entry in shot.Included) Ledger.Add(entry.Signature, InstallErrorLedger.Sent);
+            _pending.RemoveAll(card => card.RemoveSigned(IsSent));
+            Save();
+            Raise();
             return id;
+        }
+
+        private static bool IsSent(string signature)
+        {
+            return Ledger.State(signature) == InstallErrorLedger.Sent;
         }
 
         /// <summary>
@@ -143,7 +145,7 @@ namespace OnAirDeck.UnityManager
                 Reason = e.Message ?? "",
             };
             var detail = handled ? e.GetType().Name + ": " + e.Message : ConsoleErrorBuffer.FirstLines(e.ToString(), 20);
-            report.Other.Add(detail);
+            report.AddOther(detail);
             return report;
         }
 
@@ -151,7 +153,7 @@ namespace OnAirDeck.UnityManager
         public static InstallErrorReport FromMessage(string message)
         {
             var report = new InstallErrorReport { Product = "Atelier Manager", ProductId = "com.studioraming.manager", Version = UpdateService.CurrentVersion ?? "", Reason = message ?? "" };
-            report.Other.Add(message ?? "");
+            report.AddOther(message ?? "");
             return report;
         }
 
