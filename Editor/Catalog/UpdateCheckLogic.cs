@@ -51,7 +51,7 @@ namespace OnAirDeck.UnityManager
         {
             var found = new List<UpdateCandidate>();
             foreach (var item in purchases ?? new PurchaseItem[0])
-                if (item != null && item.update_available)
+                if (item != null && item.update_available && item.HasUnityFiles)
                     found.Add(new UpdateCandidate { Kind = UpdateKind.Purchase, Name = item.name ?? "", Purchase = item });
 
             var best = new Dictionary<string, UpdateCandidate>(StringComparer.Ordinal);
