@@ -207,7 +207,11 @@ namespace OnAirDeck.UnityManager
             // A file has no version to parse: its label says whether it is a preview or beta, and the newest other file is offered.
             var fileLabels = files.ConvertAll(v => string.IsNullOrEmpty(v.version_label) ? (v.file_name ?? "") : v.version_label);
             var fileKinds = fileLabels.ConvertAll(l => BuildKinds.OfLabel(l));
-            var offeredFile = BuildKinds.IndexOfOffered(fileKinds, false);
+            // Only an installed (marked) product has a record that counts; with no marker the files are not in this project.
+            InstallRecord record = null;
+            if (versions.Count == 0 && marker && installRecords != null) installRecords.TryGetValue(license.license_id ?? "", out record);
+            // Like packages: a project that runs a preview or beta file is offered the newest of all, so it is never steered back.
+            var offeredFile = BuildKinds.IndexOfOffered(fileKinds, record != null && BuildKinds.IsPrerelease(BuildKinds.OfLabel(record.Label ?? "")));
             for (var i = 0; i < files.Count; i++)
             {
                 var v = files[i];
@@ -227,20 +231,16 @@ namespace OnAirDeck.UnityManager
             if (versions.Count == 0 && offeredFile >= 0) entry.LatestVersion = fileLabels[offeredFile];
             entry.SortDate = latest;
             entry.State = StateOfPackage(installed, entry.LatestVersion);
-            if (versions.Count == 0 && marker && offeredFile >= 0)
-            {
-                InstallRecord record = null;
-                if (installRecords != null) installRecords.TryGetValue(license.license_id ?? "", out record);
-                entry.State = StateOfFiles(entry, files, fileLabels, offeredFile, record);
-            }
+            if (versions.Count == 0 && marker && offeredFile >= 0) entry.State = StateOfFiles(entry, files, fileLabels, offeredFile, record);
             else if (entry.State == EntryState.None && marker) entry.State = EntryState.Latest;   // installed another way, nothing here to compare with
             return entry;
         }
 
         /// <summary>
         /// A marked (installed) non-package license against the Manager's install record: no record is Unknown; the offered file is
-        /// Latest when it is the recorded version, New when it was released after it, otherwise Installed (the record is newer, e.g. a
-        /// beta). The recorded row is marked installed. The file rows follow <paramref name="files"/> after the package rows (none here).
+        /// Latest when it is the recorded version, New when it was released after it, Installed when the record is newer (a version
+        /// no longer listed), Unknown when either release time cannot be read (no guess that could offer an older version as an
+        /// update). The recorded row is marked installed. The file rows follow <paramref name="files"/> after the package rows (none here).
         /// </summary>
         private static EntryState StateOfFiles(CatalogEntry entry, List<LicenseVersionEntry> files, List<string> fileLabels, int offeredFile, InstallRecord record)
         {
@@ -255,9 +255,8 @@ namespace OnAirDeck.UnityManager
             var offered = files[offeredFile];
             if (string.Equals(offered.version_id, record.VersionId, StringComparison.OrdinalIgnoreCase)) return EntryState.Latest;
             DateTime offeredAt, recordedAt;
-            if (TryParseDate(offered.released_at, out offeredAt) && TryParseDate(record.ReleasedAt, out recordedAt) && offeredAt <= recordedAt)
-                return EntryState.Installed;
-            return EntryState.New;
+            if (!TryParseDate(offered.released_at, out offeredAt) || !TryParseDate(record.ReleasedAt, out recordedAt)) return EntryState.Unknown;
+            return offeredAt > recordedAt ? EntryState.New : EntryState.Installed;
         }
 
         /// <summary>Not installed: None. Older than the newest: New. The newest: Latest (no chip). Newer than any version offered: Installed.</summary>

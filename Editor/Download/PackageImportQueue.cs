@@ -48,27 +48,36 @@ namespace OnAirDeck.UnityManager
             ProcessNext();
         }
 
-        /// <summary>Saves an install record now. A failure is logged, never thrown: the install itself already succeeded.</summary>
+        /// <summary>
+        /// Saves an install record now. Never throws (it runs inside the queue's completion step, which must go on to the next
+        /// package): a failed write or a failing listener is logged; the install itself already succeeded.
+        /// </summary>
         public static void SaveRecord(InstallRecord record)
         {
             try
             {
                 InstallRecords.Save(PackageInstallService.ProjectRoot, record);
+                var handler = RecordSaved;
+                if (handler != null) handler();
             }
             catch (Exception e)
             {
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the installed version could not be recorded: " + e.Message);
-                return;
             }
-            var handler = RecordSaved;
-            if (handler != null) handler();
         }
 
         private static void FinishRecord(string packagePath, bool imported)
         {
-            InstallRecord ready;
-            SessionState.SetString(RecordsKey, PendingImportRecords.Finish(SessionState.GetString(RecordsKey, ""), packagePath, imported, out ready));
-            if (ready != null) SaveRecord(ready);
+            try
+            {
+                InstallRecord ready;
+                SessionState.SetString(RecordsKey, PendingImportRecords.Finish(SessionState.GetString(RecordsKey, ""), packagePath, imported, out ready));
+                if (ready != null) SaveRecord(ready);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The installed version could not be recorded: " + e.Message);
+            }
         }
 
         public static int PendingCount

@@ -80,6 +80,23 @@ internal static class CatalogChecks
         entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f0", Label = "1.0.0", ReleasedAt = "2026-09-01T00:00:00Z" }), marked);
         Equal(EntryState.New, entry.State);
 
+        // A record without a readable release time and not in the list: unknown, never a guessed "update" to an older file.
+        entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f0", Label = "?", ReleasedAt = "" }), marked);
+        Equal(EntryState.Unknown, entry.State);
+
+        // A project on a beta file is offered the newest of all (as packages are), so it is not steered back to the release.
+        var withBeta = new LicenseEntry { license_id = "L5", name = "Beta", versions = new[] {
+            FileVer("r1", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("b1", "2.1.0 beta", "2026-10-25T00:00:00Z") } };
+        var onBeta = Records(new InstallRecord { LicenseId = "L5", VersionId = "b1", Label = "2.1.0 beta", ReleasedAt = "2026-10-25T00:00:00Z" });
+        entry = ManagerCatalog.Build(null, new[] { withBeta }, n => "", new HashSet<string> { "L5" }, onBeta)[0];
+        Equal("2.1.0 beta", entry.LatestVersion);
+        Equal(EntryState.Latest, entry.State);
+        // On the release, the beta is not offered and the release is up to date.
+        var onRelease = Records(new InstallRecord { LicenseId = "L5", VersionId = "r1", Label = "2.0.1", ReleasedAt = "2026-10-20T00:00:00Z" });
+        entry = ManagerCatalog.Build(null, new[] { withBeta }, n => "", new HashSet<string> { "L5" }, onRelease)[0];
+        Equal("2.0.1", entry.LatestVersion);
+        Equal(EntryState.Latest, entry.State);
+
         // No marker: the product is not in this project, whatever the record says.
         entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f2", ReleasedAt = "2026-10-20T00:00:00Z" }), new HashSet<string>());
         Equal(EntryState.None, entry.State);
@@ -109,6 +126,10 @@ internal static class CatalogChecks
 
             File.WriteAllText(path, "{ not json");
             Equal(0, InstallRecords.Load(root).Count);
+            // Saving over an unreadable file keeps its last copy next to it.
+            InstallRecords.Save(root, new InstallRecord { LicenseId = "L9", VersionId = "v9" });
+            Equal("{ not json", File.ReadAllText(path + ".prev"));
+            Equal(1, InstallRecords.Load(root).Count);
             File.WriteAllText(path, "{\"licenses\":[{\"license_id\":\"L1\"},{\"license_id\":\"L2\",\"version_id\":\"v2\"}]}");
             Equal(1, InstallRecords.Load(root).Count);
 

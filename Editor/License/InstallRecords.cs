@@ -68,7 +68,8 @@ namespace OnAirDeck.UnityManager
             var list = new List<object>();
             foreach (var id in ids) list.Add(ToJson(records[id]));
             var root = new Dictionary<string, object> { { "format", 1L }, { "licenses", list } };
-            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
+            // keepPrevious: an unreadable file (a merge conflict) reads as no records and is replaced, so its last copy stays as .prev.
+            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n", true);
         }
 
         /// <summary>One record as a single JSON line (the import queue keeps it in SessionState until the import finishes).</summary>

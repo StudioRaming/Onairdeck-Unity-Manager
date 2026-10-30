@@ -242,17 +242,17 @@ namespace OnAirDeck.UnityManager
                         Defer(() => PrimaryAction(entry));
                 }
             }
-            if (primary == null && IsFileLicense(entry))
+            // The offered file version: install, update, or install again over what is there. Installed means this project has a
+            // newer version than the one offered, so no header button (it would install an older one); the Versions rows remain.
+            if (primary == null && IsFileLicense(entry) && entry.State != EntryState.Installed)
             {
-                // The offered file version: install, update, or install again over what is there.
                 var fileLabel = ManagerText.BInst;
                 var fileKind = SRButtonKind.Primary;
                 switch (entry.State)
                 {
                     case EntryState.New: fileLabel = ManagerText.BUpd; break;
                     case EntryState.Unknown: fileLabel = ManagerText.BInstLatest; break;
-                    case EntryState.Latest:
-                    case EntryState.Installed: fileLabel = ManagerText.BAgain; fileKind = SRButtonKind.Secondary; break;
+                    case EntryState.Latest: fileLabel = ManagerText.BAgain; fileKind = SRButtonKind.Secondary; break;
                 }
                 using (new GUIEnabledScope(!busy))
                 {
