@@ -567,10 +567,6 @@ namespace OnAirDeck.UnityManager
             return Jobs.Count == 0;
         }
 
-        public bool IsActive(long nowTicks)
-        {
-            return Jobs.Exists(j => j.IsActive(nowTicks));
-        }
 
         /// <summary>Drops the jobs that are over. True when some were.</summary>
         public bool Prune(long nowTicks)

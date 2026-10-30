@@ -378,7 +378,7 @@ internal static class InstallErrorChecks
         var minute = TimeSpan.FromMinutes(1).Ticks;
         var state = InstallWatchState.Begin("Prod", "lic-1", "1.0", "job", new[] { "Assets/Prod" }, t0);
         var job = state.Job("job");
-        Require(state.IsActive(t0 + 30 * minute));
+        Require(state.Job("job").IsActive(t0 + 30 * minute));
 
         // The compile is what ends it: a compile-finished event before any compile started changes nothing.
         state.CompileFinished(t0 + 5 * minute);
@@ -387,24 +387,24 @@ internal static class InstallErrorChecks
         Require(!state.MarkCompileStarted());
         state.CompileFinished(t0 + 5 * minute);
         Require(job.CompileDone);
-        Require(state.IsActive(t0 + 7 * minute));
-        Require(!state.IsActive(t0 + 7 * minute + 1));
+        Require(state.Job("job").IsActive(t0 + 7 * minute));
+        Require(!state.Job("job").IsActive(t0 + 7 * minute + 1));
         // A finished import does not shorten a watch whose compile already ended.
         state.ImportFinished("job", t0 + 6 * minute);
-        Require(state.IsActive(t0 + 7 * minute));
+        Require(state.Job("job").IsActive(t0 + 7 * minute));
 
         // The deadline is fixed by the first compile; a later compile does not extend it.
         state.CompileFinished(t0 + 6 * minute);
-        Require(!state.IsActive(t0 + 7 * minute + 1));
+        Require(!state.Job("job").IsActive(t0 + 7 * minute + 1));
 
         // A compile that is still running is waited for (past the no-script cap) up to the hard cap, then two minutes after it.
         var slow = InstallWatchState.Begin("Prod", "lic-1", "1.0", "job", new[] { "Assets/Prod" }, t0);
         slow.MarkCompileStarted();
         slow.ImportFinished("job", t0 + minute);
-        Require(slow.IsActive(t0 + 30 * minute));
-        Require(!slow.IsActive(t0 + 61 * minute));
+        Require(slow.Job("job").IsActive(t0 + 30 * minute));
+        Require(!slow.Job("job").IsActive(t0 + 61 * minute));
         slow.CompileFinished(t0 + 30 * minute);
-        Require(slow.IsActive(t0 + 32 * minute) && !slow.IsActive(t0 + 32 * minute + 1));
+        Require(slow.Job("job").IsActive(t0 + 32 * minute) && !slow.Job("job").IsActive(t0 + 32 * minute + 1));
 
         // A compile the domain reload swallowed counts as finished.
         var reloaded = InstallWatchState.Begin("Prod", "lic-1", "1.0", "job", new[] { "Assets/Prod" }, t0);
@@ -415,8 +415,8 @@ internal static class InstallErrorChecks
 
         var noScripts = InstallWatchState.Begin("Prod", "lic-1", "1.0", "job", new[] { "Assets/Prod" }, t0);
         noScripts.ImportFinished("job", t0 + minute);
-        Require(noScripts.IsActive(t0 + 10 * minute));
-        Require(!noScripts.IsActive(t0 + 12 * minute));
+        Require(noScripts.Job("job").IsActive(t0 + 10 * minute));
+        Require(!noScripts.Job("job").IsActive(t0 + 12 * minute));
     }
 
     private static void WatchJobs()
@@ -437,7 +437,7 @@ internal static class InstallErrorChecks
         Equal(2, watch.Prefixes.Count);
         Require(watch.Prefixes.Contains("Assets/Shared/Core.cs") && !watch.Prefixes.Contains("Assets/Shared/Addon.cs"));
         Require(watch.Job("A").CompileDone);
-        Require(!watch.IsActive(t0 + 7 * minute + 1));
+        Require(!watch.Job("A").IsActive(t0 + 7 * minute + 1));
 
         // The scope is the union of the jobs still active: once A is over only B's paths are left.
         var two = InstallWatchState.Begin("Prod", "lic-1", "1.0", "A", new[] { "Assets/A" }, t0);
@@ -448,10 +448,10 @@ internal static class InstallErrorChecks
         Require(two.Prune(t0 + 8 * minute));
         Equal(1, two.Jobs.Count);
         Equal("Assets/B", two.Prefixes[0]);
-        Require(two.IsActive(t0 + 30 * minute));
+        Require(two.Job("B").IsActive(t0 + 30 * minute));
         // The watch ends when its last job does.
         Require(two.RemoveJob("B"));
-        Require(!two.IsActive(t0));
+        Equal(0, two.Jobs.Count);
 
         // The same job id starts over, the others stay.
         var again = InstallWatchState.Begin("Prod", "lic-1", "1.0", "A", new[] { "Assets/A" }, t0);
