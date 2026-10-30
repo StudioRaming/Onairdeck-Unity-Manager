@@ -155,12 +155,11 @@ namespace OnAirDeck.UnityManager
                     if (!keep) Downloader.TryDeleteFolder(cacheFolder);
                 }
 
-                // A version is recorded only when every file of it went in: none skipped for its name or an unsafe zip entry,
-                // and something placed. Otherwise the window keeps showing what was there before.
-                var complete = cached.Count == files.Length && summary.SkippedUnsafe == 0 && (packages.Count > 0 || summary.Copied + summary.Extracted > 0);
-                if (record != null && !complete)
+                // A version is recorded only when something of it was placed. Entries skipped for an unusable name or an unsafe
+                // zip path are the Manager's own safety choice and a reinstall would skip them again, so they do not block it.
+                if (record != null && packages.Count == 0 && summary.Copied + summary.Extracted == 0)
                 {
-                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Not every file of this version was placed, so the installed version is not recorded.");
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Nothing of this version was placed, so the installed version is not recorded.");
                     record = null;
                 }
                 if (packages.Count > 0)

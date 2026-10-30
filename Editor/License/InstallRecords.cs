@@ -31,17 +31,27 @@ namespace OnAirDeck.UnityManager
         /// <summary>The records by license id (case-insensitive). Never throws: a missing, unreadable or malformed file is no records.</summary>
         public static Dictionary<string, InstallRecord> Load(string projectRoot)
         {
+            bool unreadable;
+            return Load(projectRoot, out unreadable);
+        }
+
+        /// <summary><paramref name="unreadable"/>: the file exists but is not a records file (a merge conflict, a hand edit).</summary>
+        public static Dictionary<string, InstallRecord> Load(string projectRoot, out bool unreadable)
+        {
+            unreadable = false;
             var records = new Dictionary<string, InstallRecord>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrEmpty(projectRoot)) return records;
             try
             {
                 var path = PathFor(projectRoot);
                 if (!File.Exists(path)) return records;
+                unreadable = true;
                 var root = MiniJson.ParseObject(File.ReadAllText(path));
                 object raw;
                 if (root == null || !root.TryGetValue("licenses", out raw)) return records;
                 var list = raw as List<object>;
                 if (list == null) return records;
+                unreadable = false;
                 foreach (var item in list)
                 {
                     var record = FromJson(item as Dictionary<string, object>);
@@ -61,15 +71,16 @@ namespace OnAirDeck.UnityManager
             if (string.IsNullOrEmpty(projectRoot)) throw new ArgumentException("A project root is required.", "projectRoot");
             if (record == null || string.IsNullOrEmpty(record.LicenseId) || string.IsNullOrEmpty(record.VersionId))
                 throw new ArgumentException("A record needs a license id and a version id.", "record");
-            var records = Load(projectRoot);
+            bool unreadable;
+            var records = Load(projectRoot, out unreadable);
             records[record.LicenseId] = record;
             var ids = new List<string>(records.Keys);
             ids.Sort(StringComparer.OrdinalIgnoreCase);
             var list = new List<object>();
             foreach (var id in ids) list.Add(ToJson(records[id]));
             var root = new Dictionary<string, object> { { "format", 1L }, { "licenses", list } };
-            // keepPrevious: an unreadable file (a merge conflict) reads as no records and is replaced, so its last copy stays as .prev.
-            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n", true);
+            // An unreadable file reads as no records and is replaced: only then its last copy stays as .prev (for a hand repair).
+            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n", unreadable);
         }
 
         /// <summary>One record as a single JSON line (the import queue keeps it in SessionState until the import finishes).</summary>

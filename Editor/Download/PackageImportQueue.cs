@@ -57,12 +57,20 @@ namespace OnAirDeck.UnityManager
             try
             {
                 InstallRecords.Save(PackageInstallService.ProjectRoot, record);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the installed version could not be recorded: " + e.Message);
+                return;
+            }
+            try
+            {
                 var handler = RecordSaved;
                 if (handler != null) handler();
             }
             catch (Exception e)
             {
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the installed version could not be recorded: " + e.Message);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The installed version was recorded, but the window could not refresh: " + e.Message);
             }
         }
 

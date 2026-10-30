@@ -238,22 +238,26 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// A marked (installed) non-package license against the Manager's install record: no record is Unknown; the offered file is
-        /// Latest when it is the recorded version, New when it was released after it, Installed when the record is newer (a version
-        /// no longer listed), Unknown when either release time cannot be read (no guess that could offer an older version as an
-        /// update). The recorded row is marked installed. The file rows follow <paramref name="files"/> after the package rows (none here).
+        /// Latest when it is the recorded version, New when it was released after it, Installed when the record is newer. A listed
+        /// record is placed by its position in the list (newest first, the order the rows show); one no longer listed by its release
+        /// time, and Unknown when either time cannot be read (no guess that could offer an older version as an update). The
+        /// recorded row is marked installed. The file rows follow <paramref name="files"/> after the package rows (none here).
         /// </summary>
         private static EntryState StateOfFiles(CatalogEntry entry, List<LicenseVersionEntry> files, List<string> fileLabels, int offeredFile, InstallRecord record)
         {
             if (record == null) return EntryState.Unknown;
             entry.InstalledVersion = record.Label ?? "";
+            var recordIndex = -1;
             for (var i = 0; i < files.Count; i++)
             {
                 if (!string.Equals(files[i].version_id, record.VersionId, StringComparison.OrdinalIgnoreCase)) continue;
                 entry.Versions[i].Installed = true;
                 entry.InstalledVersion = fileLabels[i];
+                recordIndex = i;
             }
+            if (recordIndex >= 0)
+                return recordIndex == offeredFile ? EntryState.Latest : recordIndex > offeredFile ? EntryState.New : EntryState.Installed;
             var offered = files[offeredFile];
-            if (string.Equals(offered.version_id, record.VersionId, StringComparison.OrdinalIgnoreCase)) return EntryState.Latest;
             DateTime offeredAt, recordedAt;
             if (!TryParseDate(offered.released_at, out offeredAt) || !TryParseDate(record.ReleasedAt, out recordedAt)) return EntryState.Unknown;
             return offeredAt > recordedAt ? EntryState.New : EntryState.Installed;

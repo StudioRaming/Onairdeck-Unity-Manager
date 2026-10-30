@@ -84,6 +84,15 @@ internal static class CatalogChecks
         entry = build(Records(new InstallRecord { LicenseId = "L3", VersionId = "f0", Label = "?", ReleasedAt = "" }), marked);
         Equal(EntryState.Unknown, entry.State);
 
+        // A listed record is placed by its row, so a version without a release time is still known (no "unknown" next to its
+        // installed row): the older row is a new version.
+        var undated = new LicenseEntry { license_id = "L6", name = "Undated", versions = new[] {
+            FileVer("r2", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("u1", "1.9.0", "") } };
+        entry = ManagerCatalog.Build(null, new[] { undated }, n => "", new HashSet<string> { "L6" },
+            Records(new InstallRecord { LicenseId = "L6", VersionId = "u1", Label = "1.9.0", ReleasedAt = "" }))[0];
+        Equal(EntryState.New, entry.State);
+        Require(entry.Versions[1].Installed && !entry.Versions[0].Installed);
+
         // A project on a beta file is offered the newest of all (as packages are), so it is not steered back to the release.
         var withBeta = new LicenseEntry { license_id = "L5", name = "Beta", versions = new[] {
             FileVer("r1", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("b1", "2.1.0 beta", "2026-10-25T00:00:00Z") } };
@@ -124,6 +133,7 @@ internal static class CatalogChecks
             Require(path.EndsWith(Path.Combine("ProjectSettings", "OnAirDeck", "installed-versions.json"), StringComparison.Ordinal));
             Equal(0, Directory.GetFiles(Path.GetDirectoryName(path), "*.tmp").Length);
 
+            Require(!File.Exists(path + ".prev"));   // a normal save leaves no copy in the project
             File.WriteAllText(path, "{ not json");
             Equal(0, InstallRecords.Load(root).Count);
             // Saving over an unreadable file keeps its last copy next to it.
