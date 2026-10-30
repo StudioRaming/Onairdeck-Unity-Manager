@@ -93,6 +93,14 @@ internal static class CatalogChecks
         Equal(EntryState.New, entry.State);
         Require(entry.Versions[1].Installed && !entry.Versions[0].Installed);
 
+        // The order follows the parsed time, not the text: a fraction or another offset does not make a version look newer.
+        var mixed = new LicenseEntry { license_id = "L7", name = "Mixed", versions = new[] {
+            FileVer("old", "1.0.0", "2026-10-30T08:00:00+09:00"), FileVer("new", "1.0.1", "2026-10-29T23:30:00.5+00:00") } };
+        entry = ManagerCatalog.Build(null, new[] { mixed }, n => "", new HashSet<string> { "L7" },
+            Records(new InstallRecord { LicenseId = "L7", VersionId = "old", Label = "1.0.0" }))[0];
+        Equal("1.0.1", entry.LatestVersion);
+        Equal(EntryState.New, entry.State);
+
         // A project on a beta file is offered the newest of all (as packages are), so it is not steered back to the release.
         var withBeta = new LicenseEntry { license_id = "L5", name = "Beta", versions = new[] {
             FileVer("r1", "2.0.1", "2026-10-20T00:00:00Z"), FileVer("b1", "2.1.0 beta", "2026-10-25T00:00:00Z") } };

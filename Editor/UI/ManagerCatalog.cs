@@ -203,7 +203,7 @@ namespace OnAirDeck.UnityManager
                     Kind = packageKinds[i],
                 });
             }
-            files.Sort((a, b) => string.CompareOrdinal(b.released_at ?? "", a.released_at ?? ""));
+            files.Sort(NewestFirst);
             // A file has no version to parse: its label says whether it is a preview or beta, and the newest other file is offered.
             var fileLabels = files.ConvertAll(v => string.IsNullOrEmpty(v.version_label) ? (v.file_name ?? "") : v.version_label);
             var fileKinds = fileLabels.ConvertAll(l => BuildKinds.OfLabel(l));
@@ -234,6 +234,21 @@ namespace OnAirDeck.UnityManager
             if (versions.Count == 0 && marker && offeredFile >= 0) entry.State = StateOfFiles(entry, files, fileLabels, offeredFile, record);
             else if (entry.State == EntryState.None && marker) entry.State = EntryState.Latest;   // installed another way, nothing here to compare with
             return entry;
+        }
+
+        /// <summary>
+        /// File versions newest first by their parsed release time, so the order (which picks the offered file and, with a record,
+        /// the state) does not depend on how the time is written (fractions, offset). Unreadable times go last (the server column
+        /// is NOT NULL); two unreadable ones keep the old text order.
+        /// </summary>
+        private static int NewestFirst(LicenseVersionEntry a, LicenseVersionEntry b)
+        {
+            DateTime x, y;
+            var hasX = TryParseDate(a.released_at, out x);
+            var hasY = TryParseDate(b.released_at, out y);
+            if (hasX && hasY) return y.CompareTo(x);
+            if (hasX != hasY) return hasX ? -1 : 1;
+            return string.CompareOrdinal(b.released_at ?? "", a.released_at ?? "");
         }
 
         /// <summary>
