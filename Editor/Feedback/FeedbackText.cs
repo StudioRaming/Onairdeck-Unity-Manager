@@ -197,12 +197,11 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         internal static bool LooksRandom(string run)
         {
+            var padded = run.EndsWith("=", StringComparison.Ordinal);
             run = run.TrimEnd('=');
-            var padded = run.Length;
-            if (IsHex(run)) return true;
             foreach (var root in UnityRoots)
                 if (run.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
-            if (run.IndexOf('+') >= 0) return true;
+            if (padded || IsHex(run) || run.IndexOf('+') >= 0) return true;
             int letters = 0, upper = 0, flips = 0, pairs = 0, digits = 0;
             var previous = ' ';
             foreach (var c in run)
@@ -225,8 +224,8 @@ namespace OnAirDeck.UnityManager
             }
             if (letters == 0) return false;
             var hasSeparator = run.IndexOf('_') >= 0 || run.IndexOf('-') >= 0 || run.IndexOf('/') >= 0;
-            if (upper == 0) return digits * 100 >= padded * 15;                 // lower case: random only with many digits
-            if (upper == letters) return digits > 0 ? digits * 100 >= padded * 15 : !hasSeparator; // SCREAMING_SNAKE has separators
+            if (upper == 0) return digits * 100 >= run.Length * 15;                 // lower case: random only with many digits
+            if (upper == letters) return digits > 0 ? digits * 100 >= run.Length * 15 : !hasSeparator; // SCREAMING_SNAKE has separators
             var upperRatio = (double)upper / letters;
             var flipRatio = pairs == 0 ? 0 : (double)flips / pairs;
             return (upperRatio >= 0.4 && upperRatio <= 0.6) || (flipRatio > 0.35 && upperRatio >= 0.3);

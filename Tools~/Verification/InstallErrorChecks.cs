@@ -145,6 +145,8 @@ internal static class InstallErrorChecks
             "k3Jd8sL0pQ7vN2mXb5RtWz",                    // with digits
             "a8f3k2m9x1q7z5b4c6d0e",                     // lower case with many digits
             "Zm9vYmFyYmF6cXV4Zm9vYmFy+Ab",               // '+' (base64)
+            "17w3Erlcu3kgjqsEHxnpJA==",                  // '=' padding
+            "abcdefghijklmnopqrstuvwx==",                // '=' padding, lower case, no digit
         })
             Equal("tok <token> end", R("tok " + token + " end"));
         // Kept: identifiers, constants, Unity paths, package labels, dotted names.
