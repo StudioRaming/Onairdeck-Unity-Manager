@@ -308,12 +308,12 @@ namespace OnAirDeck.UnityManager
         }
 
         // "Namespace.Type:Method (args) (at Assets/File.cs:12)" in the Console, "  at Namespace.Type.Method (args)" in an exception's own text.
-        private static readonly Regex FrameLine = new Regex(@"^(?:at\s+)?(?<n>[A-Za-z_][\w.`+<>$]*(?::[\w.`+<>$]+)?)\s*\(", RegexOptions.Compiled);
+        private static readonly Regex FrameLine = new Regex(@"^(?:at\s+)?(?<n>[A-Za-z_][\w.`+<>$\[\],]*(?::[\w.`+<>$\[\],]+)?)\s*\(", RegexOptions.Compiled);
         private static readonly string[] EngineFramePrefixes = { "UnityEngine.", "UnityEditor.", "System.", "Mono." };
 
         /// <summary>
         /// The first stack frame of <paramref name="text"/> (the lines after the first) that is not the engine's or the runtime's:
-        /// the first product-assembly frame as "Namespace.Type.Method" without numbers. "" when there is no stack or no such frame.
+        /// the first product-assembly frame as "Namespace.Type.Method" (generic arguments and digits of the identifiers kept; line numbers, IL offsets and hashes are not part of it). "" when there is no stack or no such frame.
         /// </summary>
         public static string FirstProductFrame(string text)
         {
@@ -331,7 +331,7 @@ namespace OnAirDeck.UnityManager
                 var engine = false;
                 foreach (var prefix in EngineFramePrefixes)
                     if (name.StartsWith(prefix, StringComparison.Ordinal)) { engine = true; break; }
-                if (!engine) return Number.Replace(name, "");
+                if (!engine) return name;
             }
             return "";
         }

@@ -39,11 +39,12 @@ namespace OnAirDeck.UnityManager
         private const string KeyWords = "token|secret|password|auth|session|cookie|key|sig";
         private const string KeyChars = @"[A-Za-z0-9_.-]*";
         // A path separator; JSON-escaped backslashes (C:\\Users\\x) count as one.
-        private const string Sep = @"(?:\\+|/)";
-        // A folder name: up to four words (Program Files, My Project 2024), never across a comma or semicolon.
+        private const string Sep = @"(?:\\+/?|/)";
+        // A folder name: words joined by one space or a comma without a space after it (Program Files, Client,Internal), up to
+        // twelve words, never across a line. ", then" (comma, space) ends the name, so a sentence after a path is not eaten.
         private const string Word = @"[^\\/:*?""<>|\s,;]+";
-        private const string Segment = Word + "(?: " + Word + "){0,3}";
-        private const string Last = @"[^\\/:*?""<>|\s,;]*";
+        private const string Segment = Word + "(?:[ ,]" + Word + "){0,11}";
+        private const string Last = "(?:" + Word + "(?:," + Word + ")*)?";
 
         private const RegexOptions Fast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
 
@@ -62,11 +63,13 @@ namespace OnAirDeck.UnityManager
         private static readonly Regex DrivePath = new Regex(@"(?<![A-Za-z0-9])[A-Za-z]:" + Sep + "(?:" + Segment + Sep + ")*" + Last, Fast);
         private static readonly Regex UncPath = new Regex(@"(?<![\w\\/:.])(?:\\{2,}|//)[^\\/\s:*?""<>|,;]+(?:" + Sep + "(?:" + Segment + Sep + ")*" + Last + ")?", Fast);
         private static readonly Regex PosixPath = new Regex(@"(?<![\w.:/\\<>~-])/(?:[^\\/:*?""<>|\s]+/)+" + Last, Fast);
-        private static readonly Regex SlashRun = new Regex(@"\\+", Fast);
+        private static readonly Regex SlashRun = new Regex(@"\\+/?", Fast);
 
         private sealed class Span
         {
             public int Start, End, Priority;
+            /// <summary>A secret value: replaced even when a placeholder sits inside it.</summary>
+            public bool Secret;
             public string Replacement;
         }
 
@@ -108,7 +111,7 @@ namespace OnAirDeck.UnityManager
 
             // Text that is already a placeholder is never redacted again.
             var zones = Placeholder.Matches(text);
-            spans.RemoveAll(s => Overlaps(s, zones));
+            spans.RemoveAll(s => !s.Secret && Overlaps(s, zones));
             if (spans.Count == 0) return text;
 
             spans.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : b.End.CompareTo(a.End));
@@ -144,10 +147,11 @@ namespace OnAirDeck.UnityManager
             return false;
         }
 
-        private static bool StartsWithPlaceholder(string value)
+        // Only a value that is exactly one placeholder is already redacted; a placeholder inside a longer value hides nothing around it.
+        private static bool IsPlaceholder(string value)
         {
             var m = Placeholder.Match(value);
-            return m.Success && m.Index == 0;
+            return m.Success && m.Index == 0 && m.Length == value.Length;
         }
 
         private static void CollectMatches(Regex regex, string text, int priority, string replacement, List<Span> spans)
@@ -164,42 +168,68 @@ namespace OnAirDeck.UnityManager
             foreach (Match m in PlainSecret.Matches(text)) AddValue(m.Groups["v"], spans);
             foreach (Match m in Bearer.Matches(text))
             {
-                if (StartsWithPlaceholder(m.Groups["v"].Value)) continue;
-                spans.Add(new Span { Start = m.Index, End = m.Index + m.Length, Priority = 1, Replacement = "Bearer " + ValueToken });
+                if (IsPlaceholder(m.Groups["v"].Value)) continue;
+                spans.Add(new Span { Start = m.Index, End = m.Index + m.Length, Priority = 1, Replacement = "Bearer " + ValueToken, Secret = true });
             }
         }
 
         private static void AddValue(Group value, List<Span> spans)
         {
-            if (!value.Success || value.Length == 0 || StartsWithPlaceholder(value.Value)) return;
-            spans.Add(new Span { Start = value.Index, End = value.Index + value.Length, Priority = 0, Replacement = ValueToken });
+            if (!value.Success || value.Length == 0 || IsPlaceholder(value.Value)) return;
+            spans.Add(new Span { Start = value.Index, End = value.Index + value.Length, Priority = 0, Replacement = ValueToken, Secret = true });
         }
+
+        private static readonly string[] UnityRoots = { "Assets/", "Packages/", "Library/", "ProjectSettings/" };
 
         private static void CollectTokens(string text, List<Span> spans)
         {
             foreach (Match m in TokenRun.Matches(text))
-            {
-                var run = m.Value;
-                if (IsHex(run) || (HasDigit(run) && (run.IndexOf('+') >= 0 || run.EndsWith("=", StringComparison.Ordinal))))
-                {
+                if (LooksRandom(m.Value))
                     spans.Add(new Span { Start = m.Index, End = m.Index + m.Length, Priority = 6, Replacement = SecretToken });
-                    continue;
-                }
-                // Without + or = a slash is more likely a path separator: judge each part on its own.
-                var offset = m.Index;
-                foreach (var part in run.Split('/'))
-                {
-                    if (part.Length >= 20 && (HasDigit(part) || IsHex(part)))
-                        spans.Add(new Span { Start = offset, End = offset + part.Length, Priority = 6, Replacement = SecretToken });
-                    offset += part.Length + 1;
-                }
-            }
         }
 
-        private static bool HasDigit(string s)
+        /// <summary>
+        /// Whether a 20+ run of base64 / base64url / hex characters is a secret rather than an identifier or a path. Hex, anything with
+        /// + or = padding and a digit-free single-case run without separators are tokens; a run that starts at a Unity root is a path.
+        /// A mixed-case run (digits or not) is a token when about half of its letters are upper case, or when its letter case flips
+        /// between neighbours far more often than words do: PascalCase and camelCase names flip about 20-25% of letter pairs with
+        /// 10-25% capitals, random base64 about 50% with 50% capitals. The whole run is judged, slashes included.
+        /// </summary>
+        internal static bool LooksRandom(string run)
         {
-            foreach (var c in s) if (c >= '0' && c <= '9') return true;
-            return false;
+            run = run.TrimEnd('=');
+            var padded = run.Length;
+            if (IsHex(run)) return true;
+            foreach (var root in UnityRoots)
+                if (run.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+            if (run.IndexOf('+') >= 0) return true;
+            int letters = 0, upper = 0, flips = 0, pairs = 0, digits = 0;
+            var previous = ' ';
+            foreach (var c in run)
+            {
+                if (c >= '0' && c <= '9') digits++;
+                var isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+                if (isLetter)
+                {
+                    letters++;
+                    var isUpper = c >= 'A' && c <= 'Z';
+                    if (isUpper) upper++;
+                    var previousIsLetter = (previous >= 'a' && previous <= 'z') || (previous >= 'A' && previous <= 'Z');
+                    if (previousIsLetter)
+                    {
+                        pairs++;
+                        if ((previous >= 'A' && previous <= 'Z') != isUpper) flips++;
+                    }
+                }
+                previous = c;
+            }
+            if (letters == 0) return false;
+            var hasSeparator = run.IndexOf('_') >= 0 || run.IndexOf('-') >= 0 || run.IndexOf('/') >= 0;
+            if (upper == 0) return digits * 100 >= padded * 15;                 // lower case: random only with many digits
+            if (upper == letters) return digits > 0 ? digits * 100 >= padded * 15 : !hasSeparator; // SCREAMING_SNAKE has separators
+            var upperRatio = (double)upper / letters;
+            var flipRatio = pairs == 0 ? 0 : (double)flips / pairs;
+            return (upperRatio >= 0.4 && upperRatio <= 0.6) || (flipRatio > 0.35 && upperRatio >= 0.3);
         }
 
         private static bool IsHex(string s)

@@ -16,6 +16,9 @@ internal static class InstallErrorChecks
         check("error report redaction: paths (drive, UNC, //host, file:///, 8.3, JSON-escaped, POSIX) project-relative or <path>/file, names, e-mail, tokens, secret keys, Bearer, Steam ids", Redaction);
         check("error report redaction: spans are found on the original text (a user named key still hides key=value), short names are whole tokens, a second pass changes nothing", RedactionOverlapAndIdempotence);
         check("error report redaction: plain text, project-relative paths and compiler lines stay; the package list is redacted entry by entry", RedactionLeavesPlainText);
+        check("error report redaction: a secret value is hidden even with a placeholder inside it; only an exact placeholder is left alone", RedactionSecretWithPlaceholder);
+        check("error report redaction: random 20+ runs without digits or split by slashes are tokens; identifiers, constants, Unity paths and package labels stay", RedactionTokensAndIdentifiers);
+        check("error report redaction: whole absolute paths go (comma or many words in a folder, JSON-escaped slashes), the sentence and the next line stay", RedactionWholePaths);
         check("error report signature: same error with other line numbers, paths, GUIDs and numbers is the same; another error, code, product or version is not; the first product frame counts", SignatureStability);
         check("error report entries: each keeps its own code, product id and signature through merge; a same-signature error is dropped once sent", EntriesKeepTheirOwnSignature);
         check("error report card: every card has its own id; a snapshot belongs to one card at one revision", CardIdentity);
@@ -115,6 +118,64 @@ internal static class InstallErrorChecks
         Equal(0, FeedbackText.RedactEach(null, Ctx).Length);
     }
 
+    private static void RedactionSecretWithPlaceholder()
+    {
+        // R3-1: the hidden part is the whole value, not what is left after a placeholder.
+        Equal(@"password=""<redacted>""", R(@"password=""prefix<user>hunter2"""));
+        Equal("password=<redacted>", R("password=<redacted>hunter2"));
+        Equal("auth Bearer <redacted>", R("auth Bearer <redacted>abc123"));
+        Equal(@"{""secret"": ""<redacted>""}", R(@"{""secret"": ""x<host>y<token>z""}"));
+        // An exact placeholder is already redacted: left alone, so a second pass changes nothing.
+        Equal("password=<redacted> Bearer <redacted>", R("password=<redacted> Bearer <redacted>"));
+        foreach (var input in new[] { @"password=""prefix<user>hunter2""", "token=<token>abc", "Bearer <redacted>abc123" })
+        {
+            var once = R(input);
+            Equal(once, R(once));
+        }
+    }
+
+    private static void RedactionTokensAndIdentifiers()
+    {
+        // R3-2: caught.
+        foreach (var token in new[]
+        {
+            "ABCDEFGHIJKLMNOPQRSTUVWX",                  // base32-like, one case
+            "abcdEFGH/ijklMNOP/qrstUVWX",                // half upper case, slashes
+            "xKpQmRtVbNwLzHcYjDfGsAeUo",                 // random base64url, no digit
+            "k3Jd8sL0pQ7vN2mXb5RtWz",                    // with digits
+            "a8f3k2m9x1q7z5b4c6d0e",                     // lower case with many digits
+            "Zm9vYmFyYmF6cXV4Zm9vYmFy+Ab",               // '+' (base64)
+        })
+            Equal("tok <token> end", R("tok " + token + " end"));
+        // Kept: identifiers, constants, Unity paths, package labels, dotted names.
+        foreach (var plain in new[]
+        {
+            "InvalidOperationException: bad", "NullReferenceException at", "MissingReferenceException happened",
+            "GetComponentInChildrenOfType called", "XMLHttpRequestHandlerFactory failed", "Texture2DArrayInitializerHelper failed",
+            "UNITY_EDITOR_WINDOWS_PLATFORM defined", "internationalizationstuffhere",
+            "Assets/StudioRaming_Onairdeck/Prod/Editor/Tool.cs", "Packages/com.vendor.tool/Runtime/Core.cs",
+            "Library/PackageCache/Some_Long_Folder_Name/File", "ProjectSettings/ProjectSettingsAssetLong",
+            "Resources/Textures/Characters/Body_Albedo", "com.studioraming.x@1.0",
+            "UnityEngine.Rendering.Universal.UniversalRenderPipeline:Render",
+        })
+            Equal(plain, R(plain));
+    }
+
+    private static void RedactionWholePaths()
+    {
+        // R3-3: the whole path goes, whatever the folder names hold.
+        Equal("<path>/Config.json", R(@"C:\private\Client,Internal\Config.json"));
+        Equal("<path>/Config.json", R(@"C:\private\One Two Three Four Five Six\Config.json"));
+        Equal("<path>/Config.json", R(@"C:\/Users\/Alice\/Config.json"));
+        Equal(@"{""p"":""<path>/Config.json""}", R(@"{""p"":""C:\/Users\/Alice\/Config.json""}"));
+        Equal("<path>/Config.json", R(@"\\srv\a,b\Config.json"));
+        Equal("Assets/Config.json", R(@"C:\proj\My Game\Assets\Config.json"));
+        // The sentence after a path stays, and a path never joins the next line.
+        Equal("<path>/b.txt, then failed", R(@"C:\a\b.txt, then failed"));
+        Equal("open <path>/b.txt; then <path>/y.txt", R(@"open C:\a\b.txt; then C:/x/y.txt"));
+        Equal("see <path>/dir\nnext line a/b", R("see C:\\a\\dir\nnext line a/b"));
+    }
+
     private static void SignatureStability()
     {
         var a = InstallErrorLogic.Signature(InstallErrorCodes.CompileFailed, "lic-1", "Assets/Prod/Foo.cs(12,5): error CS1002: ; expected");
@@ -135,6 +196,21 @@ internal static class InstallErrorChecks
             "NullReferenceException: boom\nUnityEngine.Object:Get ()\nProd.Core:Run (int) (at Assets/Prod/Core.cs:12)\nUnityEditor.X:Y ()"));
         Equal(exception, InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1",
             "NullReferenceException: boom\nUnityEngine.Object:Get ()\nProd.Core:Run (int) (at Assets/Prod/Core.cs:99)"));
+        // R3-4: generic frames are product frames; digits in identifiers count; line numbers, IL offsets and hashes do not.
+        Func<string, string> at = frame => "InvalidOperationException: boom\n  at UnityEngine.Object.Get ()\n  at " + frame;
+        var message = InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", "InvalidOperationException: boom");
+        var generic = InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Cache.Load[T] (T value)"));
+        Require(generic != message);
+        Require(generic != InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Other.Load[T] (T value)")));
+        Require(generic != InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Cache.Load<T> (T value)")));
+        Require(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Cache`1[T].Load (T value)")) != message);
+        Require(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", "InvalidOperationException: boom\nProd.Cache`1[T]:Load (T value) (at Assets/Prod/C.cs:5)") != message);
+        Require(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Core.Run12 ()"))
+            != InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Core.Run13 ()")));
+        Equal(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Core.Run12 () [0x00008] in <0123abcd0123abcd0123abcd0123abcd>:0")),
+            InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Core.Run12 () [0x0003f] in <fedcba98fedcba98fedcba98fedcba98>:0")));
+        Equal(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Cache.Load[T] (T value) [0x00001] in <aa>:0")),
+            InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", at("Prod.Cache.Load[T] (T value) [0x000ff] in <bb>:0")));
         // No product frame: the message alone.
         Equal(InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", "NullReferenceException: boom"),
             InstallErrorLogic.Signature(InstallErrorCodes.Exception, "lic-1", "NullReferenceException: boom\n  at UnityEngine.Object.Get ()\n  at System.A.B ()"));
