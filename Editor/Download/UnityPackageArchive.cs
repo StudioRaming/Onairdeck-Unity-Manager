@@ -6,6 +6,13 @@ using System.Text;
 
 namespace OnAirDeck.UnityManager
 {
+    /// <summary>One asset of a .unitypackage: its project path (forward slashes) and whether it is a folder.</summary>
+    internal sealed class PackageAsset
+    {
+        public string Path = "";
+        public bool IsFolder;
+    }
+
     /// <summary>
     /// Reads a .unitypackage without Unity: a tar.gz where &lt;guid&gt;/pathname holds the asset path and &lt;guid&gt;/asset the
     /// content. No UnityEngine, headless-checked.
@@ -13,6 +20,9 @@ namespace OnAirDeck.UnityManager
     internal static class UnityPackageArchive
     {
         private const int MaxPathNameBytes = 4096;
+        private const int MaxMetaBytes = 64 * 1024;
+        private static readonly System.Text.RegularExpressions.Regex FolderMeta =
+            new System.Text.RegularExpressions.Regex(@"^folderAsset:\s*yes\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
 
         /// <summary>
         /// Walks the regular-file entries in archive order. <paramref name="want"/> gets the guid, the part after it ("pathname",
@@ -61,13 +71,30 @@ namespace OnAirDeck.UnityManager
             return true;
         }
 
-        /// <summary>The asset path of every entry (forward slashes), in archive order; null for a malformed archive.</summary>
-        public static List<string> AssetPaths(string unityPackagePath)
+        /// <summary>
+        /// Every asset of the package in archive order, with whether it is a folder (its asset.meta says <c>folderAsset: yes</c>).
+        /// Null for a malformed archive.
+        /// </summary>
+        public static List<PackageAsset> Assets(string unityPackagePath)
         {
-            var paths = new List<string>();
-            var ok = Walk(unityPackagePath, (guid, leaf, size) => leaf == "pathname" && size <= MaxPathNameBytes,
-                (guid, leaf, content) => paths.Add(PathNameOf(content)));
-            return ok ? paths : null;
+            var order = new List<string>();
+            var paths = new Dictionary<string, string>(StringComparer.Ordinal);
+            var folders = new HashSet<string>(StringComparer.Ordinal);
+            var ok = Walk(unityPackagePath,
+                (guid, leaf, size) => (leaf == "pathname" && size <= MaxPathNameBytes) || (leaf == "asset.meta" && size <= MaxMetaBytes),
+                (guid, leaf, content) =>
+                {
+                    if (leaf == "pathname")
+                    {
+                        if (!paths.ContainsKey(guid)) order.Add(guid);
+                        paths[guid] = PathNameOf(content);
+                    }
+                    else if (FolderMeta.IsMatch(Encoding.UTF8.GetString(content))) folders.Add(guid);
+                });
+            if (!ok) return null;
+            var assets = new List<PackageAsset>();
+            foreach (var guid in order) assets.Add(new PackageAsset { Path = paths[guid], IsFolder = folders.Contains(guid) });
+            return assets;
         }
 
         /// <summary>The asset path a &lt;guid&gt;/pathname entry holds: its first line, trimmed, with forward slashes.</summary>

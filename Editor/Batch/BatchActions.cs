@@ -18,6 +18,7 @@ namespace OnAirDeck.UnityManager
             return new BatchItem
             {
                 Name = item.name,
+                Version = DownloadService.VersionOf(item),
                 Run = async progress => (object)await DownloadService.DownloadItemAsync(sessionToken, item, progress, cancel, false)
             };
         }
@@ -29,6 +30,7 @@ namespace OnAirDeck.UnityManager
             return new BatchItem
             {
                 Name = version.package_name + " " + version.package_version,
+                Version = version.package_version,
                 Run = async progress => (object)await PackageInstallService.InstallAsync(sessionToken, version, progress, cancel, licenses, true, confirmLegacy)
             };
         }

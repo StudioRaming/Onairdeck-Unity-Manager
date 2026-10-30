@@ -124,13 +124,14 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                SetMessage(e.Message, MessageType.Error);
+                FailedInstall("com.studioraming.manager", "Atelier Manager", UpdateService.CurrentVersion, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Batch failed: " + e.Message);
             }
             finally
             {
                 var queue = _batch;
                 queue.Changed -= Repaint;
+                ReportBatchFailures(queue, _batchKeys);
                 if (queue.SessionExpired) OnSessionExpired("");
                 else if (queue.FailedCount > 0)
                     SetMessage(ManagerText.BatchDoneFailed.Replace("{d}", queue.DoneCount.ToString()).Replace("{f}", queue.FailedCount.ToString()), MessageType.Warning);

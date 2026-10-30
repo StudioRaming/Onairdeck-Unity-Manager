@@ -33,8 +33,10 @@ namespace OnAirDeck.UnityManager
             }
             if (!string.IsNullOrEmpty(_message))
             {
-                return DrawBar(body, Tone(_messageType), _message,
-                    new BarButton { Label = ManagerText.Close, Kind = SRButtonKind.Ghost, Enabled = true, Click = () => { _message = null; } });
+                var close = new BarButton { Label = ManagerText.Close, Kind = SRButtonKind.Ghost, Enabled = true, Click = () => { _message = null; } };
+                if (_messageType != MessageType.Error) return DrawBar(body, Tone(_messageType), _message, close);
+                var report = new BarButton { Label = ManagerText.ErBtn, Kind = SRButtonKind.Secondary, Enabled = true, Click = ReportCurrentMessage };
+                return DrawBar(body, Tone(_messageType), _message, report, close);
             }
             var unseen = PurchaseWatcher.UnseenCount;
             if (unseen > 0 && _session != null)

@@ -16,6 +16,8 @@ namespace OnAirDeck.UnityManager
     {
         private const string Key = "OnAirDeck.UnityManager.PendingImports";
         private const string InteractiveKey = "OnAirDeck.UnityManager.InteractiveImports";
+        // One "path<TAB>product<TAB>version<TAB>productId" line per queued package that names its product (see InstallErrorWatch).
+        private const string ContextKey = "OnAirDeck.UnityManager.PendingImportContexts";
         private const string RecordsKey = "OnAirDeck.UnityManager.PendingImportRecords";
         private static bool _importing;
 
@@ -30,7 +32,8 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>Queues the packages; <paramref name="record"/>, when given, is saved after all of them imported (none if one fails).</summary>
-        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true, InstallRecord record = null)
+        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true, InstallRecord record = null,
+            string product = null, string version = null, string productId = null)
         {
             var list = Load();
             if (list.Count > 0 && SessionState.GetBool(InteractiveKey, true) != interactive)
@@ -44,6 +47,12 @@ namespace OnAirDeck.UnityManager
             if (record != null)
                 SessionState.SetString(RecordsKey, PendingImportRecords.Add(SessionState.GetString(RecordsKey, ""), added, Guid.NewGuid().ToString("N"), record));
             SessionState.SetBool(InteractiveKey, interactive);
+            if (!string.IsNullOrEmpty(product))
+            {
+                var contexts = LoadContexts();
+                foreach (var path in packagePaths) contexts[path] = new[] { product, version ?? "", productId ?? "" };
+                SaveContexts(contexts);
+            }
             Save(list);
             ProcessNext();
         }
@@ -106,7 +115,17 @@ namespace OnAirDeck.UnityManager
             if (list.Count == 0) return;
 
             _importing = true;
-            _overwritten = ExistingFiles(list[0]);
+            var assets = AssetsOf(list[0]);
+            _overwritten = ExistingFiles(assets);
+            string[] context;
+            if (assets != null && LoadContexts().TryGetValue(list[0], out context))
+            {
+                // Taken before the import: a folder that exists now is not the product's, one the import creates is. The job is
+                // the package file, which the queue keeps across a domain reload.
+                var root = PackageInstallService.ProjectRoot;
+                var owned = InstallErrorLogic.OwnedPaths(assets, p => Directory.Exists(Path.Combine(root, p)) || File.Exists(Path.Combine(root, p)));
+                InstallErrorWatch.Begin(list[0], context[0], context[2], context[1], owned);
+            }
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
@@ -115,22 +134,31 @@ namespace OnAirDeck.UnityManager
 
         private static void OnCompleted(string packageName)
         {
+            string[] context;
+            if (HeadContext(out context)) InstallErrorWatch.ImportFinished(Load()[0], context[0], context[1]);
             ReimportUnchanged();
             Finish("Imported " + packageName, false);
         }
 
-        private static Dictionary<string, DateTime> ExistingFiles(string packagePath)
+        private static List<PackageAsset> AssetsOf(string packagePath)
         {
             try
             {
-                var paths = UnityPackageArchive.AssetPaths(packagePath);
-                return paths == null ? null : UnityPackageArchive.ExistingFileTimes(PackageInstallService.ProjectRoot, paths);
+                return UnityPackageArchive.Assets(packagePath);
             }
             catch (Exception e)
             {
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not list " + Path.GetFileName(packagePath) + ": " + e.Message);
                 return null;
             }
+        }
+
+        private static Dictionary<string, DateTime> ExistingFiles(List<PackageAsset> assets)
+        {
+            if (assets == null) return null;
+            var paths = new List<string>();
+            foreach (var asset in assets) if (!asset.IsFolder) paths.Add(asset.Path);
+            return UnityPackageArchive.ExistingFileTimes(PackageInstallService.ProjectRoot, paths);
         }
 
         /// <summary>
@@ -159,11 +187,21 @@ namespace OnAirDeck.UnityManager
 
         private static void OnCancelled(string packageName)
         {
+            string[] context;
+            if (HeadContext(out context)) InstallErrorWatch.End(Load()[0], context[0], context[1]);
             Finish("Import of " + packageName + " was cancelled", true);
         }
 
         private static void OnFailed(string packageName, string error)
         {
+            string[] context;
+            if (HeadContext(out context))
+            {
+                InstallErrorWatch.End(Load()[0], context[0], context[1]);
+                var report = new InstallErrorReport { Product = context[0], ProductId = context[2], Version = context[1], Reason = "Import of " + packageName + " failed: " + error };
+                report.AddOther(report.Reason);
+                InstallErrorReporter.Offer(report);
+            }
             Finish("Import of " + packageName + " failed: " + error, true);
         }
 
@@ -180,6 +218,8 @@ namespace OnAirDeck.UnityManager
                 var done = list[0];
                 list.RemoveAt(0);
                 Save(list);
+                var contexts = LoadContexts();
+                if (contexts.Remove(done)) SaveContexts(contexts);
                 // warn is a cancelled or failed import: the version did not go in, so its record is dropped.
                 FinishRecord(done, !warn);
                 // Only our own cache files are deleted; never anything else.
@@ -191,6 +231,31 @@ namespace OnAirDeck.UnityManager
             else Debug.Log(OnAirDeckConfig.LogPrefix + message);
 
             EditorApplication.delayCall += ProcessNext;
+        }
+
+        private static bool HeadContext(out string[] context)
+        {
+            context = null;
+            var list = Load();
+            return list.Count > 0 && LoadContexts().TryGetValue(list[0], out context);
+        }
+
+        private static Dictionary<string, string[]> LoadContexts()
+        {
+            var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            foreach (var line in SessionState.GetString(ContextKey, "").Split('\n'))
+            {
+                var parts = line.Split('\t');
+                if (parts.Length == 4) result[parts[0]] = new[] { parts[1], parts[2], parts[3] };
+            }
+            return result;
+        }
+
+        private static void SaveContexts(Dictionary<string, string[]> contexts)
+        {
+            var lines = new List<string>();
+            foreach (var pair in contexts) lines.Add(pair.Key + "\t" + pair.Value[0] + "\t" + pair.Value[1] + "\t" + pair.Value[2]);
+            SessionState.SetString(ContextKey, string.Join("\n", lines.ToArray()));
         }
 
         private static List<string> Load()

@@ -33,6 +33,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 Debug.LogError(OnAirDeckConfig.LogPrefix + "Could not roll back an interrupted install: " + e.Message);
+                InstallErrorReporter.Offer(InstallErrorReporter.FromFailure("com.studioraming.manager", "Atelier Manager", UpdateService.CurrentVersion, e));
             }
         }
     }

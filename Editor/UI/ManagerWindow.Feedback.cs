@@ -114,7 +114,7 @@ namespace OnAirDeck.UnityManager
             InfoRow(ManagerText.KOs, Or(env.Os));
             InfoRow(ManagerText.KAcc, _session != null ? _session.email : "");
             InfoRow(ManagerText.KDev, DeviceIdentity.DisplayName);
-            InfoRow(ManagerText.KPackages, env.Packages.Length == 0 ? ManagerText.None : string.Join(", ", env.Packages));
+            InfoRow(ManagerText.KPackages, env.Packages.Length == 0 ? ManagerText.None : FeedbackText.Redact(string.Join(", ", env.Packages), FeedbackClient.LocalContext()));
             _feedbackAttachLog = SRGui.ToggleLeft(new GUIContent(ManagerText.AttachLog.Replace("{n}", ConsoleErrorBuffer.Count.ToString())), _feedbackAttachLog);
         }
 
@@ -122,14 +122,7 @@ namespace OnAirDeck.UnityManager
         private string FeedbackTextArea(string value, float screenWidth)
         {
             var p = SRTheme.P;
-            if (_feedbackAreaStyle == null || _feedbackAreaDark != SRTheme.Dark)
-            {
-                _feedbackAreaDark = SRTheme.Dark;
-                _feedbackAreaStyle = new GUIStyle(SRStyles.FieldText) { wordWrap = true, padding = new RectOffset(5, 5, 4, 4) };
-            }
-            _feedbackAreaStyle.normal.textColor = GUI.enabled ? p.Text : SRTheme.DisabledInk(p.SurfaceSunken);
-            _feedbackAreaStyle.focused.textColor = _feedbackAreaStyle.normal.textColor;
-
+            EnsureFeedbackAreaStyle();
             value = value ?? "";
             var width = Mathf.Max(60f, Mathf.Min(ManagerLayout.FormMaxWidth, screenWidth - 2f * SRMetrics.Space16) - 12f);
             var contentHeight = _feedbackAreaStyle.CalcHeight(new GUIContent(value + "\n"), width);
@@ -146,6 +139,20 @@ namespace OnAirDeck.UnityManager
             value = EditorGUI.TextArea(view, value, _feedbackAreaStyle);
             GUI.EndScrollView();
             return value;
+        }
+
+        /// <summary>The wrapped multi-line field face, themed for the current palette and enabled state.</summary>
+        private GUIStyle EnsureFeedbackAreaStyle()
+        {
+            var p = SRTheme.P;
+            if (_feedbackAreaStyle == null || _feedbackAreaDark != SRTheme.Dark)
+            {
+                _feedbackAreaDark = SRTheme.Dark;
+                _feedbackAreaStyle = new GUIStyle(SRStyles.FieldText) { wordWrap = true, padding = new RectOffset(5, 5, 4, 4) };
+            }
+            _feedbackAreaStyle.normal.textColor = GUI.enabled ? p.Text : SRTheme.DisabledInk(p.SurfaceSunken);
+            _feedbackAreaStyle.focused.textColor = _feedbackAreaStyle.normal.textColor;
+            return _feedbackAreaStyle;
         }
 
         /// <summary>The same limits as FeedbackClient.Problem, with texts in the chosen language. Null when the message can be sent.</summary>
@@ -172,7 +179,8 @@ namespace OnAirDeck.UnityManager
             Repaint();
             try
             {
-                var body = FeedbackClient.Build((FeedbackKind)Mathf.Clamp(_feedbackKind, 0, 2), _feedbackMessage, _feedbackErrorCode, _feedbackAttachLog, _feedbackEnv);
+                var body = FeedbackClient.Build((FeedbackKind)Mathf.Clamp(_feedbackKind, 0, 2), _feedbackMessage, _feedbackErrorCode,
+                    _feedbackAttachLog ? ConsoleErrorBuffer.Format(FeedbackClient.MaxConsoleLogBytes) : "", _feedbackEnv);
                 var id = await FeedbackClient.SendAsync(_session.token, body);
                 _feedbackMessage = "";
                 _feedbackErrorCode = "";
@@ -186,8 +194,8 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                _feedbackError = e.Message;
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending feedback failed: " + e.Message);
+                _feedbackError = FeedbackText.Redact(e.Message, FeedbackClient.LocalContext());
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sending feedback failed: " + _feedbackError);
             }
             finally
             {

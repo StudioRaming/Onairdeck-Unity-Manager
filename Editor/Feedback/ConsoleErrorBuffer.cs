@@ -68,22 +68,22 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// The entries as plain text, oldest first, at most <paramref name="maxBytes"/> of UTF-8. When they do not all fit,
-        /// the newest are kept. The user's home folder in paths is replaced with "~".
+        /// the newest are kept, always as whole entries. Not redacted and never cut inside an entry here: <see cref="FeedbackClient.Build"/>
+        /// redacts everything it sends first and cuts after.
         /// </summary>
         public static string Format(int maxBytes)
         {
             var entries = Snapshot();
-            var home = HomeFolder();
             var blocks = new List<string>();
             var used = 0;
             for (var i = entries.Length - 1; i >= 0; i--)
             {
-                var block = FormatEntry(entries[i], home);
+                var block = FormatEntry(entries[i]);
                 var size = Encoding.UTF8.GetByteCount(block);
                 if (used + size > maxBytes)
                 {
-                    // The newest entry alone is too long: keep its start rather than nothing.
-                    if (blocks.Count == 0) blocks.Add(CutToBytes(block, maxBytes));
+                    // The newest entry alone is too long: keep it whole, Build cuts it after redaction.
+                    if (blocks.Count == 0) blocks.Add(block);
                     break;
                 }
                 blocks.Add(block);
@@ -112,15 +112,15 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        private static string FormatEntry(Entry entry, string home)
+        private static string FormatEntry(Entry entry)
         {
             var sb = new StringBuilder();
             sb.Append('[').Append(entry.Time.ToString("yyyy-MM-dd HH:mm:ss")).Append("] ").Append(entry.Type).Append(": ");
-            sb.Append(Redact(entry.Condition, home).TrimEnd()).Append('\n');
+            sb.Append(entry.Condition.TrimEnd()).Append('\n');
             if (entry.Stack.Length > 0)
             {
                 foreach (var line in entry.Stack.Split('\n'))
-                    if (line.Trim().Length > 0) sb.Append("    ").Append(Redact(line.TrimEnd('\r'), home)).Append('\n');
+                    if (line.Trim().Length > 0) sb.Append("    ").Append(line.TrimEnd('\r')).Append('\n');
             }
             sb.Append('\n');
             return sb.ToString();
@@ -141,63 +141,6 @@ namespace OnAirDeck.UnityManager
         private static string Truncate(string text, int maxChars)
         {
             return text.Length <= maxChars ? text : text.Substring(0, maxChars) + "…";
-        }
-
-        internal static string CutToBytes(string text, int maxBytes)
-        {
-            if (Encoding.UTF8.GetByteCount(text) <= maxBytes) return text;
-            // Walk characters (a surrogate pair is one 4-byte character) so the cut never splits one.
-            var bytes = 0;
-            var i = 0;
-            while (i < text.Length)
-            {
-                var c = text[i];
-                int size, step = 1;
-                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) { size = 4; step = 2; }
-                else if (c < 0x80) size = 1;
-                else if (c < 0x800) size = 2;
-                else size = 3;
-                if (bytes + size > maxBytes) break;
-                bytes += size;
-                i += step;
-            }
-            return text.Substring(0, i);
-        }
-
-        private static string HomeFolder()
-        {
-            try
-            {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                return string.IsNullOrEmpty(home) || home.Length < 4 ? null : home;
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        private static string Redact(string text, string home)
-        {
-            if (home == null || text.Length == 0) return text;
-            text = ReplaceIgnoreCase(text, home, "~");
-            return ReplaceIgnoreCase(text, home.Replace('\\', '/'), "~");
-        }
-
-        private static string ReplaceIgnoreCase(string text, string find, string replacement)
-        {
-            var index = text.IndexOf(find, StringComparison.OrdinalIgnoreCase);
-            if (index < 0) return text;
-            var sb = new StringBuilder();
-            var from = 0;
-            while (index >= 0)
-            {
-                sb.Append(text, from, index - from).Append(replacement);
-                from = index + find.Length;
-                index = text.IndexOf(find, from, StringComparison.OrdinalIgnoreCase);
-            }
-            sb.Append(text, from, text.Length - from);
-            return sb.ToString();
         }
     }
 }

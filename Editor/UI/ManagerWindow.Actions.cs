@@ -139,7 +139,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error);
+                FailedInstall(ProductIdOf(entry), entry.Name, DownloadService.VersionOf(item), e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Download failed: " + e.Message);
             }
             finally
@@ -185,7 +185,7 @@ namespace OnAirDeck.UnityManager
             catch (DependencyUnavailableException e)
             {
                 if (e.Kind == DependencyErrorKind.GetOnAtelierFirst) _depProblem[entry.Key] = e.PackageName ?? "";
-                else SetMessage(e.Message, MessageType.Error);
+                else FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
             }
             catch (SessionExpiredException e)
             {
@@ -193,7 +193,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error);
+                FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Package install failed: " + e.Message);
             }
             finally
@@ -238,7 +238,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error);
+                FailedInstall(ProductIdOf(entry), entry.Name, label, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Version install failed: " + e.Message);
             }
             finally

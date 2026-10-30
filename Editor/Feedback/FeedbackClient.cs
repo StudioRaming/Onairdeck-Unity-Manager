@@ -42,7 +42,8 @@ namespace OnAirDeck.UnityManager
         public string Os = "";
         public string[] Packages = new string[0];
 
-        public static FeedbackEnvironment Collect()
+        /// <param name="packages">When given, these "name@version" entries are reported instead of the installed StudioRaming packages.</param>
+        public static FeedbackEnvironment Collect(string[] packages = null)
         {
             var env = new FeedbackEnvironment
             {
@@ -50,7 +51,12 @@ namespace OnAirDeck.UnityManager
                 ManagerVersion = UpdateService.CurrentVersion ?? "",
                 Os = SystemInfo.operatingSystem ?? "",
             };
-            var packages = new List<string>();
+            if (packages != null)
+            {
+                env.Packages = packages;
+                return env;
+            }
+            var list = new List<string>();
             try
             {
 #if UNITY_2021_1_OR_NEWER
@@ -58,7 +64,7 @@ namespace OnAirDeck.UnityManager
                 {
                     if (info == null || string.IsNullOrEmpty(info.name)) continue;
                     if (!IsOnAirDeckPackage(info.name)) continue;
-                    packages.Add(info.name + "@" + info.version);
+                    list.Add(info.name + "@" + info.version);
                 }
 #else
                 // Unity 2019.4 / 2020 have no GetAllRegisteredPackages: read the folders under Packages/ (embedded and VPM packages).
@@ -69,7 +75,7 @@ namespace OnAirDeck.UnityManager
                     {
                         var name = System.IO.Path.GetFileName(dir);
                         if (!IsOnAirDeckPackage(name)) continue;
-                        packages.Add(name + "@" + InstalledPackages.InstalledVersion(root, name));
+                        list.Add(name + "@" + InstalledPackages.InstalledVersion(root, name));
                     }
 #endif
             }
@@ -77,8 +83,8 @@ namespace OnAirDeck.UnityManager
             {
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not list installed packages: " + e.Message);
             }
-            packages.Sort(StringComparer.Ordinal);
-            env.Packages = packages.ToArray();
+            list.Sort(StringComparer.Ordinal);
+            env.Packages = list.ToArray();
             return env;
         }
 
@@ -108,19 +114,42 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        public static FeedbackRequest Build(FeedbackKind kind, string message, string errorCode, bool attachConsoleErrors, FeedbackEnvironment env)
+        /// <summary>This PC as <see cref="FeedbackText.Redact"/> needs it: the project folder, the Windows user name and the host name.</summary>
+        public static RedactContext LocalContext()
+        {
+            string user = "", host = "";
+            try
+            {
+                user = Environment.UserName;
+                host = Environment.MachineName;
+            }
+            catch (Exception)
+            {
+                // Redact what can be known.
+            }
+            return new RedactContext(PackageInstallService.ProjectRoot, user, host);
+        }
+
+        /// <summary>
+        /// The one request both senders build: the 문의하기 screen and the install error report card. Every field that carries text
+        /// of the person, the product or the Console (message, error code, log and each package entry) is redacted here, whole,
+        /// BEFORE it is cut to its limit (<see cref="FeedbackText.Redact"/>), so no caller can send an unredacted note, product
+        /// name or log, and a cut never splits a secret in two.
+        /// </summary>
+        public static FeedbackRequest Build(FeedbackKind kind, string message, string errorCode, string consoleLog, FeedbackEnvironment env)
         {
             env = env ?? FeedbackEnvironment.Collect();
+            var context = LocalContext();
             return new FeedbackRequest
             {
                 kind = KindValue(kind),
-                message = (message ?? "").Trim(),
-                errorCode = (errorCode ?? "").Trim(),
-                consoleLog = attachConsoleErrors ? ConsoleErrorBuffer.Format(MaxConsoleLogBytes) : "",
+                message = FeedbackText.CutToChars(FeedbackText.Redact((message ?? "").Trim(), context), MaxMessage),
+                errorCode = FeedbackText.CutToChars(FeedbackText.Redact((errorCode ?? "").Trim(), context), MaxErrorCode),
+                consoleLog = FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? "", context), MaxConsoleLogBytes),
                 unityVersion = env.UnityVersion,
                 managerVersion = env.ManagerVersion,
                 os = env.Os,
-                packages = env.Packages ?? new string[0],
+                packages = FeedbackText.RedactEach(env.Packages, context),
             };
         }
 
