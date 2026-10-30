@@ -32,6 +32,33 @@ internal static class CatalogChecks
         check("install record: atomic file round trip; a malformed file reads as none; a record needs license and version ids", InstallRecordFile);
         check("install record: a .unitypackage batch is recorded only after all its imports finished; a failed import drops it", PendingImportRecord);
         check("dates: the server's UTC time is shown as a date in the computer's time zone", LocalDates);
+        check("purchases: a line item with an empty files list (a WARUDO product) is not listed and not a new entry, even when downloaded; a missing list keeps it", NonUnityPurchases);
+    }
+
+    // ---------- purchases without Unity files ----------
+
+    private static void NonUnityPurchases()
+    {
+        var unity = new PurchaseItem { name = "Unity tool", product_id = "p1", item_id = "i1", files = new[] { new PurchaseFile { file_id = "f1" } } };
+        // downloaded is shared with the WARUDO app, so a WARUDO item downloaded there stays hidden too.
+        var warudo = new PurchaseItem { name = "[WARUDO] Color Studio", product_id = "p2", item_id = "i2", files = new PurchaseFile[0], downloaded = true };
+        // The old purchase row of a product that now ships through its license: hidden, so only the license row is left.
+        var moved = new PurchaseItem { name = "Licensed tool (old purchase)", product_id = "p3", item_id = "i3", files = new PurchaseFile[0], downloaded = true };
+        // A body without the field (JsonUtility leaves null) is unknown: keep the item.
+        var unknown = new PurchaseItem { name = "No files field", product_id = "p4", item_id = "i4", files = null };
+        var license = new LicenseEntry { license_id = "L1", name = "Licensed tool", versions = new[] { FileVer("v1", "1.0.0", "2026-10-29T00:00:00Z") } };
+        var entries = ManagerCatalog.Build(new[] { unity, warudo, moved, unknown }, new[] { license }, n => "", new HashSet<string>());
+        Equal(3, entries.Count);
+        Equal("Unity tool", entries[0].Name);
+        Equal("No files field", entries[1].Name);
+        Equal("Licensed tool", entries[2].Name);
+        Require(!unknown.CanDownload);
+        // The watcher would otherwise announce a WARUDO purchase as new in Unity.
+        var watched = PurchaseWatcherLogic.Entries(new PurchasesResponse { purchases = new[] { unity, warudo, moved, unknown }, licenses = new[] { license } });
+        Equal(3, watched.Count);
+        Equal("p:p1", watched[0].Key);
+        Equal("p:p4", watched[1].Key);
+        Equal("l:L1", watched[2].Key);
     }
 
     // ---------- install records (non-package license versions) ----------
@@ -316,7 +343,8 @@ internal static class CatalogChecks
     {
         var purchases = new[]
         {
-            new PurchaseItem { name = "Flagged", update_available = true, item_id = "i1" },
+            new PurchaseItem { name = "Flagged", update_available = true, item_id = "i1", files = new[] { new PurchaseFile { file_id = "f" } } },
+            new PurchaseItem { name = "WARUDO only", update_available = true, item_id = "i3", files = new PurchaseFile[0] },   // no Unity files: not an update here
             new PurchaseItem { name = "Quiet", update_available = false, item_id = "i2" },
             null
         };

@@ -100,12 +100,22 @@ namespace OnAirDeck.UnityManager
 
         public bool IsOwn { get { return source == "own"; } }
 
+        public bool HasUnityFiles { get { return files != null && files.Length > 0; } }
+
+        /// <summary>
+        /// plugin-purchases?client=unity sends every purchased line item and always a `files` array; an empty one means the
+        /// item has nothing for Unity (a WARUDO product, or a product whose files now come through its seller license), so
+        /// the Manager does not list it, even when `downloaded` is true (that count is shared with the WARUDO app). A missing
+        /// field (null after JsonUtility) is unknown and keeps the item.
+        /// </summary>
+        public bool ShownInUnity { get { return files == null || files.Length > 0; } }
+
         /// <summary>An own product is downloaded by product_id + file_id, a purchase by item_id.</summary>
         public bool CanDownload
         {
             get
             {
-                if (files == null || files.Length == 0) return false;
+                if (!HasUnityFiles) return false;
                 return IsOwn ? !string.IsNullOrEmpty(product_id) : !string.IsNullOrEmpty(item_id);
             }
         }

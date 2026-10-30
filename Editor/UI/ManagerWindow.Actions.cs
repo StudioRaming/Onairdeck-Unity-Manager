@@ -220,7 +220,7 @@ namespace OnAirDeck.UnityManager
             try
             {
                 var summary = await LicenseVersionInstall.InstallAsync(token, entry.License, version, _licenses, OnWorkProgress, _workCancel.Token, false, true);
-                if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkg, MessageType.Info);
+                if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkgAuto, MessageType.Info);
                 else
                 {
                     _doneFolder[entry.Key] = summary.Folder ?? Installer.ProductFolder(entry.Name);

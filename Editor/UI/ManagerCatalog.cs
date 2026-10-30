@@ -81,7 +81,7 @@ namespace OnAirDeck.UnityManager
             {
                 foreach (var item in purchases)
                 {
-                    if (item == null) continue;
+                    if (item == null || !item.ShownInUnity) continue;
                     var id = !string.IsNullOrEmpty(item.product_id) ? item.product_id : item.item_id;
                     var key = FavoritesLogic.EntryKey(FavoriteKind.Purchase, id);
                     if (key == null || !keys.Add(key)) continue;
