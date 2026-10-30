@@ -21,6 +21,8 @@ namespace OnAirDeck.UnityManager
         private static bool _importing;
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
+        // What the import in progress owns (files, and folders it creates), for InstallErrorWatch.
+        private static List<string> _owned;
 
         static PackageImportQueue()
         {
@@ -64,7 +66,14 @@ namespace OnAirDeck.UnityManager
             var paths = AssetPathsOf(list[0]);
             _overwritten = ExistingFiles(paths);
             string[] context;
-            if (paths != null && LoadContexts().TryGetValue(list[0], out context)) InstallErrorWatch.Begin(context[0], context[2], context[1], paths);
+            _owned = null;
+            if (paths != null && LoadContexts().TryGetValue(list[0], out context))
+            {
+                // Taken before the import: a folder that exists now is not the product's, one the import creates is.
+                var root = PackageInstallService.ProjectRoot;
+                _owned = InstallErrorLogic.OwnedPaths(paths, p => Directory.Exists(Path.Combine(root, p)) || File.Exists(Path.Combine(root, p)));
+                InstallErrorWatch.Begin(context[0], context[2], context[1], _owned);
+            }
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
@@ -124,7 +133,7 @@ namespace OnAirDeck.UnityManager
         private static void OnCancelled(string packageName)
         {
             string[] context;
-            if (HeadContext(out context)) InstallErrorWatch.End(context[0], context[1]);
+            if (HeadContext(out context)) InstallErrorWatch.End(context[0], context[1], _owned);
             Finish("Import of " + packageName + " was cancelled", true);
         }
 
@@ -133,7 +142,7 @@ namespace OnAirDeck.UnityManager
             string[] context;
             if (HeadContext(out context))
             {
-                InstallErrorWatch.End(context[0], context[1]);
+                InstallErrorWatch.End(context[0], context[1], _owned);
                 var report = new InstallErrorReport { Product = context[0], ProductId = context[2], Version = context[1], Reason = "Import of " + packageName + " failed: " + error };
                 report.Other.Add(report.Reason);
                 InstallErrorReporter.Offer(report);
@@ -147,6 +156,7 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCancelled -= OnCancelled;
             AssetDatabase.importPackageFailed -= OnFailed;
             _overwritten = null;
+            _owned = null;
 
             var list = Load();
             if (list.Count > 0)

@@ -68,7 +68,7 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// The entries as plain text, oldest first, at most <paramref name="maxBytes"/> of UTF-8. When they do not all fit,
-        /// the newest are kept. Redacted by <see cref="FeedbackText.Redact(string)"/>.
+        /// the newest are kept. Not redacted here: <see cref="FeedbackClient.Build"/> redacts everything it sends.
         /// </summary>
         public static string Format(int maxBytes)
         {
@@ -115,11 +115,11 @@ namespace OnAirDeck.UnityManager
         {
             var sb = new StringBuilder();
             sb.Append('[').Append(entry.Time.ToString("yyyy-MM-dd HH:mm:ss")).Append("] ").Append(entry.Type).Append(": ");
-            sb.Append(FeedbackText.Redact(entry.Condition).TrimEnd()).Append('\n');
+            sb.Append(entry.Condition.TrimEnd()).Append('\n');
             if (entry.Stack.Length > 0)
             {
                 foreach (var line in entry.Stack.Split('\n'))
-                    if (line.Trim().Length > 0) sb.Append("    ").Append(FeedbackText.Redact(line.TrimEnd('\r'))).Append('\n');
+                    if (line.Trim().Length > 0) sb.Append("    ").Append(line.TrimEnd('\r')).Append('\n');
             }
             sb.Append('\n');
             return sb.ToString();

@@ -25,7 +25,9 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private bool _sendingReport;
         [NonSerialized] private string _reportError;
         [NonSerialized] private InstallErrorReport _messageReport;
+        // What the card shows is frozen per revision of the report; Send sends exactly this snapshot.
         [NonSerialized] private string _excerptKey;
+        [NonSerialized] private InstallErrorSnapshot _shot;
         [NonSerialized] private string _excerpt = "";
 
         /// <summary>Opens the window without taking focus when it is closed; an open window shows the card by itself.</summary>
@@ -92,11 +94,12 @@ namespace OnAirDeck.UnityManager
                 _reportError = null;
                 GUIUtility.keyboardControl = 0;
             }
-            var excerptKey = key + "|" + report.Compile.Count + "|" + report.Other.Count;
-            if (excerptKey != _excerptKey)
+            var excerptKey = key + "|" + report.Revision;
+            if (excerptKey != _excerptKey || _shot == null)
             {
                 _excerptKey = excerptKey;
-                _excerpt = report.Excerpt(FeedbackClient.MaxConsoleLogBytes);
+                _shot = report.TakeSnapshot(FeedbackClient.MaxConsoleLogBytes, FeedbackClient.MaxMessage);
+                _excerpt = _shot.Excerpt;
             }
 
             var pad = SRMetrics.Space8;
@@ -219,14 +222,14 @@ namespace OnAirDeck.UnityManager
 
         private async void SendReport()
         {
-            var report = InstallErrorReporter.Current;
-            if (report == null || _session == null || _sendingReport) return;
+            var shot = _shot;
+            if (InstallErrorReporter.Current == null || shot == null || _session == null || _sendingReport) return;
             _sendingReport = true;
             _reportError = null;
             Repaint();
             try
             {
-                var id = await InstallErrorReporter.SendAsync(_session.token, report, _reportNote);
+                var id = await InstallErrorReporter.SendAsync(_session.token, shot, _reportNote);
                 _reportNote = "";
                 GUIUtility.keyboardControl = 0; // a focused field would keep showing the old text
                 SetMessage(string.IsNullOrEmpty(id) ? ManagerText.ErThanks : ManagerText.ErSent.Replace("{id}", id.Length > 8 ? id.Substring(0, 8) : id), MessageType.Info);

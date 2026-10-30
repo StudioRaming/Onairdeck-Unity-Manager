@@ -116,7 +116,8 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// The one request both senders build: the 문의하기 screen and the install error report card. <paramref name="consoleLog"/>
-        /// is sent as given (already redacted, see <see cref="FeedbackText"/>), cut to <see cref="MaxConsoleLogBytes"/>.
+        /// and <paramref name="message"/> are redacted here, once (<see cref="FeedbackText.Redact(string)"/>), so no caller can send
+        /// an unredacted note, product name or log. The log is cut to <see cref="MaxConsoleLogBytes"/> after redaction.
         /// </summary>
         public static FeedbackRequest Build(FeedbackKind kind, string message, string errorCode, string consoleLog, FeedbackEnvironment env)
         {
@@ -124,9 +125,9 @@ namespace OnAirDeck.UnityManager
             return new FeedbackRequest
             {
                 kind = KindValue(kind),
-                message = (message ?? "").Trim(),
+                message = FeedbackText.CutToChars(FeedbackText.Redact((message ?? "").Trim()), MaxMessage),
                 errorCode = (errorCode ?? "").Trim(),
-                consoleLog = FeedbackText.CutToBytes(consoleLog ?? "", MaxConsoleLogBytes),
+                consoleLog = FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? ""), MaxConsoleLogBytes),
                 unityVersion = env.UnityVersion,
                 managerVersion = env.ManagerVersion,
                 os = env.Os,

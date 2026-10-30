@@ -51,50 +51,72 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// Adds a report to the waiting list; one more error of a product that already waits joins its report. An automatic offer
-        /// whose signature was sent or dismissed in this project is dropped. A <paramref name="manual"/> offer (the button next to
-        /// a red message) shows a dismissed one again, but an already sent signature is <see cref="OfferResult.Duplicate"/>.
+        /// Adds a report to the waiting list. The ledger is asked first, line by line, so an error that was already sent or
+        /// dismissed in this project never rides along in another card: an automatic offer drops every known line; a
+        /// <paramref name="manual"/> offer (the button next to a red message) drops only sent lines, and a report that is all sent
+        /// is <see cref="OfferResult.Duplicate"/>. What is left joins the waiting card of the same product, or becomes one. A merge
+        /// that adds no new line changes nothing (no save, no repaint, no window), so an exception thrown every frame costs little.
         /// </summary>
         public static OfferResult Offer(InstallErrorReport report, bool manual = false)
         {
             if (report == null) return OfferResult.Ignored;
             Load();
-            var existing = _pending.Find(r => r.SameProduct(report));
-            if (existing != null) existing.Merge(report);
-            else
+            var fresh = new List<InstallErrorEntry>();
+            var sentLines = 0;
+            foreach (var entry in report.Entries())
             {
-                var state = Ledger.State(report.Signature);
-                if (state == InstallErrorLedger.Sent && manual) return OfferResult.Duplicate;
-                if (state != null && !manual) return OfferResult.Ignored;
-                _pending.Add(report);
+                var state = Ledger.State(entry.Signature);
+                if (state == InstallErrorLedger.Sent) sentLines++;
+                if (state == null || (manual && state != InstallErrorLedger.Sent)) fresh.Add(entry);
             }
+            if (fresh.Count == 0) return manual && sentLines > 0 ? OfferResult.Duplicate : OfferResult.Ignored;
+            var incoming = fresh.Count == report.Entries().Count ? report : report.OnlyEntries(fresh);
+
+            var existing = _pending.Find(r => r.SameProduct(incoming));
+            if (existing != null)
+            {
+                if (!existing.Merge(incoming)) return OfferResult.Ignored;
+                Save();
+                Raise();
+                return OfferResult.Shown;
+            }
+            _pending.Add(incoming);
             Save();
             Raise();
             EditorApplication.delayCall += ManagerWindow.ShowForErrorReport;
             return OfferResult.Shown;
         }
 
-        /// <summary>"Don't send": remembers the signature so it is not offered again in this project.</summary>
+        /// <summary>"Don't send": remembers the signature of every error in the card so none is offered again in this project.</summary>
         public static void Dismiss(InstallErrorReport report)
         {
             Load();
-            Ledger.Add(report.Signature, InstallErrorLedger.Dismissed);
+            foreach (var entry in report.Entries()) Ledger.Add(entry.Signature, InstallErrorLedger.Dismissed);
             Remove(report);
         }
 
-        /// <summary>Sends the report as a bug through <see cref="FeedbackClient"/> and returns the report id. 401 → <see cref="SessionExpiredException"/>.</summary>
-        public static async Task<string> SendAsync(string sessionToken, InstallErrorReport report, string note)
+        /// <summary>
+        /// Sends the frozen <paramref name="shot"/> as a bug through <see cref="FeedbackClient"/> (which redacts message and log) and
+        /// returns the report id. 401 → <see cref="SessionExpiredException"/>. On success every error of the snapshot is recorded as
+        /// sent and only its lines leave the card; lines that joined while it was sending stay as the same product's card.
+        /// </summary>
+        public static async Task<string> SendAsync(string sessionToken, InstallErrorSnapshot shot, string note)
         {
-            var message = FeedbackText.Redact((note ?? "").Trim());
-            if (message.Length == 0) message = report.AutoSummary(FeedbackClient.MaxMessage);
-            else if (message.Length > FeedbackClient.MaxMessage) message = message.Substring(0, FeedbackClient.MaxMessage);
-            var signature = report.Signature;
-            var body = FeedbackClient.Build(FeedbackKind.Bug, message, report.ErrorCode, report.Excerpt(FeedbackClient.MaxConsoleLogBytes),
-                FeedbackEnvironment.Collect(new[] { report.PackageLabel }));
+            var message = (note ?? "").Trim();
+            if (message.Length == 0) message = shot.Summary;
+            var body = FeedbackClient.Build(FeedbackKind.Bug, message, shot.ErrorCode, shot.Excerpt,
+                FeedbackEnvironment.Collect(new[] { shot.PackageLabel }));
             var id = await FeedbackClient.SendAsync(sessionToken, body);
             Load();
-            Ledger.Add(signature, InstallErrorLedger.Sent);
-            Remove(report);
+            foreach (var signature in shot.Signatures) Ledger.Add(signature, InstallErrorLedger.Sent);
+            var card = _pending.Find(r => string.Equals(r.Product, shot.Product, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Version ?? "", shot.Version ?? "", StringComparison.OrdinalIgnoreCase));
+            if (card != null)
+            {
+                if (card.RemoveSent(shot)) _pending.Remove(card);
+                Save();
+                Raise();
+            }
             return id;
         }
 

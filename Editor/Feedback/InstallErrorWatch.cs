@@ -69,17 +69,24 @@ namespace OnAirDeck.UnityManager
             UpdateTicking();
         }
 
-        /// <summary>Starts watching an import. <paramref name="assetPaths"/> are the project paths the import brings.</summary>
-        public static void Begin(string product, string productId, string version, IEnumerable<string> assetPaths)
+        /// <summary>
+        /// Starts watching an import. <paramref name="ownedPaths"/> are what the import owns (<see cref="InstallErrorLogic.OwnedPaths"/>).
+        /// A second package of the same product and version joins the watch that is already running.
+        /// </summary>
+        public static void Begin(string product, string productId, string version, IList<string> ownedPaths)
         {
-            if (string.IsNullOrEmpty(product)) return;
-            var prefixes = InstallErrorLogic.ReducePrefixes(assetPaths);
-            if (prefixes.Count == 0) return;
+            if (string.IsNullOrEmpty(product) || ownedPaths == null || ownedPaths.Count == 0) return;
             Load();
-            _watches.RemoveAll(w => string.Equals(w.Product, product, StringComparison.OrdinalIgnoreCase) && string.Equals(w.Version, version ?? "", StringComparison.OrdinalIgnoreCase));
-            var state = InstallWatchState.Begin(product, productId, version, prefixes, DateTime.UtcNow.Ticks);
+            var now = DateTime.UtcNow.Ticks;
+            var state = _watches.Find(w => Matches(w, product, version));
+            if (state != null) state.AddJob(ownedPaths, now);
+            else
+            {
+                state = InstallWatchState.Begin(product, productId, version, ownedPaths, now);
+                _watches.Add(state);
+            }
+            state.Assemblies.Clear();
             state.Assemblies.AddRange(FindAssemblies(state.Prefixes));
-            _watches.Add(state);
             Save();
             UpdateTicking();
         }
@@ -98,12 +105,16 @@ namespace OnAirDeck.UnityManager
             Save();
         }
 
-        /// <summary>The import was cancelled or failed: nothing was installed, so there is nothing to watch.</summary>
-        public static void End(string product, string version)
+        /// <summary>
+        /// One import was cancelled or failed: its paths leave the watch. The watch ends when no path of the product is left, so a
+        /// second package of the same product that is still importing keeps being watched.
+        /// </summary>
+        public static void End(string product, string version, IList<string> ownedPaths)
         {
             Load();
-            if (_watches.RemoveAll(w => Matches(w, product, version)) > 0) Save();
-            UpdateTicking();
+            var gone = _watches.RemoveAll(w => Matches(w, product, version) && w.RemoveJob(ownedPaths ?? new string[0]));
+            Save();
+            if (gone > 0) UpdateTicking();
         }
 
         private static bool Matches(InstallWatchState watch, string product, string version)
@@ -186,7 +197,8 @@ namespace OnAirDeck.UnityManager
 
         private static void Judge(LogItem item)
         {
-            if (InstallErrorLogic.IsLicenseGateText(item.Condition) || InstallErrorLogic.IsLicenseGateText(item.Stack)) return;
+            // Only the message: a real exception thrown inside license-check code has the check in its stack and must not be dropped.
+            if (InstallErrorLogic.IsLicenseGateText(item.Condition)) return;
             // Compiler lines come through the compile pipeline with their file, once.
             if (InstallErrorLogic.IsCompilerLine(item.Condition)) return;
             foreach (var watch in _watches)

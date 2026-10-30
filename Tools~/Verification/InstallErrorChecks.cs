@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using OnAirDeck.UnityManager;
@@ -34,6 +35,11 @@ internal static class InstallErrorChecks
         Equal("https://x.test/a?Signature=<token>", FeedbackText.Redact("https://x.test/a?Signature=AbC%2Bdef", null, null));
         Equal("api_key=<token>", FeedbackText.Redact("api_key=abcdef123456", null, null));
         Equal("<token>", FeedbackText.Redact("QWxhZGRpbjpvcGVuIHNlc2FtZVF3ZXJ0eTEyMzQ1Njc4", null, null));
+        // A short name is masked as a whole word too (the WARUDO rule), not inside longer words; a second pass changes nothing.
+        Equal("hi <user> and zmnx", FeedbackText.Redact("hi zmn and zmnx", null, "zmn"));
+        Equal(@"C:\x\<user>\y", FeedbackText.Redact(@"C:\x\zmn\y", null, "zmn"));
+        var once = FeedbackText.Redact(@"C:\Users\zmnbn\a zmnbn@x.io Bearer abc.def-123_xyz token=abc123 user", Home, "user");
+        Equal(once, FeedbackText.Redact(once, Home, "user"));
         // Nothing to hide: identical. A 31-letter identifier, a short user name and a compiler line stay.
         foreach (var plain in new[]
         {
@@ -64,27 +70,53 @@ internal static class InstallErrorChecks
         report.ProductId = "lic-2";
         Require(a != report.Signature);
         Equal(InstallErrorCodes.CompileFailed, report.ErrorCode);
+
+        // Every error line has its own signature (the ledger records all of them), compile errors first.
+        report.Other.Add("NullReferenceException: boom");
+        var entries = report.Entries();
+        Equal(2, entries.Count);
+        Equal(InstallErrorCodes.CompileFailed, entries[0].Code);
+        Equal(InstallErrorCodes.ManagerFailed, entries[1].Code);
+        Require(entries[0].Signature != entries[1].Signature);
+        // Only the lines the ledger does not know go on; merging what is already there adds nothing.
+        var rest = report.OnlyEntries(entries.GetRange(1, 1));
+        Equal(0, rest.Compile.Count);
+        Equal(1, rest.Other.Count);
+        var holder = new InstallErrorReport { Product = "Product", Version = "9.9.9" };
+        Require(holder.Merge(report));
+        var revision = holder.Revision;
+        Require(!holder.Merge(report));
+        Equal(revision, holder.Revision);
+        // A send takes a snapshot; lines that joined afterwards stay, the sent ones go.
+        var shot = holder.TakeSnapshot(20 * 1024, 4000);
+        Equal(2, shot.Signatures.Count);
+        holder.Other.Add("later exception");
+        Require(!holder.RemoveSent(shot));
+        Equal(0, holder.Compile.Count);
+        Equal(1, holder.Other.Count);
+        Equal("later exception", holder.Other[0]);
+        Require(shot.Excerpt.IndexOf("later exception", StringComparison.Ordinal) < 0);
     }
 
     private static void PathAttribution()
     {
-        var prefixes = InstallErrorLogic.ReducePrefixes(new[]
+        // A folder the import creates is the product's; folders that were already there are not.
+        var existed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Assets", "Assets/StudioRaming_Onairdeck" };
+        var prefixes = InstallErrorLogic.OwnedPaths(new[]
         {
             "Assets", "Assets/StudioRaming_Onairdeck", "Assets/StudioRaming_Onairdeck/Prod",
             "Assets/StudioRaming_Onairdeck/Prod/Editor", "Assets/StudioRaming_Onairdeck/Prod/Editor/Tool.cs",
-            "Assets/StudioRaming_Onairdeck/Prod/Editor/Tool.cs.meta", "Assets/StudioRaming_Onairdeck/Prod/Runtime/Core.dll",
-            "Assets/Loose.cs",
-        });
-        Equal(3, prefixes.Count);
+            "Assets/StudioRaming_Onairdeck/Prod/Runtime/Core.dll", "Assets/Loose.cs",
+        }, existed.Contains);
+        Equal(2, prefixes.Count);
         Require(prefixes.Contains("Assets/Loose.cs"));
-        Require(prefixes.Contains("Assets/StudioRaming_Onairdeck/Prod/Editor"));
-        Require(prefixes.Contains("Assets/StudioRaming_Onairdeck/Prod/Runtime"));
+        Require(prefixes.Contains("Assets/StudioRaming_Onairdeck/Prod"));
 
         Require(InstallErrorLogic.IsUnder("Assets/StudioRaming_Onairdeck/Prod/Editor/Tool.cs", prefixes));
         Require(InstallErrorLogic.IsUnder(@"C:\proj\Assets\StudioRaming_Onairdeck\Prod\Runtime\Core.dll", prefixes));
         Require(InstallErrorLogic.IsUnder("assets/loose.cs", prefixes));
         Require(!InstallErrorLogic.IsUnder("Assets/StudioRaming_Onairdeck/Other/Editor/Tool.cs", prefixes));
-        Require(!InstallErrorLogic.IsUnder("Assets/StudioRaming_Onairdeck/Prod/Editor2/Tool.cs", prefixes));
+        Require(!InstallErrorLogic.IsUnder("Assets/StudioRaming_Onairdeck/Prod2/Tool.cs", prefixes));
         Require(!InstallErrorLogic.IsUnder("Packages/com.other/Editor/Tool.cs", prefixes));
         Require(!InstallErrorLogic.IsUnder("", prefixes));
 
@@ -93,9 +125,24 @@ internal static class InstallErrorChecks
         Require(!InstallErrorLogic.MentionsPath("NullReferenceException at Assets/Other/Thing.cs:3", prefixes));
         Require(!InstallErrorLogic.MentionsPath("MyAssets/Loose.cs failed", prefixes));
 
-        var package = InstallErrorLogic.ReducePrefixes(new[] { "Packages/com.studioraming.prod" });
-        Equal("Packages/com.studioraming.prod", package[0]);
-        Require(InstallErrorLogic.IsUnder("Packages/com.studioraming.prod/Editor/A.cs", package));
+        // One file into a shared, existing folder owns that file only, not its neighbours.
+        var single = InstallErrorLogic.OwnedPaths(new[] { "Assets", "Assets/Editor", "Assets/Editor/Tool.cs" },
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Assets", "Assets/Editor" }.Contains);
+        Equal(1, single.Count);
+        Equal("Assets/Editor/Tool.cs", single[0]);
+        Require(InstallErrorLogic.IsUnder("Assets/Editor/Tool.cs", single));
+        Require(!InstallErrorLogic.IsUnder("Assets/Editor/Other.cs", single));
+        Require(!InstallErrorLogic.IsUnder("Assets/Editor/Tool.cs.meta", single));
+        Require(!InstallErrorLogic.MentionsPath("Assets/Editor/Other.cs(3,4): error CS1002", single));
+        Require(InstallErrorLogic.MentionsPath("Assets/Editor/Tool.cs(3,4): error CS1002", single));
+
+        // Whole segments: com.vendor.tool is not com.vendor.tool.extra.
+        var package = InstallErrorLogic.OwnedPaths(new[] { "Packages/com.vendor.tool" }, x => x == "Packages");
+        Equal("Packages/com.vendor.tool", package[0]);
+        Require(InstallErrorLogic.IsUnder("Packages/com.vendor.tool/Editor/A.cs", package));
+        Require(!InstallErrorLogic.IsUnder("Packages/com.vendor.tool.extra/Editor/A.cs", package));
+        Require(!InstallErrorLogic.MentionsPath("Packages/com.vendor.tool.extra/Editor/A.cs failed", package));
+        Require(InstallErrorLogic.MentionsPath("Packages/com.vendor.tool/Editor/A.cs failed", package));
 
         // License-gate states and lock-screen lines are never a bug; a real error is not mistaken for them.
         Require(InstallErrorLogic.IsLicenseGateText("[Prod] license gate: NotSignedIn"));
@@ -173,6 +220,27 @@ internal static class InstallErrorChecks
         // A finished import does not shorten a watch whose compile already ended.
         state.ImportFinished(t0 + 6 * minute);
         Require(state.IsActive(t0 + 7 * minute));
+
+        // The deadline is fixed by the first compile; a later compile does not extend it.
+        state.CompileFinished(t0 + 6 * minute);
+        Require(!state.IsActive(t0 + 7 * minute + 1));
+
+        // A compile that is still running is waited for (past the no-script cap) up to the hard cap, then two minutes after it.
+        var slow = InstallWatchState.Begin("Prod", "lic-1", "1.0", new[] { "Assets/Prod" }, t0);
+        slow.CompileStarted = true;
+        slow.ImportFinished(t0 + minute);
+        Require(slow.IsActive(t0 + 30 * minute));
+        Require(!slow.IsActive(t0 + 61 * minute));
+        slow.CompileFinished(t0 + 30 * minute);
+        Require(slow.IsActive(t0 + 32 * minute) && !slow.IsActive(t0 + 32 * minute + 1));
+
+        // A second package of the same product joins; ending one job keeps the other's paths and the watch.
+        var two = InstallWatchState.Begin("Prod", "lic-1", "1.0", new[] { "Assets/A" }, t0);
+        two.AddJob(new[] { "Assets/B", "Assets/A" }, t0 + minute);
+        Equal(2, two.Prefixes.Count);
+        Require(!two.RemoveJob(new[] { "Assets/A" }));
+        Equal("Assets/B", two.Prefixes[0]);
+        Require(two.RemoveJob(new[] { "Assets/B" }));
 
         var noScripts = InstallWatchState.Begin("Prod", "lic-1", "1.0", new[] { "Assets/Prod" }, t0);
         noScripts.ImportFinished(t0 + minute);

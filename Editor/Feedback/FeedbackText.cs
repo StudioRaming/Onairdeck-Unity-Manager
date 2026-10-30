@@ -43,7 +43,7 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// In this order: e-mail addresses become &lt;email&gt;; the profile folder (both slash styles, any case) becomes
-        /// %USERPROFILE%; the user name as a path segment or a word of four or more characters becomes &lt;user&gt;; JWTs, Bearer
+        /// %USERPROFILE%; the user name as a whole word (two or more characters; one character only as a path segment) becomes &lt;user&gt;; JWTs, Bearer
         /// values, sk- keys, token=/key=/secret= values and opaque strings of 40+ characters become &lt;token&gt;.
         /// Text without any of these is returned unchanged.
         /// </summary>
@@ -59,9 +59,11 @@ namespace OnAirDeck.UnityManager
             }
             if (!string.IsNullOrEmpty(userName))
             {
+                // Any name of two or more characters is masked as a whole word, the same rule as the WARUDO Manager; a one-character
+                // name only as a path segment. Not inside an existing placeholder (<user>), so a second pass changes nothing.
                 var name = Regex.Escape(userName);
-                var pattern = userName.Length >= 4
-                    ? @"(?<![A-Za-z0-9_])" + name + @"(?![A-Za-z0-9_])"
+                var pattern = userName.Length >= 2
+                    ? @"(?<![A-Za-z0-9<%])" + name + @"(?![A-Za-z0-9>%])"
                     : @"(?<=[\\/])" + name + @"(?=[\\/]|$|\s)";
                 text = Regex.Replace(text, pattern, UserToken, RegexOptions.IgnoreCase);
             }
@@ -87,6 +89,11 @@ namespace OnAirDeck.UnityManager
             }
             sb.Append(text, from, text.Length - from);
             return sb.ToString();
+        }
+
+        public static string CutToChars(string text, int maxChars)
+        {
+            return text.Length <= maxChars ? text : text.Substring(0, maxChars);
         }
 
         /// <summary>The longest start of <paramref name="text"/> that fits <paramref name="maxBytes"/> of UTF-8, never splitting a character.</summary>
