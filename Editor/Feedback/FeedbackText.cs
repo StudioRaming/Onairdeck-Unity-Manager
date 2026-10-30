@@ -58,7 +58,7 @@ namespace OnAirDeck.UnityManager
         private static readonly Regex PlainSecret = new Regex(
             @"(?<![A-Za-z0-9_.-])(?<k>" + KeyChars + "(?:" + KeyWords + ")" + KeyChars + @")[""']?\s*[=:]\s*(?:""(?<v>[^""\r\n]*)""|'(?<v>[^'\r\n]*)'|(?<v>[^\s""'&,;]+))",
             Fast | RegexOptions.IgnoreCase);
-        private static readonly Regex TokenRun = new Regex(@"[A-Za-z0-9+/_-]{20,}={0,2}", Fast);
+        private static readonly Regex TokenRun = new Regex(@"[A-Za-z0-9+/_-]{20,}(?:={1,2}(?![A-Za-z0-9+/_=-]))?", Fast);
         private static readonly Regex FileUri = new Regex(@"file://[^\s""'<>|]*", Fast | RegexOptions.IgnoreCase);
         private static readonly Regex DrivePath = new Regex(@"(?<![A-Za-z0-9])[A-Za-z]:" + Sep + "(?:" + Segment + Sep + ")*" + Last, Fast);
         private static readonly Regex UncPath = new Regex(@"(?<![\w\\/:.])(?:\\{2,}|//)[^\\/\s:*?""<>|,;]+(?:" + Sep + "(?:" + Segment + Sep + ")*" + Last + ")?", Fast);

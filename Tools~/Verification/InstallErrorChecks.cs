@@ -147,8 +147,13 @@ internal static class InstallErrorChecks
             "Zm9vYmFyYmF6cXV4Zm9vYmFy+Ab",               // '+' (base64)
             "17w3Erlcu3kgjqsEHxnpJA==",                  // '=' padding
             "abcdefghijklmnopqrstuvwx==",                // '=' padding, lower case, no digit
+            "AbCdEfGhIjKlMnOpQrStUv==",                  // padding with mixed case
         })
             Equal("tok <token> end", R("tok " + token + " end"));
+        // Padding counts only where the = ends the run: before a space, a quote or the end.
+        Equal("a <token> b", R("a 17w3Erlcu3kgjqsEHxnpJA== b"));
+        Equal("\"<token>\"", R("\"17w3Erlcu3kgjqsEHxnpJA==\""));
+        Equal("end <token>", R("end 17w3Erlcu3kgjqsEHxnpJA="));
         // Kept: identifiers, constants, Unity paths, package labels, dotted names.
         foreach (var plain in new[]
         {
@@ -158,6 +163,7 @@ internal static class InstallErrorChecks
             "Assets/StudioRaming_Onairdeck/Prod/Editor/Tool.cs", "Packages/com.vendor.tool/Runtime/Core.cs",
             "Library/PackageCache/Some_Long_Folder_Name/File", "ProjectSettings/ProjectSettingsAssetLong",
             "Resources/Textures/Characters/Body_Albedo", "com.studioraming.x@1.0",
+            "maxTextureSizeOverrideSetting=2048", "\"someLongConfigurationName\": \"x\"",
             "UnityEngine.Rendering.Universal.UniversalRenderPipeline:Render",
         })
             Equal(plain, R(plain));
