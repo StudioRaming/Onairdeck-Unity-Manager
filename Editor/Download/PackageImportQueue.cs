@@ -16,6 +16,8 @@ namespace OnAirDeck.UnityManager
     {
         private const string Key = "OnAirDeck.UnityManager.PendingImports";
         private const string InteractiveKey = "OnAirDeck.UnityManager.InteractiveImports";
+        // One "path<TAB>product<TAB>version<TAB>productId" line per queued package that names its product (see InstallErrorWatch).
+        private const string ContextKey = "OnAirDeck.UnityManager.PendingImportContexts";
         private static bool _importing;
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
@@ -25,7 +27,7 @@ namespace OnAirDeck.UnityManager
             EditorApplication.delayCall += ProcessNext;
         }
 
-        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true)
+        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true, string product = null, string version = null, string productId = null)
         {
             var list = Load();
             if (list.Count > 0 && SessionState.GetBool(InteractiveKey, true) != interactive)
@@ -35,6 +37,12 @@ namespace OnAirDeck.UnityManager
                 if (!list.Contains(path)) list.Add(path);
             }
             SessionState.SetBool(InteractiveKey, interactive);
+            if (!string.IsNullOrEmpty(product))
+            {
+                var contexts = LoadContexts();
+                foreach (var path in packagePaths) contexts[path] = new[] { product, version ?? "", productId ?? "" };
+                SaveContexts(contexts);
+            }
             Save(list);
             ProcessNext();
         }
@@ -53,7 +61,10 @@ namespace OnAirDeck.UnityManager
             if (list.Count == 0) return;
 
             _importing = true;
-            _overwritten = ExistingFiles(list[0]);
+            var paths = AssetPathsOf(list[0]);
+            _overwritten = ExistingFiles(paths);
+            string[] context;
+            if (paths != null && LoadContexts().TryGetValue(list[0], out context)) InstallErrorWatch.Begin(context[0], context[2], context[1], paths);
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
@@ -62,22 +73,28 @@ namespace OnAirDeck.UnityManager
 
         private static void OnCompleted(string packageName)
         {
+            string[] context;
+            if (HeadContext(out context)) InstallErrorWatch.ImportFinished(context[0], context[1]);
             ReimportUnchanged();
             Finish("Imported " + packageName, false);
         }
 
-        private static Dictionary<string, DateTime> ExistingFiles(string packagePath)
+        private static List<string> AssetPathsOf(string packagePath)
         {
             try
             {
-                var paths = UnityPackageArchive.AssetPaths(packagePath);
-                return paths == null ? null : UnityPackageArchive.ExistingFileTimes(PackageInstallService.ProjectRoot, paths);
+                return UnityPackageArchive.AssetPaths(packagePath);
             }
             catch (Exception e)
             {
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not list " + Path.GetFileName(packagePath) + ": " + e.Message);
                 return null;
             }
+        }
+
+        private static Dictionary<string, DateTime> ExistingFiles(List<string> paths)
+        {
+            return paths == null ? null : UnityPackageArchive.ExistingFileTimes(PackageInstallService.ProjectRoot, paths);
         }
 
         /// <summary>
@@ -106,11 +123,21 @@ namespace OnAirDeck.UnityManager
 
         private static void OnCancelled(string packageName)
         {
+            string[] context;
+            if (HeadContext(out context)) InstallErrorWatch.End(context[0], context[1]);
             Finish("Import of " + packageName + " was cancelled", true);
         }
 
         private static void OnFailed(string packageName, string error)
         {
+            string[] context;
+            if (HeadContext(out context))
+            {
+                InstallErrorWatch.End(context[0], context[1]);
+                var report = new InstallErrorReport { Product = context[0], ProductId = context[2], Version = context[1], Reason = "Import of " + packageName + " failed: " + error };
+                report.Other.Add(report.Reason);
+                InstallErrorReporter.Offer(report);
+            }
             Finish("Import of " + packageName + " failed: " + error, true);
         }
 
@@ -127,6 +154,8 @@ namespace OnAirDeck.UnityManager
                 var done = list[0];
                 list.RemoveAt(0);
                 Save(list);
+                var contexts = LoadContexts();
+                if (contexts.Remove(done)) SaveContexts(contexts);
                 // Only our own cache files are deleted; never anything else.
                 if (PathSafety.IsInside(Downloader.CacheRoot, done)) Downloader.TryDeleteFolder(Path.GetDirectoryName(done));
             }
@@ -136,6 +165,31 @@ namespace OnAirDeck.UnityManager
             else Debug.Log(OnAirDeckConfig.LogPrefix + message);
 
             EditorApplication.delayCall += ProcessNext;
+        }
+
+        private static bool HeadContext(out string[] context)
+        {
+            context = null;
+            var list = Load();
+            return list.Count > 0 && LoadContexts().TryGetValue(list[0], out context);
+        }
+
+        private static Dictionary<string, string[]> LoadContexts()
+        {
+            var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            foreach (var line in SessionState.GetString(ContextKey, "").Split('\n'))
+            {
+                var parts = line.Split('\t');
+                if (parts.Length == 4) result[parts[0]] = new[] { parts[1], parts[2], parts[3] };
+            }
+            return result;
+        }
+
+        private static void SaveContexts(Dictionary<string, string[]> contexts)
+        {
+            var lines = new List<string>();
+            foreach (var pair in contexts) lines.Add(pair.Key + "\t" + pair.Value[0] + "\t" + pair.Value[1] + "\t" + pair.Value[2]);
+            SessionState.SetString(ContextKey, string.Join("\n", lines.ToArray()));
         }
 
         private static List<string> Load()

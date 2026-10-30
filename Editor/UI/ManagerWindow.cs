@@ -123,6 +123,7 @@ namespace OnAirDeck.UnityManager
             PurchaseWatcher.Refreshed += OnWatcherRefreshed;
             UpdateCheckService.Changed += OnExternalChange;
             DeviceLimitNotice.Changed += OnExternalChange;
+            InstallErrorReporter.Changed += OnExternalChange;
             SRLanguage.Changed += OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(true);
             OnEnablePackages();
@@ -138,6 +139,7 @@ namespace OnAirDeck.UnityManager
             PurchaseWatcher.Refreshed -= OnWatcherRefreshed;
             UpdateCheckService.Changed -= OnExternalChange;
             DeviceLimitNotice.Changed -= OnExternalChange;
+            InstallErrorReporter.Changed -= OnExternalChange;
             SRLanguage.Changed -= OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(false);
             // Closing the window (or a script reload) abandons in-progress work.
@@ -207,6 +209,20 @@ namespace OnAirDeck.UnityManager
         }
 
         private void DrawBody(Rect body)
+        {
+            var notice = DeviceLimitNotice.Current;
+            var blocked = (_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired);
+            var report = blocked ? null : InstallErrorReporter.Current;
+            if (report != null)
+            {
+                // The install error card sits above every screen, so it is seen signed out, in the device manager and in the list.
+                var used = DrawReportCard(body, report);
+                body = new Rect(body.x, body.y + used, body.width, Mathf.Max(0f, body.height - used));
+            }
+            DrawScreen(body);
+        }
+
+        private void DrawScreen(Rect body)
         {
             var notice = DeviceLimitNotice.Current;
             if ((_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired))
@@ -381,6 +397,7 @@ namespace OnAirDeck.UnityManager
         {
             _message = text;
             _messageType = type;
+            _messageReport = null;
             Repaint();
         }
 

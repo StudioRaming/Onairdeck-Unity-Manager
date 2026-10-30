@@ -78,9 +78,17 @@ The Manager refuses to install a package that an older version put in a plain fo
 While you are signed in, the **Feedback / 문의** section at the bottom of the window sends a bug report, a feature request or a question to OnAirDeck. It arrives in OnAirDeck's bug-report list with your account, so the team can reply.
 
 - **Kind**: Bug, Feature request or Question. **Message**: up to 4000 characters. **Error code**: optional, up to 200 characters (paste the code or the first line of the error).
-- **Attach recent Console errors (N)**: the last 50 errors, exceptions and failed asserts logged since the last script reload, each with up to 20 stack lines and its time. Your home folder in paths is replaced with `~`, and the attachment stays under 20 KB (the newest entries are kept). OnAirDeck masks e-mail addresses, phone numbers and card numbers in the message, the error code and the log before storing them.
+- **Attach recent Console errors (N)**: the last 50 errors, exceptions and failed asserts logged since the last script reload, each with up to 20 stack lines and its time. E-mail addresses become `<email>`, your home folder in paths `%USERPROFILE%`, your user name `<user>`, and tokens, keys and opaque strings of 40+ characters `<token>`; the attachment stays under 20 KB (the newest entries are kept). OnAirDeck masks e-mail addresses, phone numbers and card numbers in the message, the error code and the log before storing them.
 - Sent with every message, shown read-only before you send: the Unity version, the Manager version, the operating system and the installed StudioRaming / OnAirDeck packages (`name@version`).
 - At most 5 messages per 10 minutes per account.
+
+### Install error report card
+
+When an install or an import of a product breaks, a card appears at the top of the window: "설치한 <product>에서 오류가 났어요", the reason, **보낼 내용 보기** (the exact redacted text, the same one that is sent), an optional note and **Send** / **Don't send**. Nothing is sent unless you click Send; it needs a sign-in, and the server's limit (5 messages per 10 minutes) is shown on the card. A red message in the window also gets a **버그 리포트 보내기** button; it reopens a dismissed card, and says so when the same error was already sent.
+
+- **What triggers it**: a failed download, package install, file install or batch item; a failed import or an interrupted install the Manager could not roll back; and, after an import, compile errors in the product's scripts, console errors that name its files and exceptions thrown from its own assemblies, from the import start until the script compile ends plus two minutes. A cancel, a device-limit or update-required screen, a license check result (not signed in, expired, missing) and errors of other packages never make a card.
+- **What is sent**: kind `bug`, your note (or `<product> <version>: <reason>`), the error code (`install.manager_failed`, `install.compile_failed` or `install.exception`), the redacted excerpt (compile errors first, then exceptions; the note is redacted too), the Unity and Manager versions, the OS and `<product>@<version>`.
+- **Once per error**: a report that was sent or dismissed is not shown again in that project (`Library/OnAirDeck/InstallErrorReports.txt`).
 
 ## For sellers: checking the license from your asset
 
@@ -208,6 +216,7 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] Editor runner in Unity 2021.3.18f1 (2026-10-08): **13/13 passed**, including expired/malformed/valid saved sign-ins, rejected token (401) and sign-out on a throwaway key, with the real sign-in confirmed unchanged.
 - [x] **Deny** clicked by the owner on the real consent page; the window showed the expected message (2026-10-08).
 - [ ] Package install (0.5.0) in a real Unity 2021.3 and 2022.3 editor: fresh install from the Manager alone, pair update, mismatch repair, interrupted install rolled back on the next load, legacy `Assets/` core refused, domain reload during the swap, `Client.Resolve()` timing, the Packages section layout.
+- [ ] Install error report card in a real editor: import a `.unitypackage` whose script has a compile error (a folder with an `atelier.product.json` marker), check the card (title, reason, exact text, note, Send / Don't send, signed-out hint, minimum window size), the report in the admin bug-report list with `install.compile_failed` and `<product>@<version>`, that the same error is not offered again, and that a clean import and a license-gate lock screen show no card.
 - [ ] Feedback (0.6.0) in a real editor after `plugin-feedback` is deployed: send each kind with and without Console errors, check the row in the admin bug-report tab, the 429 message after 5 sends, and the section at the minimum window size.
 - [x] Import `Atelier-Manager-0.1.0.unitypackage` into a project without the Manager (Unity 2021.3.45f2, 2026-10-29): embedded 0.1.0, 203 files, compiles, window opens.
 - [x] Install the package **from the git URL** (`#<commit>`) into a project without the Manager (Unity 2021.3.45f2, 2026-10-29): source Git 0.1.0, compiles, no Console errors.

@@ -55,6 +55,18 @@ namespace OnAirDeck.UnityManager
             return all.ToArray();
         }
 
+        /// <summary>The id the error report signature is keyed on: the product id, else the line item id.</summary>
+        public static string ProductIdOf(PurchaseItem item)
+        {
+            return !string.IsNullOrEmpty(item.product_id) ? item.product_id : item.item_id ?? "";
+        }
+
+        /// <summary>The version the item's files belong to (the newest entry of its file history), or "".</summary>
+        public static string VersionOf(PurchaseItem item)
+        {
+            return item.versions != null && item.versions.Length > 0 && item.versions[0] != null ? item.versions[0].version ?? "" : "";
+        }
+
         /// <param name="interactiveImport">false: .unitypackage files import without the Unity import window (batch runs).</param>
         /// <param name="userInitiated">true (default): a user click started this, so the request may take back a released seat (X-Atelier-Reactivate).</param>
         public static async Task<DownloadSummary> DownloadItemAsync(
@@ -73,7 +85,7 @@ namespace OnAirDeck.UnityManager
                 DeviceLimitNotice.Report(e, item.name, async () => (object)await DownloadItemAsync(sessionToken, item, onProgress, cancel, interactiveImport, true), "download:" + item.name);
                 throw;
             }
-            var summary = await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport);
+            var summary = await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport, item.name, VersionOf(item), ProductIdOf(item));
 
             // Signed license next to the product. A failure here must not undo a finished
             // download; the window refreshes missing licenses the next time it opens.
@@ -94,9 +106,11 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Downloads every file to the cache, then places them: .unitypackage files go to <see cref="PackageImportQueue"/> (paths and
         /// GUIDs as the package has them, overwriting in place), zips are extracted into <paramref name="folder"/>, other files are
-        /// copied there. All downloads finish before any import starts. The cache is cleaned on a failure.
+        /// copied there. All downloads finish before any import starts. The cache is cleaned on a failure. <paramref name="product"/>,
+        /// <paramref name="version"/> and <paramref name="productId"/> name the import for <see cref="InstallErrorWatch"/>.
         /// </summary>
-        internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport)
+        internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport,
+            string product = null, string version = null, string productId = null)
         {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
@@ -155,7 +169,7 @@ namespace OnAirDeck.UnityManager
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;
-                    PackageImportQueue.Enqueue(packages, interactiveImport);
+                    PackageImportQueue.Enqueue(packages, interactiveImport, product, version, productId);
                 }
                 return summary;
             }

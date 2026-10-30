@@ -32,6 +32,9 @@
     <Compile Include="HandoffChecks.cs" />
     <Compile Include="AstraR1Checks.cs" />
     <Compile Include="DevChecks.cs" />
+    <Compile Include="InstallErrorChecks.cs" />
+    <Compile Include="../../Editor/Feedback/FeedbackText.cs" />
+    <Compile Include="../../Editor/Feedback/InstallErrorReport.cs" />
     <Compile Include="../../Editor/Packages/LegacyInstall.cs" />
     <Compile Include="../../Editor/Packages/LegacyInstallText.cs" />
     <Compile Include="../../Editor/Packages/LegacyHandler.cs" />

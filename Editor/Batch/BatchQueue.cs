@@ -10,6 +10,8 @@ namespace OnAirDeck.UnityManager
     internal sealed class BatchItem
     {
         public string Name = "";
+        /// <summary>The product version, for the error report when this item fails; "" when unknown.</summary>
+        public string Version = "";
         public Func<Action<string, float>, Task<object>> Run;
     }
 
@@ -19,6 +21,9 @@ namespace OnAirDeck.UnityManager
         public BatchStatus Status = BatchStatus.Pending;
         /// <summary>Why it failed or was skipped; "" otherwise.</summary>
         public string Message = "";
+        public string Version = "";
+        /// <summary>The exception that failed it (Failed only), for the error report.</summary>
+        public Exception Error;
         /// <summary>What the action returned (a DownloadSummary or InstallReport); null unless Done.</summary>
         public object Result;
     }
@@ -40,7 +45,7 @@ namespace OnAirDeck.UnityManager
         public BatchQueue(IEnumerable<BatchItem> items)
         {
             _items = new List<BatchItem>(items);
-            foreach (var item in _items) _results.Add(new BatchResult { Name = item.Name });
+            foreach (var item in _items) _results.Add(new BatchResult { Name = item.Name, Version = item.Version });
         }
 
         public event Action Changed;
@@ -129,6 +134,7 @@ namespace OnAirDeck.UnityManager
                     SessionExpired = true;
                     result.Status = BatchStatus.Failed;
                     result.Message = e.Message;
+                    result.Error = e;
                     RaiseChanged();
                     return false;
                 }
@@ -171,6 +177,7 @@ namespace OnAirDeck.UnityManager
                 {
                     result.Status = BatchStatus.Failed;
                     result.Message = e.Message;
+                    result.Error = e;
                     RaiseChanged();
                     return true;
                 }

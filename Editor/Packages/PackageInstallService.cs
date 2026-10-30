@@ -84,7 +84,7 @@ namespace OnAirDeck.UnityManager
                 collisionCheck = legacyMove != null;
                 await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
                 collisionCheck = false;
-                var report = Apply(root, items, onProgress, cancel);
+                var report = Apply(root, items, onProgress, cancel, licenses ?? new LicenseEntry[0]);
                 if (legacyMove != null) legacyMove.MarkInstalled();
                 await EnsureLicenseFilesQuietlyAsync(sessionToken, licenses, userInitiated);
                 return report;
@@ -129,7 +129,7 @@ namespace OnAirDeck.UnityManager
                     cacheFolders, onProgress, cancel, 0, null, null, null, false);
                 items.Add(new InstallItem { Name = packageName, Version = version, ZipPath = zip, TargetFolder = packageFolder });
                 await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
-                return Apply(root, items, onProgress, cancel);
+                return Apply(root, items, onProgress, cancel, null);
             }
             finally
             {
@@ -188,13 +188,28 @@ namespace OnAirDeck.UnityManager
             catch (Exception) { }
         }
 
-        private static InstallReport Apply(string root, List<InstallItem> items, Action<string, float> onProgress, CancellationToken cancel)
+        /// <param name="watchLicenses">Not null: the installed packages are watched for compile errors and exceptions (<see cref="InstallErrorWatch"/>); the licenses name each product's id.</param>
+        private static string LicenseIdOf(LicenseEntry[] licenses, string packageName)
+        {
+            foreach (var license in licenses)
+            {
+                if (license == null || license.versions == null) continue;
+                foreach (var v in license.versions)
+                    if (v != null && v.package_name == packageName) return license.license_id ?? "";
+            }
+            return packageName;
+        }
+
+        private static InstallReport Apply(string root, List<InstallItem> items, Action<string, float> onProgress, CancellationToken cancel, LicenseEntry[] watchLicenses)
         {
             cancel.ThrowIfCancellationRequested();
             Report(onProgress, "Installing…", 0.8f);
             var report = PackageTransaction.Execute(root, items, DateTime.Now);
             // A reload follows Refresh, so the window's own code may never see this result: leave it where the next load can show it.
             SessionState.SetString(ReportKey, report.Describe());
+            if (watchLicenses != null)
+                foreach (var item in items)
+                    if (item.TargetFolder.Length == 0) InstallErrorWatch.Begin(item.Name, LicenseIdOf(watchLicenses, item.Name), item.Version, new[] { "Packages/" + item.Name });
 #if UNITY_2021_1_OR_NEWER
             Client.Resolve();   // older editors resolve the changed manifest on the refresh below
 #endif

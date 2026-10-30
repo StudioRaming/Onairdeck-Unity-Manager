@@ -46,6 +46,7 @@ internal static class Program
             MarkerChecks.Run(Check, _project);
             LegacyChecks.Run(Check, _project);
             DevChecks.Run(Check);
+            InstallErrorChecks.Run(Check, _project);
         }
         finally
         {
