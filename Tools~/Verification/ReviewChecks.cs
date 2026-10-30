@@ -279,7 +279,7 @@ internal static class ReviewChecks
         Equal("p:a\np:b", PurchaseWatcherLogic.MarkSeen("p:a\np:b", new string[0]));
         // The first load is capped too.
         var purchases = new List<PurchaseItem>();
-        for (var i = 0; i < 1200; i++) purchases.Add(new PurchaseItem { name = "n" + i, product_id = "id" + i.ToString("D4"), files = new[] { new PurchaseFile { file_id = "f" } } });
+        for (var i = 0; i < 1200; i++) purchases.Add(new PurchaseItem { name = "n" + i, product_id = "id" + i.ToString("D4") });
         var first = PurchaseWatcherLogic.Diff(null, new PurchasesResponse { purchases = purchases.ToArray(), licenses = new LicenseEntry[0] });
         Equal(PurchaseWatcherLogic.MaxSeen, first.FirstLoadText.Split('\n').Length);
     }
