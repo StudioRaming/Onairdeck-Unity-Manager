@@ -95,8 +95,11 @@ namespace OnAirDeck.UnityManager
         /// Downloads every file to the cache, then places them: .unitypackage files go to <see cref="PackageImportQueue"/> (paths and
         /// GUIDs as the package has them, overwriting in place), zips are extracted into <paramref name="folder"/>, other files are
         /// copied there. All downloads finish before any import starts. The cache is cleaned on a failure.
+        /// <paramref name="record"/> (a license version) is saved once everything is in place: now when nothing is imported, after
+        /// the last .unitypackage import otherwise (see <see cref="PendingImportRecords"/>).
         /// </summary>
-        internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport)
+        internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport,
+            InstallRecord record = null)
         {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
@@ -152,11 +155,19 @@ namespace OnAirDeck.UnityManager
                     if (!keep) Downloader.TryDeleteFolder(cacheFolder);
                 }
 
+                // A version is recorded only when something of it was placed. Entries skipped for an unusable name or an unsafe
+                // zip path are the Manager's own safety choice and a reinstall would skip them again, so they do not block it.
+                if (record != null && packages.Count == 0 && summary.Copied + summary.Extracted == 0)
+                {
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Nothing of this version was placed, so the installed version is not recorded.");
+                    record = null;
+                }
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;
-                    PackageImportQueue.Enqueue(packages, interactiveImport);
+                    PackageImportQueue.Enqueue(packages, interactiveImport, record);
                 }
+                else if (record != null) PackageImportQueue.SaveRecord(record);
                 return summary;
             }
             catch

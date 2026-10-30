@@ -55,6 +55,14 @@ namespace OnAirDeck.UnityManager
         public static string DlgDl { get { return Pick("받으면 이 상품은 환불할 수 없어요. 받을까요?", "You cannot get a refund for this product once you download it. Download it?", "ダウンロードすると、この商品は返金できません。ダウンロードしますか?"); } }
         public static string DlgInT { get { return Pick("{n} {v} 설치", "Install {n} {v}", "{n} {v} をインストール"); } }
         public static string DlgIn { get { return Pick("{n} {v} 버전을 설치할까요? 지금 버전은 자동으로 백업돼요.", "Install {n} {v}? Your current version is backed up automatically.", "{n} {v} をインストールしますか? 今のバージョンは自動でバックアップされます。"); } }
+        // First install: nothing to back up. File install over an existing copy: the .unitypackage overwrites in place, no backup.
+        public static string DlgInNew { get { return Pick("{n} {v} 버전을 설치할까요?", "Install {n} {v}?", "{n} {v} をインストールしますか?"); } }
+        public static string DlgInFile { get { return Pick("{n} {v} 버전을 설치할까요? 같은 파일은 새 버전으로 덮어써요. 따로 백업하지 않아요.", "Install {n} {v}? Files with the same name are overwritten by this version. No backup is made.", "{n} {v} をインストールしますか? 同じファイルはこのバージョンで上書きされます。バックアップは作りません。"); } }
+
+        public static string ChipUnknown { get { return Pick("버전 확인 필요", "Version Unknown", "バージョン不明"); } }
+        public static string RcUnknown { get { return Pick("버전 확인", "Check", "要確認"); } }
+        public static string StUnknown { get { return Pick("설치된 버전을 알 수 없어요 · 최신 {l}. 여기서 한 번 설치하면 다음부터 새 버전을 알려 드려요.", "The installed version is unknown · Latest {l}. Install it here once and new versions are shown from then on.", "インストール済みのバージョンが分かりません · 最新 {l}。ここで一度インストールすると、次から新しいバージョンをお知らせします。"); } }
+        public static string BInstLatest { get { return Pick("최신 버전 설치", "Install Latest", "最新版をインストール"); } }
         public static string DlgBatchT { get { return Pick("한 번에 받기", "Download Selected", "まとめてダウンロード"); } }
         public static string DlgBatch { get { return Pick("선택한 {n}개를 한 번에 받을까요? 받은 뒤 바로 가져와요. 받으면 환불할 수 없어요.", "Download the {n} selected products at once? They are imported right after the download. You cannot get a refund once downloaded.", "選んだ{n}件をまとめてダウンロードしますか? ダウンロード後すぐにインポートします。ダウンロードすると返金できません。"); } }
         public static string DlgUpdAll { get { return Pick("새 버전이 있는 {n}개를 모두 업데이트할까요? 지금 버전은 자동으로 백업돼요.", "Update all {n} products that have a new version? Current versions are backed up automatically.", "新しいバージョンのある{n}件をすべてアップデートしますか? 今のバージョンは自動でバックアップされます。"); } }

@@ -241,6 +241,7 @@ namespace OnAirDeck.UnityManager
                 case EntryState.None: text = ManagerText.RcNone; tone = SRTone.Neutral; return true;
                 case EntryState.Got: text = ManagerText.RcGot; tone = SRTone.Success; return true;
                 case EntryState.Installed: text = ManagerText.RcInst; tone = SRTone.Success; return true;
+                case EntryState.Unknown: text = ManagerText.RcUnknown; tone = SRTone.Info; return true;
                 default: return false;
             }
         }

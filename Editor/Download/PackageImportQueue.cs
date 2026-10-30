@@ -16,7 +16,11 @@ namespace OnAirDeck.UnityManager
     {
         private const string Key = "OnAirDeck.UnityManager.PendingImports";
         private const string InteractiveKey = "OnAirDeck.UnityManager.InteractiveImports";
+        private const string RecordsKey = "OnAirDeck.UnityManager.PendingImportRecords";
         private static bool _importing;
+
+        /// <summary>Raised after an install record was saved (the window re-reads which versions are installed).</summary>
+        public static event Action RecordSaved;
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
 
@@ -25,18 +29,63 @@ namespace OnAirDeck.UnityManager
             EditorApplication.delayCall += ProcessNext;
         }
 
-        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true)
+        /// <summary>Queues the packages; <paramref name="record"/>, when given, is saved after all of them imported (none if one fails).</summary>
+        public static void Enqueue(IEnumerable<string> packagePaths, bool interactive = true, InstallRecord record = null)
         {
             var list = Load();
             if (list.Count > 0 && SessionState.GetBool(InteractiveKey, true) != interactive)
                 throw new InvalidOperationException("Cannot change import interaction while packages are queued.");
+            var added = new List<string>();
             foreach (var path in packagePaths)
             {
                 if (!list.Contains(path)) list.Add(path);
+                added.Add(path);
             }
+            if (record != null)
+                SessionState.SetString(RecordsKey, PendingImportRecords.Add(SessionState.GetString(RecordsKey, ""), added, Guid.NewGuid().ToString("N"), record));
             SessionState.SetBool(InteractiveKey, interactive);
             Save(list);
             ProcessNext();
+        }
+
+        /// <summary>
+        /// Saves an install record now. Never throws (it runs inside the queue's completion step, which must go on to the next
+        /// package): a failed write or a failing listener is logged; the install itself already succeeded.
+        /// </summary>
+        public static void SaveRecord(InstallRecord record)
+        {
+            try
+            {
+                InstallRecords.Save(PackageInstallService.ProjectRoot, record);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the installed version could not be recorded: " + e.Message);
+                return;
+            }
+            try
+            {
+                var handler = RecordSaved;
+                if (handler != null) handler();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The installed version was recorded, but the window could not refresh: " + e.Message);
+            }
+        }
+
+        private static void FinishRecord(string packagePath, bool imported)
+        {
+            try
+            {
+                InstallRecord ready;
+                SessionState.SetString(RecordsKey, PendingImportRecords.Finish(SessionState.GetString(RecordsKey, ""), packagePath, imported, out ready));
+                if (ready != null) SaveRecord(ready);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The installed version could not be recorded: " + e.Message);
+            }
         }
 
         public static int PendingCount
@@ -48,7 +97,11 @@ namespace OnAirDeck.UnityManager
         {
             if (_importing) return;
             var list = Load();
-            while (list.Count > 0 && !File.Exists(list[0])) list.RemoveAt(0);
+            while (list.Count > 0 && !File.Exists(list[0]))
+            {
+                FinishRecord(list[0], false);
+                list.RemoveAt(0);
+            }
             Save(list);
             if (list.Count == 0) return;
 
@@ -127,6 +180,8 @@ namespace OnAirDeck.UnityManager
                 var done = list[0];
                 list.RemoveAt(0);
                 Save(list);
+                // warn is a cancelled or failed import: the version did not go in, so its record is dropped.
+                FinishRecord(done, !warn);
                 // Only our own cache files are deleted; never anything else.
                 if (PathSafety.IsInside(Downloader.CacheRoot, done)) Downloader.TryDeleteFolder(Path.GetDirectoryName(done));
             }

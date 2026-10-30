@@ -46,6 +46,7 @@
     <Compile Include="../../Editor/License/LicenseRenewalStatus.cs" />
     <Compile Include="../../Editor/Api/DeviceReleasedText.cs" />
     <Compile Include="../../Editor/License/ProductMarkers.cs" />
+    <Compile Include="../../Editor/License/InstallRecords.cs" />
     <Compile Include="../../Editor/Api/AtelierManagerApi.cs" />
     <Compile Include="../../Editor/Catalog/FavoritesLogic.cs" />
     <Compile Include="../../Editor/Catalog/ThumbnailCachePolicy.cs" />

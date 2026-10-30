@@ -54,6 +54,7 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private HashSet<string> _favorites = new HashSet<string>();
         [NonSerialized] private HashSet<string> _collapsed = new HashSet<string>();
         [NonSerialized] private HashSet<string> _markers = new HashSet<string>();
+        [NonSerialized] private Dictionary<string, InstallRecord> _installRecords = new Dictionary<string, InstallRecord>();
         [NonSerialized] private bool _entriesDirty = true;
         [NonSerialized] private bool _linesDirty = true;
         [NonSerialized] private bool _loading;
@@ -123,6 +124,7 @@ namespace OnAirDeck.UnityManager
             PurchaseWatcher.Refreshed += OnWatcherRefreshed;
             UpdateCheckService.Changed += OnExternalChange;
             DeviceLimitNotice.Changed += OnExternalChange;
+            PackageImportQueue.RecordSaved += RefreshInstalledState;
             SRLanguage.Changed += OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(true);
             OnEnablePackages();
@@ -138,6 +140,7 @@ namespace OnAirDeck.UnityManager
             PurchaseWatcher.Refreshed -= OnWatcherRefreshed;
             UpdateCheckService.Changed -= OnExternalChange;
             DeviceLimitNotice.Changed -= OnExternalChange;
+            PackageImportQueue.RecordSaved -= RefreshInstalledState;
             SRLanguage.Changed -= OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(false);
             // Closing the window (or a script reload) abandons in-progress work.
@@ -256,7 +259,7 @@ namespace OnAirDeck.UnityManager
         {
             _entriesDirty = false;
             var root = PackageInstallService.ProjectRoot;
-            _entries = ManagerCatalog.Build(_purchases, _licenses, name => InstalledPackages.InstalledVersion(root, name), _markers);
+            _entries = ManagerCatalog.Build(_purchases, _licenses, name => InstalledPackages.InstalledVersion(root, name), _markers, _installRecords);
             _sellers = ManagerCatalog.Sellers(_entries);
             if (_sellerFilter.Length > 0 && !_sellers.Contains(_sellerFilter)) _sellerFilter = "";
             _favorites = new HashSet<string>();
@@ -305,6 +308,7 @@ namespace OnAirDeck.UnityManager
             var root = PackageInstallService.ProjectRoot;
             try { _markers = ProductMarkers.Scan(root); }
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Product marker scan failed: " + e.Message); _markers = new HashSet<string>(); }
+            _installRecords = InstallRecords.Load(root);
             _mismatches = FindMismatches(root);
             _pendingRestores = LegacyMove.PendingRestores();
             MarkDirty();
