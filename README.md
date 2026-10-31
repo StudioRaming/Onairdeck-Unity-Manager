@@ -205,6 +205,15 @@ To compile-check without opening Unity, run `dotnet build` in `Tools~/CompileChe
 
 To build the Git-free install files: `python Tools~/Packaging/build_manager_packages.py` (`--out`, `--version`). It stops if a file or folder lacks its `.meta`, then reopens both outputs and verifies entries, contents and GUIDs.
 
+**Every release** attaches all three files: the versioned `.unitypackage`, the version-less `Atelier-Manager.unitypackage`, and the zip. A first install must end on the latest version: the website links `releases/latest/download/Atelier-Manager.unitypackage`, and the Manager updates itself from plugin-version on its first window. After publishing, run `python Tools~/Packaging/check_release_assets.py <tag>`. It fails unless all three files are there, the version-less file is the versioned one byte for byte (same size and sha256), and the release is the one `releases/latest` resolves to. It also prints the `plugin_releases` row (client `unity-manager`, line `atelier`) to publish only after it passes.
+
+**Automatic self-update (0.1.4).**
+- **When it checks:** the window asks plugin-version when it opens (not again within 10 minutes), and once a day while it stays open.
+- **When it installs:** a newer release is installed at a safe moment, by the same route as the Update button. Embedded copies take the release zip (`download_url`); git installs take the `git_url` tag. A safe moment means no install, batch, hand-off, import request or queued `.unitypackage`, not compiling, and not in play mode.
+- **The record:** `Library/OnAirDeck/self-update.json` is written first. The new version then shows "업데이트됨 a → b" once, or "최신 버전으로 업데이트했어요" when the project's first check found it.
+- **Rollback:** if the new code does not compile, the old code (still loaded) puts the previous folder back from the install backup (git: the previous package id) and says so. That release is then installed again only by a click.
+- **Never replaced:** a git working copy, or a folder linked to one.
+
 ## Release verification
 
 - [x] Browser sign-in and purchase listing tested by the owner in Unity 2021.3.18f1.

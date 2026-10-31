@@ -5,6 +5,8 @@ namespace OnAirDeck.UnityManager
     {
         /// <summary>{a} the version before, {b} the version now.</summary>
         public static string AuDone { get { return Pick("업데이트됨 {a} → {b}. Atelier Manager가 스스로 새 버전을 받았어요.", "Updated {a} → {b}. Atelier Manager installed its new version by itself.", "アップデート済み {a} → {b}。Atelier Managerが新しいバージョンを自動で受け取りました。"); } }
+        /// <summary>The first window of a new install found a newer release: {a} what was installed, {b} the latest.</summary>
+        public static string AuFirst { get { return Pick("최신 버전으로 업데이트했어요 ({a} → {b}).", "Updated to the latest version ({a} → {b}).", "最新バージョンにアップデートしました（{a} → {b}）。"); } }
         /// <summary>{a} the version kept, {b} the version that failed.</summary>
         public static string AuBack { get { return Pick("{b}이(가) 이 Unity에서 컴파일되지 않아 {a}(으)로 되돌렸어요. 이 버전은 다시 자동으로 받지 않아요.", "{b} did not compile in this Unity, so {a} was put back. This version is not installed automatically again.", "{b}がこのUnityでコンパイルできなかったため、{a}に戻しました。このバージョンは自動では再び受け取りません。"); } }
         /// <summary>{v} the version being installed.</summary>

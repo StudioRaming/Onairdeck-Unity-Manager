@@ -58,6 +58,8 @@ namespace OnAirDeck.UnityManager
         public string OldPackageId = "";
         public string Error = "";
         public string Updated = "";
+        /// <summary>The first check of this project found the release (an old .unitypackage or a pinned git URL was installed): "최신 버전으로 업데이트했어요".</summary>
+        public bool FirstRun;
     }
 
     internal static class AutoUpdateLogic
@@ -132,6 +134,7 @@ namespace OnAirDeck.UnityManager
                     OldPackageId = MiniJson.GetString(root, "oldPackageId") ?? "",
                     Error = MiniJson.GetString(root, "error") ?? "",
                     Updated = MiniJson.GetString(root, "updated") ?? "",
+                    FirstRun = MiniJson.GetString(root, "firstRun") == "1",
                 };
             }
             catch (Exception)
@@ -152,6 +155,7 @@ namespace OnAirDeck.UnityManager
             root["backup"] = record.Backup;
             root["oldPackageId"] = record.OldPackageId;
             root["error"] = record.Error;
+            root["firstRun"] = record.FirstRun ? "1" : "";
             record.Updated = DateTime.Now.ToString("o", CultureInfo.InvariantCulture);
             root["updated"] = record.Updated;
             AtomicFile.Write(RecordPath(projectRoot), JsonWriter.Write(root, "\n"));

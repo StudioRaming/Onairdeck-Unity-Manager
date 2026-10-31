@@ -224,6 +224,9 @@ namespace OnAirDeck.UnityManager
         {
             var notice = DeviceLimitNotice.Current;
             var blocked = (_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired);
+            // The automatic update's note sits above every screen: a first install is usually still signed out.
+            var note = DrawAutoUpdateNote(body);
+            if (note > 0f) body = new Rect(body.x, body.y + note, body.width, Mathf.Max(0f, body.height - note));
             var report = blocked ? null : InstallErrorReporter.Current;
             if (report != null)
             {

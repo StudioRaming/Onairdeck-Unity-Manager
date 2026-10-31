@@ -102,7 +102,7 @@ namespace OnAirDeck.UnityManager
         /// checks) undoes itself in the install transaction and marks the release failed, so it is not tried again automatically.
         /// Returns null when it started (the reload follows), or the error text.
         /// </summary>
-        public static async Task<string> ApplyAsync(UpdateState state)
+        public static async Task<string> ApplyAsync(UpdateState state, bool firstRun = false)
         {
             if (_running || state == null || !state.CanApply || !state.HasLatest) return "not available";
             _running = true;
@@ -110,6 +110,7 @@ namespace OnAirDeck.UnityManager
             {
                 From = state.CurrentVersion, To = state.Response.latest.version, Route = state.UseEmbedded ? "embedded" : "git",
                 Phase = SelfUpdateRecord.PhaseApplying, PackageFolder = state.PackageFolder ?? "", OldPackageId = state.PackageId ?? "",
+                FirstRun = firstRun,
             };
             try
             {

@@ -16,9 +16,12 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private bool _checkingUpdate;
         [NonSerialized] private SelfUpdateRecord _autoNote;
         [NonSerialized] private string _autoNoteKind;
+        // No check ever ran in this project: the Manager was just installed (maybe from an old file), so it goes to the latest first.
+        [NonSerialized] private bool _firstRun;
 
         private void OnEnableAutoUpdate()
         {
+            _firstRun = AutoUpdater.LastCheck == 0;
             _autoNote = AutoUpdater.PendingNote(out _autoNoteKind);
             EditorApplication.update -= AutoUpdateTick;
             EditorApplication.update += AutoUpdateTick;
@@ -54,7 +57,7 @@ namespace OnAirDeck.UnityManager
             Repaint();
             try
             {
-                var error = await AutoUpdater.ApplyAsync(state);
+                var error = await AutoUpdater.ApplyAsync(state, _firstRun);
                 if (error != null) SetMessage(ManagerText.AuFailed.Replace("{v}", state.Response.latest.version).Replace("{m}", error), MessageType.Warning);
             }
             catch (Exception e)
@@ -69,13 +72,13 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        /// <summary>The note of the last automatic update, shown once; 0 when there is none.</summary>
+        /// <summary>The note of the last automatic update, shown once above every screen (also signed out); 0 when there is none.</summary>
         private float DrawAutoUpdateNote(Rect body)
         {
             if (_autoNote == null || _autoNoteKind == null) return 0f;
             var close = new BarButton { Label = ManagerText.Close, Kind = SRButtonKind.Ghost, Enabled = true, Click = CloseAutoUpdateNote };
             if (_autoNoteKind == "updated")
-                return DrawBar(body, SRTone.Brand, ManagerText.AuDone.Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
+                return DrawBar(body, SRTone.Brand, (_autoNote.FirstRun ? ManagerText.AuFirst : ManagerText.AuDone).Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
             return DrawBar(body, SRTone.Warning, ManagerText.AuBack.Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
         }
 

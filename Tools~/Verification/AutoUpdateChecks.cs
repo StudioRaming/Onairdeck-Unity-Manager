@@ -78,13 +78,17 @@ internal static class AutoUpdateChecks
             {
                 From = "0.1.4", To = "0.1.5", Route = "embedded", Phase = SelfUpdateRecord.PhaseApplying,
                 PackageFolder = Path.Combine(root, "Packages", "com.studioraming.manager"), Backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "b"),
-                OldPackageId = "com.studioraming.manager@https://example.invalid/m.git#0.1.4", Error = "",
+                OldPackageId = "com.studioraming.manager@https://example.invalid/m.git#0.1.4", Error = "", FirstRun = true,
             };
             AutoUpdateLogic.Save(root, record);
             var back = AutoUpdateLogic.Load(root);
             Equal(record.From, back.From); Equal(record.To, back.To); Equal(record.Route, back.Route); Equal(record.Phase, back.Phase);
             Equal(record.PackageFolder, back.PackageFolder); Equal(record.Backup, back.Backup); Equal(record.OldPackageId, back.OldPackageId);
             Require(back.Updated.Length > 0);
+            Require(back.FirstRun);
+            record.FirstRun = false;
+            AutoUpdateLogic.Save(root, record);
+            Require(!AutoUpdateLogic.Load(root).FirstRun);
             File.WriteAllText(AutoUpdateLogic.RecordPath(root), "not json");
             Require(AutoUpdateLogic.Load(root) == null);
         };

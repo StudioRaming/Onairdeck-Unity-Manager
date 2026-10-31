@@ -6,7 +6,7 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager
 {
     /// <summary>
-    /// The strip above the panes. One bar at a time, in this order: this PC released (v7), the automatic update's note, a message, the project check (U3),
+    /// The strip above the panes. One bar at a time, in this order: this PC released (v7), a message, the project check (U3),
     /// a VCC install to move to the Manager (or its undo), a new purchase, a Manager update, products with a newer version.
     /// </summary>
     internal sealed partial class ManagerWindow
@@ -31,8 +31,6 @@ namespace OnAirDeck.UnityManager
                 return DrawBar(body, SRTone.Warning, DeviceReleasedText.Title(lang) + "\n" + DeviceReleasedText.Body(lang),
                     new BarButton { Label = DeviceReleasedText.Button(lang), Kind = SRButtonKind.Primary, Enabled = !_removing, Click = ReactivateThisPc });
             }
-            var autoNote = DrawAutoUpdateNote(body);
-            if (autoNote > 0f) return autoNote;
             if (!string.IsNullOrEmpty(_message))
             {
                 var close = new BarButton { Label = ManagerText.Close, Kind = SRButtonKind.Ghost, Enabled = true, Click = () => { _message = null; } };
