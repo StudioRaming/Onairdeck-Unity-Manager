@@ -31,6 +31,7 @@ namespace OnAirDeck.UnityManager
         private static readonly Entry[] Ring = new Entry[Capacity];
         private static int _next;
         private static int _count;
+        private static int _version;
 
         static ConsoleErrorBuffer()
         {
@@ -42,6 +43,12 @@ namespace OnAirDeck.UnityManager
         public static int Count
         {
             get { lock (Gate) return _count; }
+        }
+
+        /// <summary>Changes whenever an entry is added or the buffer is cleared, so a cached preview knows it is stale.</summary>
+        public static int Version
+        {
+            get { lock (Gate) return _version; }
         }
 
         /// <summary>Copy of the held entries, oldest first.</summary>
@@ -63,6 +70,7 @@ namespace OnAirDeck.UnityManager
                 Array.Clear(Ring, 0, Ring.Length);
                 _next = 0;
                 _count = 0;
+                _version++;
             }
         }
 
@@ -109,6 +117,7 @@ namespace OnAirDeck.UnityManager
                 Ring[_next] = entry;
                 _next = (_next + 1) % Capacity;
                 if (_count < Capacity) _count++;
+                _version++;
             }
         }
 

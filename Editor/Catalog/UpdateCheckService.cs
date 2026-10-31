@@ -45,9 +45,10 @@ namespace OnAirDeck.UnityManager
                 if (Count > 0)
                     Debug.Log(OnAirDeckConfig.LogPrefix + Count + " update" + (Count == 1 ? " is" : "s are") + " available. Open Atelier Manager (Window > Atelier Manager) to update.");
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                // Quiet on purpose: an offline editor start must not print errors.
+                // Quiet on purpose: an offline editor start must not print errors. A bug of the Manager still opens the report card.
+                ManagerErrorWatch.OfferCaught("Background update check", e);
             }
         }
 

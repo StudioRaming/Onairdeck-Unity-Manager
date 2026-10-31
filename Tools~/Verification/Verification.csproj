@@ -33,6 +33,8 @@
     <Compile Include="AstraR1Checks.cs" />
     <Compile Include="DevChecks.cs" />
     <Compile Include="InstallErrorChecks.cs" />
+    <Compile Include="ManagerErrorChecks.cs" />
+    <Compile Include="../../Editor/Feedback/ManagerErrorLogic.cs" />
     <Compile Include="../../Editor/Feedback/FeedbackText.cs" />
     <Compile Include="../../Editor/Feedback/InstallErrorReport.cs" />
     <Compile Include="../../Editor/Packages/LegacyInstall.cs" />

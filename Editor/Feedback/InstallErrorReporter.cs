@@ -152,7 +152,7 @@ namespace OnAirDeck.UnityManager
         /// <summary>A report for a red message of the window that no install produced (the button next to it).</summary>
         public static InstallErrorReport FromMessage(string message)
         {
-            var report = new InstallErrorReport { Product = "Atelier Manager", ProductId = "com.studioraming.manager", Version = UpdateService.CurrentVersion ?? "", Reason = message ?? "" };
+            var report = new InstallErrorReport { Product = ManagerErrorLogic.ManagerName, ProductId = ManagerErrorLogic.ManagerId, Version = UpdateService.CurrentVersion ?? "", Reason = message ?? "" };
             report.AddOther(message ?? "");
             return report;
         }

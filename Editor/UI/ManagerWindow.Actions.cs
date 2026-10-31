@@ -292,7 +292,11 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 // A server refusal is kept per license in LicenseRenewalStatus; the detail pane shows it.
-                if (!IsNoticeRefusal(e)) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License renewal refused: " + e.Message);
+                if (!IsNoticeRefusal(e))
+                {
+                    ManagerErrorWatch.OfferCaught("Renewing a license", e);
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License renewal refused: " + e.Message);
+                }
             }
             finally
             {

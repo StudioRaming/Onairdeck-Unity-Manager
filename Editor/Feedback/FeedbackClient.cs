@@ -145,12 +145,18 @@ namespace OnAirDeck.UnityManager
                 kind = KindValue(kind),
                 message = FeedbackText.CutToChars(FeedbackText.Redact((message ?? "").Trim(), context), MaxMessage),
                 errorCode = FeedbackText.CutToChars(FeedbackText.Redact((errorCode ?? "").Trim(), context), MaxErrorCode),
-                consoleLog = FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? "", context), MaxConsoleLogBytes),
+                consoleLog = ConsoleLogAsSent(consoleLog, context),
                 unityVersion = env.UnityVersion,
                 managerVersion = env.ManagerVersion,
                 os = env.Os,
                 packages = FeedbackText.RedactEach(env.Packages, context),
             };
+        }
+
+        /// <summary>The consoleLog field as it is sent: redacted whole, then cut to <see cref="MaxConsoleLogBytes"/>. The ask screen previews this.</summary>
+        public static string ConsoleLogAsSent(string consoleLog, RedactContext context)
+        {
+            return FeedbackText.CutToBytes(FeedbackText.Redact(consoleLog ?? "", context), MaxConsoleLogBytes);
         }
 
         /// <summary>Why the message cannot be sent yet, or null when it can.</summary>

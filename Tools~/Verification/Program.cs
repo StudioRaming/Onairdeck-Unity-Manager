@@ -47,6 +47,7 @@ internal static class Program
             LegacyChecks.Run(Check, _project);
             DevChecks.Run(Check);
             InstallErrorChecks.Run(Check, _project);
+            ManagerErrorChecks.Run(Check);
         }
         finally
         {
