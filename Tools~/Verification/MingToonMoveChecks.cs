@@ -251,6 +251,17 @@ internal static class MingToonMoveChecks
         Require(ImportRequestLogic.PinnedByAny(Core, new[] { urp }));
         Require(!ImportRequestLogic.PinnedByAny(Core, new[] { extra, null }));
         Require(!ImportRequestLogic.PinnedByAny(Urp, new[] { urp }));
+        // Through a shared package the add-on depends on (it was already here, so the install skipped it): still pinned.
+        var addon = new PackageManifest { Name = "com.seller.addon", Version = "1.0.0" };
+        addon.VpmDependenciesRaw.Add(new KeyValuePair<string, string>("com.seller.shared", "2.0.0"));
+        var shared = new PackageManifest { Name = "com.seller.shared", Version = "2.0.0" };
+        shared.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(Core, "0.1.15"));
+        // A cycle in what the project holds ends the walk.
+        shared.VpmDependenciesRaw.Add(new KeyValuePair<string, string>("com.seller.addon", "1.0.0"));
+        Func<string, PackageManifest> read = name => name == "com.seller.shared" ? shared : name == "com.seller.addon" ? addon : null;
+        Require(ImportRequestLogic.PinnedByAny(Core, new[] { addon }, read));
+        Require(!ImportRequestLogic.PinnedByAny(Core, new[] { addon }));
+        Require(!ImportRequestLogic.PinnedByAny(Urp, new[] { addon }, read));
     }
 
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }

@@ -78,7 +78,7 @@ namespace OnAirDeck.UnityManager
                 {
                     var entry = entries[index];
                     // An add-on installed before brought the exact version it needs (or found it already here): its newest would break the pin.
-                    if (entry.PackageName.Length > 0 && (ImportRequestLogic.PinnedByAny(entry.PackageName, installed)
+                    if (entry.PackageName.Length > 0 && (ImportRequestLogic.PinnedByAny(entry.PackageName, installed, name => InstalledPackages.Read(root, name))
                         || InstalledPackages.InstalledVersion(root, entry.PackageName) != before[entry.PackageName])) continue;
                     _selectedKey = entry.Key;
                     var outcome = await InstallLicenseEntry(entry, willInstall);

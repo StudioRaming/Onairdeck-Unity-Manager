@@ -154,6 +154,15 @@ namespace OnAirDeck.UnityManager
                             installer = LegacyInstallerFile.ForLegacyCase(root, version.package_name, version, license.versions);
                             if (installer != null) zipFile = LegacyInstallerFile.OfVersion(version);
                         }
+            // The same package in two licenses (MingToon's free and commercial Core): the zip may come from one and the installer of its
+            // label only from the other.
+            if (installer == null && licenseId.Length > 0)
+                foreach (var license in licenses)
+                {
+                    if (installer != null || license == null || license.license_id == licenseId || !CarriesPackage(license, version.package_name)) continue;
+                    installer = LegacyInstallerFile.ForLegacyCase(root, version.package_name, version, license.versions);
+                    if (installer != null) zipFile = LegacyInstallerFile.OfVersion(version);
+                }
             var probes = new List<LegacyProbe>();
             foreach (var item in items)
             {
@@ -165,6 +174,13 @@ namespace OnAirDeck.UnityManager
                 });
             }
             return probes;
+        }
+
+        private static bool CarriesPackage(LicenseEntry license, string package)
+        {
+            foreach (var v in license.versions ?? new LicenseVersionEntry[0])
+                if (v != null && v.IsPackage && v.package_name == package) return true;
+            return false;
         }
 
         // The install did not happen: the moved old install goes back, and the message says so.

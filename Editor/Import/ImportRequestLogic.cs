@@ -201,17 +201,27 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// True when a package installed earlier in the run (<paramref name="installed"/>, as its package.json now reads) names
-        /// <paramref name="package"/> in its vpmDependencies: that install found or brought the version it pins, and the package's own
-        /// newest would break the pin. The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
+        /// True when a package installed earlier in the run (<paramref name="installed"/>, as its package.json now reads) depends on
+        /// <paramref name="package"/>, directly or through the packages it depends on (read with <paramref name="read"/>, the project's
+        /// package.json of a name): that install found or brought the version it pins, and the package's own newest would break the pin.
+        /// The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
         /// </summary>
-        public static bool PinnedByAny(string package, IEnumerable<PackageManifest> installed)
+        public static bool PinnedByAny(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
         {
             if (string.IsNullOrEmpty(package)) return false;
-            foreach (var manifest in installed)
-                if (manifest != null)
-                    foreach (var dependency in manifest.VpmDependenciesRaw)
-                        if (dependency.Key == package) return true;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var queue = new Queue<PackageManifest>();
+            foreach (var manifest in installed) if (manifest != null && seen.Add(manifest.Name ?? "")) queue.Enqueue(manifest);
+            while (queue.Count > 0)
+            {
+                foreach (var dependency in queue.Dequeue().VpmDependenciesRaw)
+                {
+                    if (dependency.Key == package) return true;
+                    if (read == null || !seen.Add(dependency.Key)) continue;
+                    var next = read(dependency.Key);
+                    if (next != null) queue.Enqueue(next);
+                }
+            }
             return false;
         }
 
