@@ -6,8 +6,8 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager
 {
     /// <summary>
-    /// The strip above the panes. One bar at a time, in this order: this PC released (v7), a message, a new purchase,
-    /// a Manager update, products with a newer version.
+    /// The strip above the panes. One bar at a time, in this order: this PC released (v7), a message, the project check (U3),
+    /// a new purchase, a Manager update, products with a newer version.
     /// </summary>
     internal sealed partial class ManagerWindow
     {
@@ -37,6 +37,13 @@ namespace OnAirDeck.UnityManager
                 if (_messageType != MessageType.Error) return DrawBar(body, Tone(_messageType), _message, close);
                 var report = new BarButton { Label = ManagerText.ErBtn, Kind = SRButtonKind.Secondary, Enabled = true, Click = ReportCurrentMessage };
                 return DrawBar(body, Tone(_messageType), _message, report, close);
+            }
+            // Conflicts can stop scripts from compiling: before purchases and updates.
+            if (_conflicts.Count > 0 || _checkMoves.Count + _checkRemovals.Count > 0)
+            {
+                var text = _conflicts.Count > 0 ? ManagerText.CfBar.Replace("{n}", _conflicts.Count.ToString()) : ManagerText.CfUndoBar.Replace("{n}", (_checkMoves.Count + _checkRemovals.Count).ToString());
+                var view = new BarButton { Label = ManagerText.CfView, Kind = SRButtonKind.Secondary, Enabled = true, Click = OpenProjectCheck };
+                return DrawBar(body, _conflicts.Count > 0 ? SRTone.Warning : SRTone.Info, text, view);
             }
             var unseen = PurchaseWatcher.UnseenCount;
             if (unseen > 0 && _session != null)

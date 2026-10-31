@@ -71,5 +71,10 @@ namespace OnAirDeck.UnityManager
         public string product = "";
         public long claimed_at;
         public long renewed_at;
+        /// <summary>Phase "waiting": the queued .unitypackage files whose import decides the result.</summary>
+        public string[] wait_imports = new string[0];
+        /// <summary>Phase "waiting": a hand-off install is done when this package is in at <see cref="package_version"/>.</summary>
+        public bool wait_package;
+        public long wait_since;
     }
 }

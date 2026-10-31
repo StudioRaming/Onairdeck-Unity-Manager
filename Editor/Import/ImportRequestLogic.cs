@@ -16,6 +16,8 @@ namespace OnAirDeck.UnityManager
         Declined,
         /// <summary>Not for this project, or the Manager could not start: the request is pending again.</summary>
         Release,
+        /// <summary>Not over yet: a queued .unitypackage import or a hand-off install decides it later (<see cref="ImportRequestLogic.Settle"/>).</summary>
+        Waiting,
     }
 
     /// <summary>The end of one claimed request: the report and, for a failure, its code (<c>[a-z0-9_]{1,40}</c>).</summary>
@@ -28,6 +30,26 @@ namespace OnAirDeck.UnityManager
         public static ImportOutcome Declined() { return new ImportOutcome { Report = ImportReport.Declined }; }
         public static ImportOutcome Release() { return new ImportOutcome { Report = ImportReport.Release }; }
         public static ImportOutcome Nothing() { return new ImportOutcome { Report = ImportReport.None }; }
+
+        /// <summary>The .unitypackage files of <paramref name="packagePaths"/> are queued; their imports decide.</summary>
+        public string[] WaitImports = new string[0];
+        /// <summary>A hand-off install: done once <see cref="WaitPackageName"/> is in at <see cref="WaitPackageVersion"/>.</summary>
+        public string WaitPackageName = "";
+        public string WaitPackageVersion = "";
+
+        public static ImportOutcome WaitForImports(IList<string> packagePaths)
+        {
+            var paths = new string[packagePaths.Count];
+            packagePaths.CopyTo(paths, 0);
+            return new ImportOutcome { Report = ImportReport.Waiting, WaitImports = paths };
+        }
+
+        public static ImportOutcome WaitForPackage(string name, string version)
+        {
+            return new ImportOutcome { Report = ImportReport.Waiting, WaitPackageName = name ?? "", WaitPackageVersion = version ?? "" };
+        }
+
+        public static ImportOutcome StillWaiting() { return new ImportOutcome { Report = ImportReport.Waiting }; }
 
         public static ImportOutcome Failed(string code)
         {
@@ -67,6 +89,9 @@ namespace OnAirDeck.UnityManager
         public const string PhaseClaimed = "claimed";
         public const string PhaseRunning = "running";
         public const string PhaseReport = "report";
+        public const string PhaseWaiting = "waiting";
+        /// <summary>A queued import or a hand-off that has not ended after this long is reported as interrupted.</summary>
+        public const long MaxWaitSeconds = 3600;
 
         private static readonly Regex Code = new Regex("^[a-z0-9_]{1,40}$", RegexOptions.Compiled);
 
@@ -191,10 +216,11 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// What a held request becomes when the Manager loads and finds its record. "report": post what was decided. "claimed": the
         /// confirm never answered (the editor closed), give it back. "running": a package install whose package is now in at its
-        /// version is done (the reload a package install causes ended the code that awaited it); anything else was interrupted. A
-        /// record older than <see cref="MaxRecordAgeSeconds"/> or without ids is forgotten (null).
+        /// version is done (the reload a package install causes ended the code that awaited it); anything else was interrupted.
+        /// "waiting": <see cref="Settle"/> (possibly still waiting). A record older than <see cref="MaxRecordAgeSeconds"/> or without
+        /// ids is forgotten (null).
         /// </summary>
-        public static ImportOutcome Resume(ImportClaim claim, long now, Func<string, string> installedVersion)
+        public static ImportOutcome Resume(ImportClaim claim, long now, Func<string, string> installedVersion, Func<string, string> importResult = null)
         {
             if (claim == null || string.IsNullOrEmpty(claim.request_id) || string.IsNullOrEmpty(claim.claim_id)) return null;
             if (claim.claimed_at > 0 && now - claim.claimed_at > MaxRecordAgeSeconds) return null;
@@ -206,6 +232,8 @@ namespace OnAirDeck.UnityManager
                     return report == ImportReport.Failed ? ImportOutcome.Failed(claim.code) : new ImportOutcome { Report = report };
                 case PhaseClaimed:
                     return ImportOutcome.Release();
+                case PhaseWaiting:
+                    return Settle(claim, now, importResult, installedVersion);
                 case PhaseRunning:
                     if (!string.IsNullOrEmpty(claim.package_name) && !string.IsNullOrEmpty(claim.package_version) && installedVersion != null
                         && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase))
@@ -214,6 +242,39 @@ namespace OnAirDeck.UnityManager
                 default:
                     return null;
             }
+        }
+
+        /// <summary>
+        /// A waiting request's result, or <see cref="ImportOutcome.StillWaiting"/>. Imports (<paramref name="importResult"/> gives
+        /// pending, imported, cancelled, failed, missing or "" for unknown): all imported is done; one cancelled in Unity's import
+        /// window is failed "cancelled"; one failed or missing is failed "import_failed"; one this editor session no longer knows (an
+        /// editor restart) is failed "interrupted". A hand-off: done once the package is in at the version. Anything still open after
+        /// <see cref="MaxWaitSeconds"/> is failed "interrupted".
+        /// </summary>
+        public static ImportOutcome Settle(ImportClaim claim, long now, Func<string, string> importResult, Func<string, string> installedVersion)
+        {
+            var timedOut = claim.wait_since > 0 && now - claim.wait_since > MaxWaitSeconds;
+            if (claim.wait_package)
+            {
+                if (installedVersion != null && !string.IsNullOrEmpty(claim.package_name)
+                    && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase))
+                    return ImportOutcome.Done();
+                return timedOut ? ImportOutcome.Failed("interrupted") : ImportOutcome.StillWaiting();
+            }
+            var imports = claim.wait_imports ?? new string[0];
+            if (imports.Length == 0) return ImportOutcome.Done();
+            var pending = false;
+            foreach (var path in imports)
+            {
+                var result = importResult != null ? importResult(path) ?? "" : "";
+                if (result == "pending") { pending = true; continue; }
+                if (result == "imported") continue;
+                if (result == "cancelled") return ImportOutcome.Failed("cancelled");
+                if (result == "failed" || result == "missing") return ImportOutcome.Failed("import_failed");
+                return ImportOutcome.Failed("interrupted");
+            }
+            if (!pending) return ImportOutcome.Done();
+            return timedOut ? ImportOutcome.Failed("interrupted") : ImportOutcome.StillWaiting();
         }
 
         /// <summary>

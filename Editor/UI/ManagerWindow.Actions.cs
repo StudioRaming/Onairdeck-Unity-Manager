@@ -134,7 +134,8 @@ namespace OnAirDeck.UnityManager
                     SetMessage(null, MessageType.None);
                 }
                 MarkDirty();
-                return ImportOutcome.Done();
+                // A .unitypackage is only queued here; its import (Unity's import window) ends later.
+                return summary.QueuedPackages.Count > 0 ? ImportOutcome.WaitForImports(summary.QueuedPackages) : ImportOutcome.Done();
             }
             catch (OperationCanceledException)
             {
@@ -186,7 +187,8 @@ namespace OnAirDeck.UnityManager
                 _focusPackage = "";
                 SessionState.EraseString(FocusKey);
                 SetMessage(report.Describe(), MessageType.Info);
-                return ImportOutcome.Done();
+                // A hand-off: the product's own installer puts the package in after the next reload.
+                return report.HandedOff.Length > 0 ? ImportOutcome.WaitForPackage(version.package_name, version.package_version) : ImportOutcome.Done();
             }
             catch (LegacyDeclinedException)
             {
@@ -258,7 +260,9 @@ namespace OnAirDeck.UnityManager
                     SetMessage(null, MessageType.None);
                 }
                 MarkDirty();
-                return ImportOutcome.Done();
+                // The files are in, but without its license file the product does not run here (device limit or Manager too old).
+                if (summary.LicenseRefused) return ImportOutcome.Failed("device_limit");
+                return summary.QueuedPackages.Count > 0 ? ImportOutcome.WaitForImports(summary.QueuedPackages) : ImportOutcome.Done();
             }
             catch (OperationCanceledException)
             {

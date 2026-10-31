@@ -19,6 +19,14 @@ namespace OnAirDeck.UnityManager
         // One "path<TAB>product<TAB>version<TAB>productId" line per queued package that names its product (see InstallErrorWatch).
         private const string ContextKey = "OnAirDeck.UnityManager.PendingImportContexts";
         private const string RecordsKey = "OnAirDeck.UnityManager.PendingImportRecords";
+        // "path<TAB>result" lines of the last finished imports (newest last), for a caller that waits on one (the one-button import).
+        private const string ResultsKey = "OnAirDeck.UnityManager.ImportResults";
+        private const int MaxResults = 50;
+        public const string ResultPending = "pending";
+        public const string ResultImported = "imported";
+        public const string ResultCancelled = "cancelled";
+        public const string ResultFailed = "failed";
+        public const string ResultMissing = "missing";
         private static bool _importing;
 
         /// <summary>Raised after an install record was saved (the window re-reads which versions are installed).</summary>
@@ -102,6 +110,32 @@ namespace OnAirDeck.UnityManager
             get { return Load().Count; }
         }
 
+        /// <summary>
+        /// How the import of <paramref name="packagePath"/> ended: <see cref="ResultPending"/> while it is queued, imported, cancelled,
+        /// failed or missing (the file was gone), or "" when this editor session knows nothing of it.
+        /// </summary>
+        public static string ResultOf(string packagePath)
+        {
+            if (Load().Contains(packagePath)) return ResultPending;
+            var result = "";
+            foreach (var line in SessionState.GetString(ResultsKey, "").Split('\n'))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab > 0 && line.Substring(0, tab) == packagePath) result = line.Substring(tab + 1);
+            }
+            return result;
+        }
+
+        private static void RememberResult(string packagePath, string result)
+        {
+            var lines = new List<string>();
+            foreach (var line in SessionState.GetString(ResultsKey, "").Split('\n'))
+                if (line.Length > 0 && !line.StartsWith(packagePath + "\t", StringComparison.Ordinal)) lines.Add(line);
+            lines.Add(packagePath + "\t" + result);
+            if (lines.Count > MaxResults) lines.RemoveRange(0, lines.Count - MaxResults);
+            SessionState.SetString(ResultsKey, string.Join("\n", lines.ToArray()));
+        }
+
         private static void ProcessNext()
         {
             if (_importing) return;
@@ -109,6 +143,7 @@ namespace OnAirDeck.UnityManager
             while (list.Count > 0 && !File.Exists(list[0]))
             {
                 FinishRecord(list[0], false);
+                RememberResult(list[0], ResultMissing);
                 list.RemoveAt(0);
             }
             Save(list);
@@ -137,7 +172,7 @@ namespace OnAirDeck.UnityManager
             string[] context;
             if (HeadContext(out context)) InstallErrorWatch.ImportFinished(Load()[0], context[0], context[1]);
             ReimportUnchanged();
-            Finish("Imported " + packageName, false);
+            Finish("Imported " + packageName, false, ResultImported);
         }
 
         private static List<PackageAsset> AssetsOf(string packagePath)
@@ -189,7 +224,7 @@ namespace OnAirDeck.UnityManager
         {
             string[] context;
             if (HeadContext(out context)) InstallErrorWatch.End(Load()[0], context[0], context[1]);
-            Finish("Import of " + packageName + " was cancelled", true);
+            Finish("Import of " + packageName + " was cancelled", true, ResultCancelled);
         }
 
         private static void OnFailed(string packageName, string error)
@@ -202,10 +237,10 @@ namespace OnAirDeck.UnityManager
                 report.AddOther(report.Reason);
                 InstallErrorReporter.Offer(report);
             }
-            Finish("Import of " + packageName + " failed: " + error, true);
+            Finish("Import of " + packageName + " failed: " + error, true, ResultFailed);
         }
 
-        private static void Finish(string message, bool warn)
+        private static void Finish(string message, bool warn, string result)
         {
             AssetDatabase.importPackageCompleted -= OnCompleted;
             AssetDatabase.importPackageCancelled -= OnCancelled;
@@ -222,6 +257,7 @@ namespace OnAirDeck.UnityManager
                 if (contexts.Remove(done)) SaveContexts(contexts);
                 // warn is a cancelled or failed import: the version did not go in, so its record is dropped.
                 FinishRecord(done, !warn);
+                RememberResult(done, result);
                 // Only our own cache files are deleted; never anything else.
                 if (PathSafety.IsInside(Downloader.CacheRoot, done)) Downloader.TryDeleteFolder(Path.GetDirectoryName(done));
             }

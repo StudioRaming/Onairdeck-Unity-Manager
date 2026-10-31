@@ -21,7 +21,7 @@ namespace OnAirDeck.UnityManager
     /// </remarks>
     internal sealed partial class ManagerWindow : EditorWindow
     {
-        private enum View { Main = 0, Devices = 1, Ask = 2 }
+        private enum View { Main = 0, Devices = 1, Ask = 2, Conflicts = 3 }
 
         // Unity serializes an EditorWindow's private fields across script reloads. Everything that describes in-flight work
         // is [NonSerialized]: the awaiting code is gone after a reload, so a restored "busy" flag would leave the window stuck.
@@ -134,6 +134,7 @@ namespace OnAirDeck.UnityManager
             OnEnablePackages();
             HookHandoff();
             CheckForUpdate();
+            StartConflictScan();
         }
 
         private void OnDisable()
@@ -152,6 +153,7 @@ namespace OnAirDeck.UnityManager
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelWork();
+            StopConflictScan();
             EditorApplication.update -= PollApplyingUpdate;
             EditorApplication.update -= SignInTick;
             UnhookHandoff();
@@ -243,6 +245,7 @@ namespace OnAirDeck.UnityManager
             else if (notice != null && notice.Kind == NoticeKind.DeviceLimit) DrawDeviceLimit(body, notice);
             else if (_view == (int)View.Devices) DrawDeviceManager(body);
             else if (_view == (int)View.Ask) DrawAsk(body);
+            else if (_view == (int)View.Conflicts) DrawConflicts(body);
             else if (_entries == null) { if (_loadFailed) DrawLoadError(body); else DrawLoading(body); }
             else if (_entries.Count == 0 && !_loading) DrawEmpty(body);
             else DrawMain(body);
@@ -321,6 +324,7 @@ namespace OnAirDeck.UnityManager
             _licenses = response.licenses ?? new LicenseEntry[0];
             _loadFailed = false;
             RefreshInstalledState();
+            ScanIfLicensesChanged();
         }
 
         /// <summary>Re-reads what this project has installed (package folders and product markers) and re-checks version mismatches.</summary>

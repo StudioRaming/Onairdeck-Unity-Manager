@@ -13,6 +13,7 @@ internal static class ImportChecks
         check("import pick: newest usable Unity request; another target, unknown kind, missing subject, expired or skipped ones are passed over", Pick);
         check("import confirm: the refund warning only for a never-downloaded purchase with Unity files; Import goes on, Cancel declines, Not this project releases", Confirm);
         check("import resume: a recorded report is posted again, an open confirm is released, a package install is done only when that version is in, else interrupted; old records are forgotten", Resume);
+        check("import waiting: a queued .unitypackage is done only when every import is in; cancelled, failed or forgotten imports fail with their code; a hand-off is done when its version is in; an hour without an end is interrupted", Waiting);
         check("import errors: 429, 5xx and no answer keep the request for later; 400, 401, 404, 409 and 410 drop it; failure codes match [a-z0-9_]{1,40}", Errors);
     }
 
@@ -132,6 +133,42 @@ internal static class ImportChecks
         Equal(null, ImportRequestLogic.Resume(claim, t, installed));
         Equal(null, ImportRequestLogic.Resume(new ImportClaim { request_id = "r", phase = ImportRequestLogic.PhaseClaimed }, t, installed));
         Equal(null, ImportRequestLogic.Resume(null, t, installed));
+    }
+
+    private static void Waiting()
+    {
+        const long t = 3000000;
+        var results = new Dictionary<string, string> { { "a", "imported" }, { "b", "pending" }, { "c", "cancelled" }, { "d", "failed" }, { "e", "missing" } };
+        Func<string, string> result = p => results.ContainsKey(p) ? results[p] : "";
+        Func<string, string> installed = name => name == "com.seller.tool" ? "2.0.0" : "";
+        var claim = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseWaiting, claimed_at = t - 10, wait_since = t - 10 };
+
+        claim.wait_imports = new[] { "a" };
+        Equal(ImportReport.Done, ImportRequestLogic.Settle(claim, t, result, installed).Report);
+        claim.wait_imports = new[] { "a", "b" };
+        Equal(ImportReport.Waiting, ImportRequestLogic.Settle(claim, t, result, installed).Report);
+        claim.wait_imports = new[] { "a", "c" };
+        Equal("cancelled", ImportRequestLogic.Settle(claim, t, result, installed).Code);
+        claim.wait_imports = new[] { "d" };
+        Equal("import_failed", ImportRequestLogic.Settle(claim, t, result, installed).Code);
+        claim.wait_imports = new[] { "e" };
+        Equal("import_failed", ImportRequestLogic.Settle(claim, t, result, installed).Code);
+        claim.wait_imports = new[] { "unknown" };
+        Equal("interrupted", ImportRequestLogic.Settle(claim, t, result, installed).Code);
+        claim.wait_imports = new[] { "b" };
+        claim.wait_since = t - ImportRequestLogic.MaxWaitSeconds - 1;
+        Equal("interrupted", ImportRequestLogic.Settle(claim, t, result, installed).Code);
+        // Resume after a reload goes through the same rules.
+        claim.wait_since = t - 10;
+        Equal(ImportReport.Waiting, ImportRequestLogic.Resume(claim, t, installed, result).Report);
+
+        var handoff = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseWaiting, claimed_at = t, wait_since = t, wait_package = true, package_name = "com.seller.tool", package_version = "2.0.0" };
+        Equal(ImportReport.Done, ImportRequestLogic.Settle(handoff, t, result, installed).Report);
+        handoff.package_version = "2.1.0";
+        Equal(ImportReport.Waiting, ImportRequestLogic.Settle(handoff, t, result, installed).Report);
+        handoff.wait_since = t - ImportRequestLogic.MaxWaitSeconds - 1;
+        Equal("interrupted", ImportRequestLogic.Settle(handoff, t, result, installed).Code);
+        Equal(ImportReport.Waiting, ImportOutcome.WaitForImports(new List<string> { "x" }).Report);
     }
 
     private static void Errors()

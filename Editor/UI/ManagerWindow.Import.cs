@@ -66,19 +66,23 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The list entry a request is for: the purchase of the item (by item id, else its product), else the license the item
-        /// grants or the license of a license request, when that license has something to install here.
+        /// The list entry a request is for: the purchase of exactly that item, else the license the item grants or the license of a
+        /// license request, when that license has something to install here. The list shows one row per product, so a second line
+        /// item of the same product gets an entry of its own here: another item of the product must never be downloaded in its
+        /// place (the first download of an item ends its refund).
         /// </summary>
         private CatalogEntry FindImportEntry(ImportRequest request)
         {
             if (_entries == null) return null;
-            if (request.kind == "item")
+            if (request.kind == "item" && _purchases != null)
             {
-                foreach (var entry in _entries)
-                    if (entry.Purchase != null && entry.Purchase.item_id == request.item_id) return entry;
-                if (!string.IsNullOrEmpty(request.product_id))
+                foreach (var item in _purchases)
+                {
+                    if (item == null || item.item_id != request.item_id || !item.ShownInUnity || !item.HasUnityFiles) continue;
                     foreach (var entry in _entries)
-                        if (entry.Purchase != null && entry.Purchase.product_id == request.product_id) return entry;
+                        if (entry.Purchase != null && ReferenceEquals(entry.Purchase, item)) return entry;
+                    return new CatalogEntry { Key = "import:" + item.item_id, Kind = FavoriteKind.Purchase, Purchase = item, Name = item.name ?? "" };
+                }
             }
             var licenseIds = new System.Collections.Generic.List<string>();
             if (!string.IsNullOrEmpty(request.license_id)) licenseIds.Add(request.license_id);

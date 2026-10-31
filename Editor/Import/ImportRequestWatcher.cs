@@ -30,6 +30,10 @@ namespace OnAirDeck.UnityManager
         private static bool _focusRequested;
         // The request whose install runs now (renewed from the update tick without reading the file every frame).
         private static ImportClaim _running;
+        // A request whose queued import or hand-off has not ended yet (phase "waiting"), checked from the update tick.
+        private static ImportClaim _waiting;
+        private static bool _waitingLoaded;
+        private static long _lastSettle;
 
         /// <summary>The confirm (title, message, ok, cancel, alt → 0, 1, 2). Tests replace it; everything else calls the real dialog.</summary>
         internal static Func<string, string, string, string, string, int> ConfirmDialog = EditorUtility.DisplayDialogComplex;
@@ -72,15 +76,16 @@ namespace OnAirDeck.UnityManager
         {
             if (Paused) return;
             var active = UnityEditorInternal.InternalEditorUtility.isApplicationActive;
-            var regained = active && !_wasActive;
+            // A focus return within the 15 s floor is kept until the poll it asks for can start.
+            if (active && !_wasActive) _focusRequested = true;
             _wasActive = active;
 
             RenewIfDue();
             if (_busy) return;
+            if (SettleWaiting()) return;
 
             ImportRequestLogic.Trigger trigger;
             if (!_loadChecked) trigger = ImportRequestLogic.Trigger.Load;
-            else if (regained) trigger = ImportRequestLogic.Trigger.EditorFocus;
             else if (_focusRequested) trigger = ImportRequestLogic.Trigger.WindowFocus;
             else trigger = ImportRequestLogic.Trigger.Periodic;
 
@@ -126,8 +131,9 @@ namespace OnAirDeck.UnityManager
                 var held = LoadClaim();
                 if (held != null)
                 {
-                    var outcome = ImportRequestLogic.Resume(held, Now(), name => InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, name));
+                    var outcome = ImportRequestLogic.Resume(held, Now(), InstalledVersion, PackageImportQueue.ResultOf);
                     if (outcome == null) DeleteClaim();
+                    else if (outcome.Report == ImportReport.Waiting) _waiting = held;
                     else await FinishAsync(token, held, outcome);
                     return;
                 }
@@ -185,6 +191,7 @@ namespace OnAirDeck.UnityManager
                 ManagerText.ImpImport, ManagerText.ImpCancel, ManagerText.ImpNotHere);
             var outcome = ImportRequestLogic.FromChoice(choice);
             if (choice == (int)ImportChoice.NotThisProject) Skip(request.request_id, long.MaxValue / 2);
+            if (outcome == null && !await StillHeldAsync(token, claim)) return;
             if (outcome == null)
             {
                 claim.phase = ImportRequestLogic.PhaseRunning;
@@ -208,7 +215,92 @@ namespace OnAirDeck.UnityManager
                 }
                 if (outcome == null) outcome = ImportOutcome.Failed("install_failed");
             }
+            if (outcome.Report == ImportReport.Waiting)
+            {
+                // A .unitypackage import or a hand-off ends later (maybe after a reload): wait for it before reporting.
+                claim.phase = ImportRequestLogic.PhaseWaiting;
+                claim.wait_imports = outcome.WaitImports ?? new string[0];
+                claim.wait_package = outcome.WaitPackageName.Length > 0;
+                if (claim.wait_package)
+                {
+                    claim.package_name = outcome.WaitPackageName;
+                    claim.package_version = outcome.WaitPackageVersion;
+                }
+                claim.wait_since = Now();
+                SaveClaim(claim);
+                _waiting = claim;
+                return;
+            }
             await FinishAsync(token, claim, outcome);
+        }
+
+        /// <summary>
+        /// After a confirm that may have stayed open past the lease: renew before anything is installed. A lost lease (another
+        /// Manager took it) or a request that is gone stops here quietly; with the server unreachable, a confirm answered within
+        /// the lease goes on.
+        /// </summary>
+        private static async Task<bool> StillHeldAsync(string token, ImportClaim claim)
+        {
+            try
+            {
+                await ImportRequestApi.PostAsync(token, "renew", claim.request_id, claim.claim_id, "");
+                claim.renewed_at = Now();
+                return true;
+            }
+            catch (ImportRequestException e)
+            {
+                if (ImportRequestLogic.OnError(e.Status) == ImportErrorHandling.RetryLater && Now() - claim.claimed_at < ImportRequestLogic.RenewEverySeconds + 240) return true;
+                DeleteClaim();
+                return false;
+            }
+        }
+
+        /// <summary>Settles a waiting request now (EditMode tests). True when nothing waits any more (it was reported or there was none).</summary>
+        internal static async Task<bool> SettleNowAsync(string token)
+        {
+            var claim = _waiting;
+            if (claim == null) return true;
+            var outcome = ImportRequestLogic.Settle(claim, Now(), PackageImportQueue.ResultOf, InstalledVersion);
+            if (outcome.Report == ImportReport.Waiting) return false;
+            _waiting = null;
+            await FinishAsync(token, claim, outcome);
+            return true;
+        }
+
+        /// <summary>Checks a waiting request every 2 s (local state only) and reports it once its import or hand-off ended. True while it reports.</summary>
+        private static bool SettleWaiting()
+        {
+            if (!_waitingLoaded)
+            {
+                _waitingLoaded = true;
+                var held = LoadClaim();
+                if (held != null && held.phase == ImportRequestLogic.PhaseWaiting) _waiting = held;
+            }
+            var claim = _waiting;
+            if (claim == null) return false;
+            var now = Now();
+            if (now - _lastSettle < 2) return false;
+            _lastSettle = now;
+            var outcome = ImportRequestLogic.Settle(claim, now, PackageImportQueue.ResultOf, InstalledVersion);
+            if (outcome.Report == ImportReport.Waiting) return false;
+            var session = SessionStore.Load();
+            if (session == null || string.IsNullOrEmpty(session.token)) return false;
+            _waiting = null;
+            _busy = true;
+            FinishAndRelease(session.token, claim, outcome).ContinueWith(t => { var ignored = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            return true;
+        }
+
+        private static async Task FinishAndRelease(string token, ImportClaim claim, ImportOutcome outcome)
+        {
+            try { await FinishAsync(token, claim, outcome); }
+            catch (Exception) { /* SessionExpired or offline: the record stays and the next poll posts it */ }
+            finally { _busy = false; }
+        }
+
+        private static string InstalledVersion(string package)
+        {
+            return InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, package);
         }
 
         /// <summary>Records the result first (a reload may end the request), then posts it; the record goes once the server took it or refused it for good.</summary>
@@ -238,7 +330,7 @@ namespace OnAirDeck.UnityManager
         /// <summary>An install that runs longer than the lease keeps it: renew every 5 min while the record says running.</summary>
         private static void RenewIfDue()
         {
-            var claim = _running;
+            var claim = _running ?? _waiting;
             if (_renewing || claim == null) return;
             var now = Now();
             if (now - claim.renewed_at < ImportRequestLogic.RenewEverySeconds) return;

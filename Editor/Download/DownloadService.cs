@@ -15,6 +15,8 @@ namespace OnAirDeck.UnityManager
         public int Extracted;
         public int SkippedUnsafe;
         public int PackagesQueued;
+        /// <summary>The .unitypackage files handed to <see cref="PackageImportQueue"/> (their import ends later; see <see cref="PackageImportQueue.ResultOf"/>).</summary>
+        public List<string> QueuedPackages = new List<string>();
         public bool LicenseWritten;
         public bool LicenseRefused;   // the server refused the license for this PC (device limit or Manager too old); see DeviceLimitNotice
         public string Folder;
@@ -179,6 +181,7 @@ namespace OnAirDeck.UnityManager
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;
+                    summary.QueuedPackages.AddRange(packages);
                     PackageImportQueue.Enqueue(packages, interactiveImport, record, product, version, productId);
                 }
                 else if (record != null) PackageImportQueue.SaveRecord(record);

@@ -203,6 +203,7 @@ namespace OnAirDeck.UnityManager
             // A click on Refresh also re-reads what is installed, so the chips never show a stale state.
             RefreshInstalledState();
             LoadEntries(true);
+            StartConflictScan();
         }
 
         // ---------- the Manager's own update ----------

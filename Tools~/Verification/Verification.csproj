@@ -35,6 +35,9 @@
     <Compile Include="InstallErrorChecks.cs" />
     <Compile Include="ManagerErrorChecks.cs" />
     <Compile Include="ImportChecks.cs" />
+    <Compile Include="ConflictChecks.cs" />
+    <Compile Include="../../Editor/Conflicts/ProjectConflicts.cs" />
+    <Compile Include="../../Editor/Conflicts/ProjectConflictFixes.cs" />
     <Compile Include="../../Editor/Import/ImportRequestLogic.cs" />
     <Compile Include="../../Editor/Import/ImportRequestModels.cs" />
     <Compile Include="../../Editor/Feedback/ManagerErrorLogic.cs" />
