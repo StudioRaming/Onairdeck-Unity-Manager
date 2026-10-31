@@ -183,6 +183,8 @@ namespace OnAirDeck.UnityManager
                     record = null;
                 }
                 if (beforeImports != null) await beforeImports(summary);
+                // A cancel pressed while the license step ran stops here: nothing is queued, the package downloads are cleaned up.
+                cancel.ThrowIfCancellationRequested();
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;
