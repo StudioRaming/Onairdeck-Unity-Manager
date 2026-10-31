@@ -110,7 +110,10 @@ namespace OnAirDeck.UnityManager
                 total += buttonWidths[i] + SRMetrics.Space6;
             }
             var textWidth = Mathf.Max(80f, body.width - 2f * pad - total);
-            var textHeight = SRStyles.Small.CalcHeight(new GUIContent(text), textWidth);
+            // Measured with the wrapping style it is drawn with: a text longer than one line makes the bar taller, not clipped.
+            var style = new GUIStyle(SRStyles.Small) { wordWrap = true };
+            style.normal.textColor = colors.Text;
+            var textHeight = style.CalcHeight(new GUIContent(text), textWidth);
             var height = Mathf.Max(SRMetrics.ButtonLarge + 2f * SRMetrics.Space6, textHeight + 2f * SRMetrics.Space6);
             var bar = new Rect(body.x, body.y, body.width, height);
 
@@ -120,8 +123,6 @@ namespace OnAirDeck.UnityManager
                 SRTheme.Fill(new Rect(bar.x, bar.yMax - 1f, bar.width, 1f), colors.Border);
             }
             var label = new Rect(bar.x + pad, bar.y + SRMetrics.Space6, textWidth, textHeight);
-            var style = new GUIStyle(SRStyles.Small) { wordWrap = true };
-            style.normal.textColor = colors.Text;
             GUI.Label(label, text, style);
 
             var x = bar.xMax - pad;

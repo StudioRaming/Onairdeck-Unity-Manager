@@ -70,7 +70,7 @@ namespace OnAirDeck.UnityManager
             foreach (var entry in entries)
                 if (entry.PackageName.Length > 0) before[entry.PackageName] = InstalledPackages.InstalledVersion(root, entry.PackageName);
             ImportOutcome last = null;
-            var installed = new List<PackageManifest>();
+            var installed = new List<string>();
             EditorApplication.LockReloadAssemblies();
             try
             {
@@ -83,7 +83,9 @@ namespace OnAirDeck.UnityManager
                         var now = InstalledPackages.InstalledVersion(root, entry.PackageName);
                         // A package installed before needs an exact version of this one: that version, never this one's newest. Pins that
                         // disagree, or a pinned version this license does not offer, end the run: installing anything else breaks a pin.
-                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, installed, name => InstalledPackages.Read(root, name));
+                        // Read from disk now: a later step may have replaced a package installed before.
+                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, installed.ConvertAll(name => InstalledPackages.Read(root, name)),
+                            name => InstalledPackages.Read(root, name));
                         if (pins.Count > 0)
                         {
                             if (pins.Count == 1 && now == pins[0]) continue;   // the add-on found or brought it
@@ -101,7 +103,7 @@ namespace OnAirDeck.UnityManager
                     _selectedKey = entry.Key;
                     var outcome = pinnedRow != null ? await DoInstallAsync(entry, pinnedRow, true, willInstall) : await InstallLicenseEntry(entry, willInstall);
                     if (outcome.Report != ImportReport.Done) return outcome;
-                    if (entry.PackageName.Length > 0) installed.Add(InstalledPackages.Read(root, entry.PackageName));
+                    if (entry.PackageName.Length > 0) installed.Add(entry.PackageName);
                     last = outcome;
                 }
             }
