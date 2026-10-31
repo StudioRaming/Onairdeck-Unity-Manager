@@ -201,28 +201,31 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// True when a package installed earlier in the run (<paramref name="installed"/>, as its package.json now reads) depends on
-        /// <paramref name="package"/>, directly or through the packages it depends on (read with <paramref name="read"/>, the project's
-        /// package.json of a name): that install found or brought the version it pins, and the package's own newest would break the pin.
-        /// The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
+        /// The exact version of <paramref name="package"/> that a package installed earlier in the run (<paramref name="installed"/>, as
+        /// its package.json now reads) needs, directly or through the packages it depends on (followed also behind a range, read with
+        /// <paramref name="read"/>, the project's package.json of a name); null when nothing installed in the run pins it. The import
+        /// then installs that version, not the package's own newest, which would break the pin. The name alone decides nothing
+        /// (com.vendor.tool.extra may not depend on com.vendor.tool).
         /// </summary>
-        public static bool PinnedByAny(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
+        public static string PinnedVersion(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
         {
-            if (string.IsNullOrEmpty(package)) return false;
+            if (string.IsNullOrEmpty(package)) return null;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var queue = new Queue<PackageManifest>();
             foreach (var manifest in installed) if (manifest != null && seen.Add(manifest.Name ?? "")) queue.Enqueue(manifest);
             while (queue.Count > 0)
             {
-                foreach (var dependency in queue.Dequeue().VpmDependenciesRaw)
+                var manifest = queue.Dequeue();
+                foreach (var dependency in manifest.VpmDependencies)
+                    if (dependency.Key == package) return dependency.Value;
+                foreach (var name in manifest.VpmDependencyNames)
                 {
-                    if (dependency.Key == package) return true;
-                    if (read == null || !seen.Add(dependency.Key)) continue;
-                    var next = read(dependency.Key);
+                    if (read == null || !seen.Add(name)) continue;
+                    var next = read(name);
                     if (next != null) queue.Enqueue(next);
                 }
             }
-            return false;
+            return null;
         }
 
         /// <summary>The confirm's answer: Import goes on (null), Cancel is declined, Not this project gives the request back.</summary>

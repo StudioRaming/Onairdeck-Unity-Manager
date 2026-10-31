@@ -20,7 +20,7 @@ internal static class MingToonMoveChecks
         check("vcc move: undo puts the entries back at the folder's current version (no downgrade by the resolver); a package listed again refuses and changes nothing; keep ends the offer", UndoAndKeep(project));
         check("vcc move: nothing listed changes nothing; a file that is not JSON refuses", Refusals);
         check("license rows: the free and the commercial Core license are one row (the commercial one, its zips taken from the unlimited license when it has a device limit, each label's installer from whichever license has one); the folded license's keys stay on the row; a device-limited or other-package license keeps its own row", MergeRows);
-        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a package is skipped after one that pins it, never by its name alone", Order);
+        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a package gets the exact version one installed before needs, also through shared packages and behind a range, never by its name alone", Order);
     }
 
     // ------------------------------------------------------------ G5
@@ -243,25 +243,35 @@ internal static class MingToonMoveChecks
         Equal("1,0,3,2", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, Urp, "", "com.studioraming.mlc" })));
         Equal("0,1", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, "com.studioraming.mingtoonx" })));
         Equal("0", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core })));
-        // A package's own step is skipped once a package installed earlier in the run names it in vpmDependencies (it found or
-        // brought the version it pins); a name that only looks like an add-on decides nothing.
-        var urp = new PackageManifest { Name = Urp, Version = "0.1.16" };
-        urp.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(Core, "0.1.16"));
-        var extra = new PackageManifest { Name = Core + ".extra", Version = "1.0.0" };
-        Require(ImportRequestLogic.PinnedByAny(Core, new[] { urp }));
-        Require(!ImportRequestLogic.PinnedByAny(Core, new[] { extra, null }));
-        Require(!ImportRequestLogic.PinnedByAny(Urp, new[] { urp }));
-        // Through a shared package the add-on depends on (it was already here, so the install skipped it): still pinned.
-        var addon = new PackageManifest { Name = "com.seller.addon", Version = "1.0.0" };
-        addon.VpmDependenciesRaw.Add(new KeyValuePair<string, string>("com.seller.shared", "2.0.0"));
-        var shared = new PackageManifest { Name = "com.seller.shared", Version = "2.0.0" };
-        shared.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(Core, "0.1.15"));
-        // A cycle in what the project holds ends the walk.
-        shared.VpmDependenciesRaw.Add(new KeyValuePair<string, string>("com.seller.addon", "1.0.0"));
+        // The version a package installed earlier in the run needs, directly or through what it depends on; a name that only
+        // looks like an add-on decides nothing.
+        var urp = Manifest(Urp, "0.1.16", Core, "0.1.16");
+        var extra = Manifest(Core + ".extra", "1.0.0");
+        Equal("0.1.16", ImportRequestLogic.PinnedVersion(Core, new[] { urp }));
+        Equal(null, ImportRequestLogic.PinnedVersion(Core, new[] { extra, null }));
+        Equal(null, ImportRequestLogic.PinnedVersion(Urp, new[] { urp }));
+        // Through a shared package the add-on depends on (already here, so the install skipped it), with a cycle that ends the walk.
+        var addon = Manifest("com.seller.addon", "1.0.0", "com.seller.shared", "2.0.0");
+        var shared = Manifest("com.seller.shared", "2.0.0", Core, "0.1.15", "com.seller.addon", "1.0.0");
         Func<string, PackageManifest> read = name => name == "com.seller.shared" ? shared : name == "com.seller.addon" ? addon : null;
-        Require(ImportRequestLogic.PinnedByAny(Core, new[] { addon }, read));
-        Require(!ImportRequestLogic.PinnedByAny(Core, new[] { addon }));
-        Require(!ImportRequestLogic.PinnedByAny(Urp, new[] { addon }, read));
+        Equal("0.1.15", ImportRequestLogic.PinnedVersion(Core, new[] { addon }, read));
+        Equal(null, ImportRequestLogic.PinnedVersion(Core, new[] { addon }));
+        // Behind a range: the range is followed, only the exact pin counts.
+        var ranged = PackageZip.ParseManifest("{\"name\":\"com.seller.ranged\",\"version\":\"1.0.0\",\"vpmDependencies\":{\"com.seller.shared\":\"^2.0.0\"}}", false);
+        Equal(0, ranged.VpmDependencies.Count);
+        Equal("0.1.15", ImportRequestLogic.PinnedVersion(Core, new[] { ranged }, read));
+    }
+
+    private static PackageManifest Manifest(string name, string version, params string[] pins)
+    {
+        var manifest = new PackageManifest { Name = name, Version = version };
+        for (var i = 0; i + 1 < pins.Length; i += 2)
+        {
+            manifest.VpmDependencies.Add(new KeyValuePair<string, string>(pins[i], pins[i + 1]));
+            manifest.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(pins[i], pins[i + 1]));
+            manifest.VpmDependencyNames.Add(pins[i]);
+        }
+        return manifest;
     }
 
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }

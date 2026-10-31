@@ -77,11 +77,22 @@ namespace OnAirDeck.UnityManager
                 foreach (var index in ImportRequestLogic.InstallOrder(entries.ConvertAll(e => e.PackageName)))
                 {
                     var entry = entries[index];
-                    // An add-on installed before brought the exact version it needs (or found it already here): its newest would break the pin.
-                    if (entry.PackageName.Length > 0 && (ImportRequestLogic.PinnedByAny(entry.PackageName, installed, name => InstalledPackages.Read(root, name))
-                        || InstalledPackages.InstalledVersion(root, entry.PackageName) != before[entry.PackageName])) continue;
+                    LicenseVersionEntry pinnedRow = null;
+                    if (entry.PackageName.Length > 0)
+                    {
+                        var now = InstalledPackages.InstalledVersion(root, entry.PackageName);
+                        // A package installed before needs an exact version of this one: that version, never this one's newest.
+                        var pinned = ImportRequestLogic.PinnedVersion(entry.PackageName, installed, name => InstalledPackages.Read(root, name));
+                        if (pinned != null)
+                        {
+                            if (now == pinned) continue;   // the add-on found or brought it
+                            var row = entry.Versions.Find(r => r.License != null && r.License.IsPackage && r.License.package_version == pinned);
+                            pinnedRow = row != null ? row.License : null;
+                        }
+                        else if (now != before[entry.PackageName]) continue;   // it came with a step before
+                    }
                     _selectedKey = entry.Key;
-                    var outcome = await InstallLicenseEntry(entry, willInstall);
+                    var outcome = pinnedRow != null ? await DoInstallAsync(entry, pinnedRow, true, willInstall) : await InstallLicenseEntry(entry, willInstall);
                     if (outcome.Report != ImportReport.Done) return outcome;
                     if (entry.PackageName.Length > 0) installed.Add(InstalledPackages.Read(root, entry.PackageName));
                     last = outcome;
