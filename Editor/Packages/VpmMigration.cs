@@ -111,6 +111,10 @@ namespace OnAirDeck.UnityManager
             var text = File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : "{\n  \"dependencies\": {},\n  \"locked\": {}\n}\n";
             var root = MiniJson.ParseObject(text.TrimStart('﻿'));
             if (root == null) throw new PackageInstallException("Packages/" + ManifestName + " is not a valid JSON object; nothing was changed.");
+            // Listed again in either object (VCC added it back): an entry left in one would make the resolver put its version back.
+            foreach (var package in move.Packages)
+                if (VersionOf(Child(root, "dependencies"), package) != null || VersionOf(Child(root, "locked"), package) != null)
+                    throw new PackageInstallException("Packages/" + ManifestName + " lists " + package + " again; nothing was changed.");
             foreach (var section in new[] { "dependencies", "locked" })
             {
                 var from = Child(saved, section);
@@ -121,7 +125,6 @@ namespace OnAirDeck.UnityManager
                 {
                     object entry;
                     if (!from.TryGetValue(package, out entry)) continue;
-                    if (to.ContainsKey(package)) throw new PackageInstallException("Packages/" + ManifestName + " lists " + package + " again; nothing was changed.");
                     var copy = entry as Dictionary<string, object>;
                     var installed = InstalledPackages.Read(projectRoot, package);
                     if (copy != null && installed != null && !string.IsNullOrEmpty(installed.Version))

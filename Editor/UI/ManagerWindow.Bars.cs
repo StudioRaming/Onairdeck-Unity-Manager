@@ -84,7 +84,7 @@ namespace OnAirDeck.UnityManager
         private CatalogEntry FirstUnseen()
         {
             if (_entries == null) return null;
-            foreach (var entry in _entries) if (PurchaseWatcher.IsUnseen(entry.Key)) return entry;
+            foreach (var entry in _entries) if (IsUnseen(entry)) return entry;
             return null;
         }
 

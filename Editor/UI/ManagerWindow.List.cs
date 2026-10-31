@@ -234,7 +234,7 @@ namespace OnAirDeck.UnityManager
             var work = WorkState(entry.Key);
             if (work == 1) { text = ManagerText.RcDling; tone = SRTone.Info; return true; }
             if (work == 2) { text = ManagerText.RcWait; tone = SRTone.Neutral; return true; }
-            if (PurchaseWatcher.IsUnseen(entry.Key)) { text = ManagerText.RcNewBuy; tone = SRTone.Brand; return true; }
+            if (IsUnseen(entry)) { text = ManagerText.RcNewBuy; tone = SRTone.Brand; return true; }
             switch (entry.State)
             {
                 case EntryState.New: text = ManagerText.RcNew; tone = SRTone.Warning; return true;

@@ -19,8 +19,8 @@ internal static class MingToonMoveChecks
         check("vcc move: both entries of core and add-on leave dependencies and locked; every other entry, unknown keys, CRLF and the final newline stay; the file is backed up first", Move(project));
         check("vcc move: undo puts the entries back at the folder's current version (no downgrade by the resolver); a package listed again refuses and changes nothing; keep ends the offer", UndoAndKeep(project));
         check("vcc move: nothing listed changes nothing; a file that is not JSON refuses", Refusals);
-        check("license rows: the free and the commercial Core license are one row (the commercial one, plus the free one's newer version and its installer); a device-limited or other-package license keeps its own row", MergeRows);
-        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order", Order);
+        check("license rows: the free and the commercial Core license are one row (the commercial one, its versions taken from the unlimited license when it has a device limit, installers paired by label); the folded license's keys stay on the row; a device-limited or other-package license keeps its own row", MergeRows);
+        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a core is skipped after its add-on", Order);
     }
 
     // ------------------------------------------------------------ G5
@@ -159,6 +159,12 @@ internal static class MingToonMoveChecks
             catch (PackageInstallException) { }
             Equal(relisted, File.ReadAllText(ManifestPath(root), Encoding.UTF8));
             Equal(1, VpmMigration.Pending(root).Count);
+            // Listed again in the other object only: still refused (an entry left there would downgrade the folder).
+            var depsOnly = "{\"dependencies\":{\"" + Core + "\":{\"version\":\"0.1.14\"}},\"locked\":{}}";
+            File.WriteAllText(ManifestPath(root), depsOnly);
+            try { VpmMigration.Undo(root, again); throw new Exception("undo over a dependencies-only entry did not refuse"); }
+            catch (PackageInstallException) { }
+            Equal(depsOnly, File.ReadAllText(ManifestPath(root), Encoding.UTF8));
 
             VpmMigration.Keep(again);
             Equal(0, VpmMigration.Pending(root).Count);
@@ -201,7 +207,8 @@ internal static class MingToonMoveChecks
         var row = rows.Single(r => r.license_id == "4740448e");
         Require(!ReferenceEquals(row, commercial));             // a copy: the account's own list (license files) stays as it was
         Equal(2, commercial.versions.Length);
-        Equal("c15,c15i,f16,f16i", string.Join(",", row.versions.Select(v => v.version_id)));
+        // The commercial license has a device limit: a version both offer comes from the free one, so a full seat count does not stop it.
+        Equal("f16,f16i,f15", string.Join(",", row.versions.Select(v => v.version_id)));
         Equal("free-core", also["4740448e"].Single());
         Require(rows.Contains(other));
 
@@ -210,9 +217,15 @@ internal static class MingToonMoveChecks
         Equal("0.1.16", entry.LatestVersion);
         Equal(EntryState.New, entry.State);
         Require(entry.HoldsLicense("free-core") && entry.HoldsLicense("4740448e") && !entry.HoldsLicense("urp"));
+        // Favorites and the new-purchase notice of the folded license still find the row.
+        Equal("l:4740448e,l:free-core", string.Join(",", entry.Keys));
         Equal(3, entry.MaxDevices);                              // the commercial license's devices stay manageable on the row
         // The installer of the free version travels with it (the legacy hand-off finds it by label in the row's versions).
         Equal("f16i", LegacyInstallerFile.Find(entry.License.versions, entry.Versions.First(v => v.Latest).License, "-update.unitypackage").VersionId);
+
+        // Without a device limit the row's own license serves a version both offer.
+        var unlimited = new LicenseEntry { license_id = "4740448e", name = "MingToon", rights = commercial.rights, versions = commercial.versions };
+        Equal("c15,c15i,f16,f16i", string.Join(",", ManagerCatalog.MergeSamePackage(new[] { free, unlimited }, new Dictionary<string, List<string>>()).Single().versions.Select(v => v.version_id)));
 
         // A free license with its own device limit keeps its row.
         var limited = new LicenseEntry { license_id = "free-core", name = "MingToon (Free)", max_devices = 2, versions = free.versions };
@@ -229,6 +242,10 @@ internal static class MingToonMoveChecks
         Equal("1,0,3,2", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, Urp, "", "com.studioraming.mlc" })));
         Equal("0,1", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, "com.studioraming.mingtoonx" })));
         Equal("0", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core })));
+        // The core's own step is skipped once an add-on of it was installed in the run (it found or brought the version it pins).
+        Require(ImportRequestLogic.ExtendsAny(Core, new[] { Urp }));
+        Require(!ImportRequestLogic.ExtendsAny(Core, new[] { "com.studioraming.mingtoonx", Core }));
+        Require(!ImportRequestLogic.ExtendsAny(Urp, new[] { Core }));
     }
 
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }

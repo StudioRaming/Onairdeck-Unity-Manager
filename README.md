@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.1.3 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL, both self-update paths (embedded and git) and the import re-import fix in Unity 2021.3.45f2; the install record, local dates and the purchase list without WARUDO items in Unity 2021.3.44f1. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
+> Status: 0.1.4 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). 0.1.4 moves VCC-installed MingToon to the Manager, shows one row per package and installs every license an import grants; their real-server checks wait for the free Core license and its versions on the server. Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL, both self-update paths (embedded and git) and the import re-import fix in Unity 2021.3.45f2; the install record, local dates and the purchase list without WARUDO items in Unity 2021.3.44f1. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
 
 ## Requirements
 

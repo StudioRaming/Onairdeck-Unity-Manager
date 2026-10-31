@@ -200,6 +200,15 @@ namespace OnAirDeck.UnityManager
             return order;
         }
 
+        /// <summary>True when one of <paramref name="installed"/> is an add-on of <paramref name="package"/> ("&lt;package&gt;.&lt;suffix&gt;").</summary>
+        public static bool ExtendsAny(string package, IEnumerable<string> installed)
+        {
+            if (string.IsNullOrEmpty(package)) return false;
+            foreach (var name in installed)
+                if (!string.IsNullOrEmpty(name) && name.Length > package.Length + 1 && name.StartsWith(package + ".", StringComparison.Ordinal)) return true;
+            return false;
+        }
+
         /// <summary>The confirm's answer: Import goes on (null), Cancel is declined, Not this project gives the request back.</summary>
         public static ImportOutcome FromChoice(int choice)
         {
