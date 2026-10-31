@@ -108,10 +108,16 @@ namespace OnAirDeck.UnityManager
 
         private async void DoDownload(CatalogEntry entry)
         {
-            if (_session == null || Busy || entry.Purchase == null) return;
+            await DoDownloadAsync(entry, false);
+        }
+
+        /// <param name="confirmed">The import confirm already asked (and warned about the refund): no second dialog.</param>
+        private async Task<ImportOutcome> DoDownloadAsync(CatalogEntry entry, bool confirmed)
+        {
+            if (_session == null || Busy || entry.Purchase == null) return ImportOutcome.Release();
             var item = entry.Purchase;
             // The first download makes the purchase non-refundable (same rule as the website).
-            if (!item.downloaded && !EditorUtility.DisplayDialog(ManagerText.DlgDlT, ManagerText.DlgDl, ManagerText.BGet, ManagerText.Cancel)) return;
+            if (!confirmed && !item.downloaded && !EditorUtility.DisplayDialog(ManagerText.DlgDlT, ManagerText.DlgDl, ManagerText.BGet, ManagerText.Cancel)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);
             _doneFolder.Remove(entry.Key);
@@ -119,7 +125,7 @@ namespace OnAirDeck.UnityManager
             try
             {
                 var summary = await DownloadService.DownloadItemAsync(token, item, OnWorkProgress, _workCancel.Token, true, true);
-                if (summary.LicenseRefused) return;   // the device-limit or update-required screen explains it
+                if (summary.LicenseRefused) return ImportOutcome.Failed("device_limit");   // the device-limit or update-required screen explains it
                 item.downloaded = true;
                 if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkg, MessageType.Info);
                 else
@@ -128,19 +134,24 @@ namespace OnAirDeck.UnityManager
                     SetMessage(null, MessageType.None);
                 }
                 MarkDirty();
+                // A .unitypackage is only queued here; its import (Unity's import window) ends later.
+                return summary.QueuedPackages.Count > 0 ? ImportOutcome.WaitForImports(summary.QueuedPackages) : ImportOutcome.Done();
             }
             catch (OperationCanceledException)
             {
                 SetMessage(ManagerText.Cancelled, MessageType.None);
+                return ImportOutcome.Failed("cancelled");
             }
             catch (SessionExpiredException e)
             {
                 OnSessionExpired(e.Message);
+                return ImportOutcome.Nothing();
             }
             catch (Exception e)
             {
                 FailedInstall(ProductIdOf(entry), entry.Name, DownloadService.VersionOf(item), e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Download failed: " + e.Message);
+                return ImportOutcome.Failed(IsNoticeRefusal(e) ? "device_limit" : "download_failed");
             }
             finally
             {
@@ -150,12 +161,19 @@ namespace OnAirDeck.UnityManager
 
         private async void DoInstall(CatalogEntry entry, LicenseVersionEntry version)
         {
-            if (_session == null || Busy || version == null) return;
+            await DoInstallAsync(entry, version, false, null);
+        }
+
+        /// <param name="confirmed">The import confirm already asked: no second dialog.</param>
+        /// <param name="willInstall">Told the package and version just before the install starts (the import record keeps them).</param>
+        private async Task<ImportOutcome> DoInstallAsync(CatalogEntry entry, LicenseVersionEntry version, bool confirmed, Action<string, string> willInstall)
+        {
+            if (_session == null || Busy || version == null) return ImportOutcome.Release();
             var title = ManagerText.DlgInT.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
             // A backup is made only of a package that is already installed.
             var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
             var message = text.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
-            if (!EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return;
+            if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);
             _cleanupRequired.Remove(entry.Key);
@@ -163,38 +181,47 @@ namespace OnAirDeck.UnityManager
             var token = _session.token;
             try
             {
+                if (willInstall != null) willInstall(version.package_name, version.package_version);
                 var report = await PackageInstallService.InstallAsync(token, version, OnWorkProgress, _workCancel.Token, _licenses, true, LegacyInstallDialog.Confirm);
                 SessionState.EraseString(PackageInstallService.ReportKey);
                 _focusPackage = "";
                 SessionState.EraseString(FocusKey);
                 SetMessage(report.Describe(), MessageType.Info);
+                // A hand-off: the product's own installer puts the package in after the next reload.
+                return report.HandedOff.Length > 0 ? ImportOutcome.WaitForPackage(version.package_name, version.package_version) : ImportOutcome.Done();
             }
             catch (LegacyDeclinedException)
             {
                 SetMessage(ManagerText.Declined, MessageType.None);
+                return ImportOutcome.Declined();
             }
             catch (OperationCanceledException)
             {
                 SetMessage(ManagerText.Cancelled, MessageType.None);
+                return ImportOutcome.Failed("cancelled");
             }
             catch (LegacyCleanupRequiredException)
             {
                 // Not an error: the item waits for a click that accepts the clean-up.
                 _cleanupRequired.Add(entry.Key);
+                return ImportOutcome.Failed("cleanup_required");
             }
             catch (DependencyUnavailableException e)
             {
                 if (e.Kind == DependencyErrorKind.GetOnAtelierFirst) _depProblem[entry.Key] = e.PackageName ?? "";
                 else FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
+                return ImportOutcome.Failed("dependency_missing");
             }
             catch (SessionExpiredException e)
             {
                 OnSessionExpired(e.Message);
+                return ImportOutcome.Nothing();
             }
             catch (Exception e)
             {
                 FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Package install failed: " + e.Message);
+                return ImportOutcome.Failed(IsNoticeRefusal(e) ? "device_limit" : "install_failed");
             }
             finally
             {
@@ -206,13 +233,19 @@ namespace OnAirDeck.UnityManager
         /// <summary>A seller version that is not a package (.unitypackage, zip, loose files): downloaded by its version id and placed by the service.</summary>
         private async void DoInstallFile(CatalogEntry entry, LicenseVersionEntry version)
         {
-            if (_session == null || Busy || version == null || entry.License == null) return;
+            await DoInstallFileAsync(entry, version, false);
+        }
+
+        /// <param name="confirmed">The import confirm already asked: no second dialog.</param>
+        private async Task<ImportOutcome> DoInstallFileAsync(CatalogEntry entry, LicenseVersionEntry version, bool confirmed)
+        {
+            if (_session == null || Busy || version == null || entry.License == null) return ImportOutcome.Release();
             var label = string.IsNullOrEmpty(version.version_label) ? version.file_name : version.version_label;
             var title = ManagerText.DlgInT.Replace("{n}", entry.Name).Replace("{v}", label);
             // A .unitypackage or loose files overwrite in place; nothing is backed up either way.
             var text = entry.State == EntryState.None ? ManagerText.DlgInNew : ManagerText.DlgInFile;
             var message = text.Replace("{n}", entry.Name).Replace("{v}", label);
-            if (!EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return;
+            if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);
             _doneFolder.Remove(entry.Key);
@@ -227,19 +260,25 @@ namespace OnAirDeck.UnityManager
                     SetMessage(null, MessageType.None);
                 }
                 MarkDirty();
+                // The files are in, but without its license file the product does not run here (device limit or Manager too old).
+                if (summary.LicenseRefused) return ImportOutcome.Failed("device_limit");
+                return summary.QueuedPackages.Count > 0 ? ImportOutcome.WaitForImports(summary.QueuedPackages) : ImportOutcome.Done();
             }
             catch (OperationCanceledException)
             {
                 SetMessage(ManagerText.Cancelled, MessageType.None);
+                return ImportOutcome.Failed("cancelled");
             }
             catch (SessionExpiredException e)
             {
                 OnSessionExpired(e.Message);
+                return ImportOutcome.Nothing();
             }
             catch (Exception e)
             {
                 FailedInstall(ProductIdOf(entry), entry.Name, label, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Version install failed: " + e.Message);
+                return ImportOutcome.Failed(IsNoticeRefusal(e) ? "device_limit" : "install_failed");
             }
             finally
             {
@@ -292,7 +331,11 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 // A server refusal is kept per license in LicenseRenewalStatus; the detail pane shows it.
-                if (!IsNoticeRefusal(e)) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License renewal refused: " + e.Message);
+                if (!IsNoticeRefusal(e))
+                {
+                    ManagerErrorWatch.OfferCaught("Renewing a license", e);
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License renewal refused: " + e.Message);
+                }
             }
             finally
             {

@@ -7,7 +7,7 @@ A Unity Editor tool for OnAirDeck buyers:
 - download purchased assets straight into the open project,
 - install and update package add-ons (for example the MingToon URP add-on) together with their exact dependencies.
 
-> Status: 0.1.2 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL, both self-update paths (embedded and git) and the import re-import fix in Unity 2021.3.45f2; the install record, local dates and the purchase list without WARUDO items in Unity 2021.3.44f1. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
+> Status: 0.1.3 (Atelier Manager, formerly OnAirDeck Unity Manager 0.6.1). Sign-in, purchase listing, downloads and the sign-in/session edge cases have been tested in Unity 2021.3.18f1; the device limit, the unitypackage, git URL, both self-update paths (embedded and git) and the import re-import fix in Unity 2021.3.45f2; the install record, local dates and the purchase list without WARUDO items in Unity 2021.3.44f1. Download verification tools are in `Tools~/Verification`; the release checks below list what is still open.
 
 ## Requirements
 
@@ -227,6 +227,7 @@ To build the Git-free install files: `python Tools~/Packaging/build_manager_pack
 - [x] Import queue re-import (0.1.1, Unity 2021.3.45f2, 2026-10-29): two packages with the same GUIDs and file times; a plain `ImportPackage` keeps the old script and text loaded even after a refresh, the Manager's import queue loads the new ones.
 - [x] VCC listing `atelier-package-manager` published (2026-10-29): live `index.json` lists 0.1.0, and the zip it points at matches the listed SHA-256.
 - [x] Editor check of 0.1.2 (Unity 2021.3.44f1, test account, 2026-10-30): a product installed by 0.1.1 shows "버전 확인 필요"; a first install has no backup sentence; the install record is written and shows "설치됨 <v> · 최신"; reinstall says files are overwritten without a backup; a 04:19 KST release shows the KST date; purchases without Unity files (WARUDO products) are not listed. Not reachable from the UI: a cancelled license import (it has no import window). Not run: the new-version path, which needs a newer upload.
+- [ ] 0.1.3 in a real editor with the live server: the Manager error card from a real Manager exception (title, redacted text, Send), the one-button import against the deployed `plugin-import-requests` (each dialog answer, a `.unitypackage` and a package install, the page's status), and the project check on a real project with an old Assets copy (move, undo, keep, reinstall, manifest entry). EditMode tests cover the hooks and the import flow against a loopback fake.
 - [ ] Install through VCC and self-update a VCC install (`vpm-manifest.json` version follows) in a real VCC project.
 - [ ] Later: verify 2022.3 and Unity 6 before raising the supported range.
 - [x] Repository made public (2026-10-08).

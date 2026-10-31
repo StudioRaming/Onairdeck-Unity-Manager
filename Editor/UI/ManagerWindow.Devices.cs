@@ -45,6 +45,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 _devicesError = e.Message;
+                ManagerErrorWatch.OfferCaught("Loading devices", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Loading devices failed: " + e.Message);
             }
             finally
@@ -101,7 +102,14 @@ namespace OnAirDeck.UnityManager
                         await DeviceLimitNotice.RetryAsync();
                         if (DeviceLimitNotice.Current == null) SetMessage(ManagerText.DeviceFreedRetried, MessageType.Info);
                     }
-                    catch (Exception e) { if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error); }
+                    catch (Exception e)
+                    {
+                        if (!IsNoticeRefusal(e))
+                        {
+                            SetMessage(e.Message, MessageType.Error);
+                            _messageReport = ManagerErrorWatch.OfferCaught("Retrying after a device release", e);
+                        }
+                    }
                 }
                 ReloadDevices();
                 LoadEntries(false);
@@ -113,6 +121,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 SetMessage(e.Message, MessageType.Error);
+                _messageReport = ManagerErrorWatch.OfferCaught("Removing a device", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Removing a device failed: " + e.Message);
             }
             finally
@@ -140,7 +149,11 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                if (!IsNoticeRefusal(e)) SetMessage(e.Message, MessageType.Error);
+                if (!IsNoticeRefusal(e))
+                {
+                    SetMessage(e.Message, MessageType.Error);
+                    _messageReport = ManagerErrorWatch.OfferCaught("Reactivating this PC", e);
+                }
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Reactivating this PC failed: " + e.Message);
             }
             finally

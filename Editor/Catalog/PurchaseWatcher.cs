@@ -89,9 +89,11 @@ namespace OnAirDeck.UnityManager
                 if (handler != null) handler(response);
                 await LicenseService.EnsureLicenseFilesAsync(session.token, response.licenses);
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                // Silent on purpose: no popup and no Console line for a failed background refresh.
+                // Silent on purpose: no popup and no Console line for a failed background refresh. A bug of the Manager still
+                // opens the report card (a server or network failure does not).
+                ManagerErrorWatch.OfferCaught("Background purchase refresh", e);
             }
             finally
             {

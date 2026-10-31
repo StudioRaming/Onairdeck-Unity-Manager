@@ -10,6 +10,7 @@ namespace OnAirDeck.UnityManager
     {
         private const float FeedbackMessageMinHeight = 72f;
         private const float FeedbackMessageMaxHeight = 180f;
+        private const float FeedbackLogHeight = 140f;
 
         // The draft survives a script reload (plain serialized fields); in-flight state does not.
         private int _feedbackKind;
@@ -25,6 +26,11 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private FeedbackEnvironment _feedbackEnv;
         [NonSerialized] private GUIStyle _feedbackAreaStyle;
         [NonSerialized] private bool _feedbackAreaDark;
+        // The attached Console text as it is sent (redacted, cut), rebuilt only when the buffer changes.
+        [NonSerialized] private string _feedbackLogPreview;
+        [NonSerialized] private int _feedbackLogVersion = -1;
+        private bool _feedbackLogOpen;
+        private Vector2 _feedbackLogScroll;
 
         private void OpenAsk()
         {
@@ -116,6 +122,37 @@ namespace OnAirDeck.UnityManager
             InfoRow(ManagerText.KDev, DeviceIdentity.DisplayName);
             InfoRow(ManagerText.KPackages, env.Packages.Length == 0 ? ManagerText.None : FeedbackText.Redact(string.Join(", ", env.Packages), FeedbackClient.LocalContext()));
             _feedbackAttachLog = SRGui.ToggleLeft(new GUIContent(ManagerText.AttachLog.Replace("{n}", ConsoleErrorBuffer.Count.ToString())), _feedbackAttachLog);
+            if (_feedbackAttachLog && ConsoleErrorBuffer.Count > 0) DrawAttachedLogPreview();
+        }
+
+        /// <summary>The exact Console text that goes with the message, behind an expander (U1: the body of the attachment is visible before sending).</summary>
+        private void DrawAttachedLogPreview()
+        {
+            if (SRGui.Button(new GUIContent(_feedbackLogOpen ? ManagerText.LogHide : ManagerText.LogShow), SRButtonKind.Ghost, SRButtonSize.Mini, GUILayout.ExpandWidth(false)))
+                Defer(() => { _feedbackLogOpen = !_feedbackLogOpen; });
+            if (!_feedbackLogOpen) return;
+            var text = AttachedLogPreview();
+            GUILayout.Label(ManagerText.ErLogNote, SRStyles.MutedWrap);
+            var p = SRTheme.P;
+            var box = GUILayoutUtility.GetRect(0f, FeedbackLogHeight, GUILayout.ExpandWidth(true));
+            SRTheme.Box(box, p.SurfaceSunken, p.LineControl, SRMetrics.RadiusControl);
+            var log = new GUIStyle(SRStyles.Mini) { wordWrap = true };
+            log.normal.textColor = p.Text;
+            var view = new Rect(0f, 0f, box.width - 18f, Mathf.Max(log.CalcHeight(new GUIContent(text), box.width - 18f) + 4f, box.height));
+            _feedbackLogScroll = GUI.BeginScrollView(box, _feedbackLogScroll, view);
+            GUI.Label(new Rect(4f, 2f, view.width - 8f, view.height), text, log);
+            GUI.EndScrollView();
+        }
+
+        private string AttachedLogPreview()
+        {
+            var version = ConsoleErrorBuffer.Version;
+            if (_feedbackLogPreview == null || version != _feedbackLogVersion)
+            {
+                _feedbackLogVersion = version;
+                _feedbackLogPreview = FeedbackClient.ConsoleLogAsSent(ConsoleErrorBuffer.Format(FeedbackClient.MaxConsoleLogBytes), FeedbackClient.LocalContext());
+            }
+            return _feedbackLogPreview;
         }
 
         /// <summary>Word-wrapped multi-line field in the theme's field face; grows with the text up to a cap, then scrolls.</summary>

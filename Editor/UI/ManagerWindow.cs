@@ -21,7 +21,7 @@ namespace OnAirDeck.UnityManager
     /// </remarks>
     internal sealed partial class ManagerWindow : EditorWindow
     {
-        private enum View { Main = 0, Devices = 1, Ask = 2 }
+        private enum View { Main = 0, Devices = 1, Ask = 2, Conflicts = 3 }
 
         // Unity serializes an EditorWindow's private fields across script reloads. Everything that describes in-flight work
         // is [NonSerialized]: the awaiting code is gone after a reload, so a restored "busy" flag would leave the window stuck.
@@ -87,6 +87,8 @@ namespace OnAirDeck.UnityManager
             AtelierManagerApi.OpenWindow = Open;
             AtelierManagerApi.CloseWindows = CloseAll;
             AtelierManagerApi.SelectLicense = OpenFor;
+            AtelierManagerApi.RunImport = RunImportInWindow;
+            AtelierManagerApi.WindowBusy = AnyWindowBusy;
             SRLanguage.RegisterWindowType(typeof(ManagerWindow));
         }
 
@@ -128,9 +130,11 @@ namespace OnAirDeck.UnityManager
             PackageImportQueue.RecordSaved += RefreshInstalledState;
             SRLanguage.Changed += OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(true);
+            ImportRequestWatcher.SetWindowOpen(true);
             OnEnablePackages();
             HookHandoff();
             CheckForUpdate();
+            StartOrReuseConflictScan();
         }
 
         private void OnDisable()
@@ -145,9 +149,11 @@ namespace OnAirDeck.UnityManager
             PackageImportQueue.RecordSaved -= RefreshInstalledState;
             SRLanguage.Changed -= OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(false);
+            ImportRequestWatcher.SetWindowOpen(false);
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelWork();
+            StopConflictScan();
             EditorApplication.update -= PollApplyingUpdate;
             EditorApplication.update -= SignInTick;
             UnhookHandoff();
@@ -158,6 +164,7 @@ namespace OnAirDeck.UnityManager
             // A package folder can change outside the window (VCC, another editor, a rollback).
             RefreshInstalledState();
             PurchaseWatcher.NotifyWindowFocused();
+            ImportRequestWatcher.NotifyWindowFocused();
         }
 
         private void OnExternalChange()
@@ -238,6 +245,7 @@ namespace OnAirDeck.UnityManager
             else if (notice != null && notice.Kind == NoticeKind.DeviceLimit) DrawDeviceLimit(body, notice);
             else if (_view == (int)View.Devices) DrawDeviceManager(body);
             else if (_view == (int)View.Ask) DrawAsk(body);
+            else if (_view == (int)View.Conflicts) DrawConflicts(body);
             else if (_entries == null) { if (_loadFailed) DrawLoadError(body); else DrawLoading(body); }
             else if (_entries.Count == 0 && !_loading) DrawEmpty(body);
             else DrawMain(body);
@@ -316,6 +324,7 @@ namespace OnAirDeck.UnityManager
             _licenses = response.licenses ?? new LicenseEntry[0];
             _loadFailed = false;
             RefreshInstalledState();
+            ScanIfLicensesChanged();
         }
 
         /// <summary>Re-reads what this project has installed (package folders and product markers) and re-checks version mismatches.</summary>

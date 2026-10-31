@@ -103,7 +103,7 @@ namespace OnAirDeck.UnityManager
             var text = new GUIStyle(SRStyles.Small) { wordWrap = true };
             text.normal.textColor = colors.Text;
 
-            var titleText = ManagerText.ErTitle.Replace("{n}", _shot.ProductShown);
+            var titleText = (ManagerErrorLogic.IsManagerReport(report) ? ManagerText.ErTitleManager : ManagerText.ErTitle).Replace("{n}", _shot.ProductShown);
             var reason = _shot.Headline;
             var status = !string.IsNullOrEmpty(_reportError) ? _reportError : _session == null ? ManagerText.ErSignIn : null;
             var titleHeight = title.CalcHeight(new GUIContent(titleText), width);

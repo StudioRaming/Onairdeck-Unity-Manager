@@ -9,6 +9,8 @@ namespace OnAirDeck.UnityManager
     {
         /// <summary>Card title; {n} is the product name.</summary>
         public static string ErTitle { get { return Pick("설치한 {n}에서 오류가 났어요", "{n} ran into an error after it was installed", "インストールした{n}でエラーが出ました"); } }
+        /// <summary>Card title for an error of the Manager itself; {n} is "Atelier Manager".</summary>
+        public static string ErTitleManager { get { return Pick("{n}에서 오류가 났어요", "{n} ran into an error", "{n}でエラーが出ました"); } }
         public static string ErShowLog { get { return Pick("보낼 내용 보기", "Show what will be sent", "送信する内容を見る"); } }
         /// <summary>Under the expander: the text below is exactly what is sent.</summary>
         public static string ErLogNote { get { return Pick("아래 내용이 그대로 전송돼요. 개인 폴더 경로와 사용자 이름은 가려져 있어요.", "The text below is sent as it is. Your personal folder path and user name are hidden.", "以下の内容がそのまま送信されます。個人フォルダのパスとユーザー名は隠してあります。"); } }
@@ -26,6 +28,9 @@ namespace OnAirDeck.UnityManager
         public static string ErSent { get { return Pick("보냈어요. 접수 번호 {id}", "Sent. Reference {id}", "送信しました。受付番号 {id}"); } }
         /// <summary>The same error was already sent from this project.</summary>
         public static string ErDuplicate { get { return Pick("같은 오류는 이미 알려 주셨어요.", "You already told us about this error.", "同じエラーはすでに送信済みです。"); } }
+        /// <summary>Ask screen: expander of the attached Console text.</summary>
+        public static string LogShow { get { return Pick("첨부되는 오류 내용 보기", "Show the attached errors", "添付されるエラー内容を見る"); } }
+        public static string LogHide { get { return Pick("첨부 내용 닫기", "Hide the attached errors", "添付内容を閉じる"); } }
         /// <summary>Button next to a red message.</summary>
         public static string ErBtn { get { return Pick("버그 리포트 보내기", "Send a bug report", "バグレポートを送る"); } }
     }

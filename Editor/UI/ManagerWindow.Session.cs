@@ -50,6 +50,7 @@ namespace OnAirDeck.UnityManager
             {
                 _timeoutText = null;
                 SetMessage(e.Message, MessageType.Error);
+                _messageReport = ManagerErrorWatch.OfferCaught("Sign-in", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sign-in failed: " + e.Message);
             }
             finally
@@ -96,6 +97,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
+                ManagerErrorWatch.OfferCaught("Sign-out", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Sign-out failed: " + e.Message);
             }
             finally
@@ -160,6 +162,8 @@ namespace OnAirDeck.UnityManager
             {
                 if (_entries == null) { _loadFailed = true; _loadError = e.Message; }
                 else SetMessage(e.Message, MessageType.Error);
+                var caught = ManagerErrorWatch.OfferCaught("Loading the product list", e);
+                if (_entries != null) _messageReport = caught;
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Loading the product list failed: " + e.Message);
             }
             finally
@@ -188,6 +192,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
+                if (!IsNoticeRefusal(e)) ManagerErrorWatch.OfferCaught("Refreshing license files", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "License refresh failed: " + e.Message);
             }
         }
@@ -198,6 +203,7 @@ namespace OnAirDeck.UnityManager
             // A click on Refresh also re-reads what is installed, so the chips never show a stale state.
             RefreshInstalledState();
             LoadEntries(true);
+            StartConflictScan();
         }
 
         // ---------- the Manager's own update ----------
@@ -211,6 +217,7 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
+                ManagerErrorWatch.OfferCaught("Checking for a Manager update", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update check failed: " + e.Message);
             }
             Repaint();
@@ -257,6 +264,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 SetMessage(ManagerText.SelfUpdateFailed.Replace("{m}", e.Message), MessageType.Error);
+                _messageReport = ManagerErrorWatch.OfferCaught("Updating the Manager", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Self-update failed: " + e.Message);
             }
             finally

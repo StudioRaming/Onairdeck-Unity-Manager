@@ -21,6 +21,13 @@ namespace OnAirDeck.UnityManager
         internal static Action CloseWindows;
         /// <summary>Selects the product of this license id in the open window (the id is also in <see cref="PendingLicenseId"/>).</summary>
         internal static Action<string> SelectLicense;
+        /// <summary>
+        /// Runs the install path of the window for a claimed import request (the person already confirmed it). The second argument
+        /// is told the package and version just before a package install starts (a reload may end the awaiting code).
+        /// </summary>
+        internal static Func<ImportRequest, Action<string, string>, Task<ImportOutcome>> RunImport;
+        /// <summary>True while the window works on something (an install, a batch, a self-update, a hand-off).</summary>
+        internal static Func<bool> WindowBusy;
 
         /// <summary>The license id of the last lock-screen request; the window selects that product (read-only for the UI).</summary>
         internal static string PendingLicenseId { get; private set; }
