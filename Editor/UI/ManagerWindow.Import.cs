@@ -84,8 +84,15 @@ namespace OnAirDeck.UnityManager
                         // A package installed before needs an exact version of this one: that version, never this one's newest. Pins that
                         // disagree, or a pinned version this license does not offer, end the run: installing anything else breaks a pin.
                         // Read from disk now: a later step may have replaced a package installed before.
-                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, installed.ConvertAll(name => InstalledPackages.Read(root, name)),
-                            name => InstalledPackages.Read(root, name));
+                        var current = installed.ConvertAll(name => InstalledPackages.Read(root, name));
+                        // One that cannot be read now may pin this package: never guess "no pin".
+                        var unread = installed.Find(name => current[installed.IndexOf(name)] == null);
+                        if (unread != null)
+                        {
+                            SetMessage(ManagerText.ImpReadFail.Replace("{p}", unread), MessageType.Error);
+                            return ImportOutcome.Failed("install_failed");
+                        }
+                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, current, name => InstalledPackages.Read(root, name));
                         if (pins.Count > 0)
                         {
                             if (pins.Count == 1 && now == pins[0]) continue;   // the add-on found or brought it

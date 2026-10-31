@@ -516,7 +516,7 @@ namespace OnAirDeck.UnityManager
         // Puts temp in place of path in one rename, so a crash leaves the old file or the new one, never part of one.
         private static void ReplaceFile(string temp, string path)
         {
-            if (File.Exists(path)) File.Replace(temp, path, null);
+            if (File.Exists(path)) AtomicFile.Replace(temp, path, null);
             else File.Move(temp, path);
         }
 

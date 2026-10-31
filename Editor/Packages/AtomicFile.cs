@@ -43,7 +43,7 @@ namespace OnAirDeck.UnityManager
         /// the search indexer) still has the target open for a moment. Two installs in a row rewrite the same journal within
         /// milliseconds (seen in Unity 2022.3: "unable to remove the file to be replaced").
         /// </summary>
-        private static void Replace(string source, string target, string backup)
+        internal static void Replace(string source, string target, string backup)
         {
             for (var attempt = 0; ; attempt++)
             {
