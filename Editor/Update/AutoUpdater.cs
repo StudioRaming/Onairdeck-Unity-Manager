@@ -33,6 +33,20 @@ namespace OnAirDeck.UnityManager
 
         private static int _running;
 
+        /// <summary>An undone update whose "applying" record could not be rewritten; this editor does not act on it.</summary>
+        private static string _abandoned = "";
+
+        private static string IdentityOf(SelfUpdateRecord record)
+        {
+            return record.From + ">" + record.To + "@" + (record.Swaps.Count > 0 ? record.Swaps[0].Backup : "");
+        }
+
+        private static bool Abandoned(SelfUpdateRecord record)
+        {
+            return _abandoned.Length > 0 && record != null && record.Phase == SelfUpdateRecord.PhaseApplying
+                && _abandoned == IdentityOf(record);
+        }
+
         static AutoUpdater()
         {
             LoadedVersion = UpdateService.CurrentVersion;
@@ -182,10 +196,11 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                if (inTransaction && PackageTransaction.LastInstallComplete(Root))
+                if (inTransaction && PackageTransaction.LastInstallComplete(Root) != false)
                 {
-                    // A step after the commit failed: the new files are in, so the record stays "applying" (as saved in the
-                    // transaction) and a compile error still rolls them back.
+                    // A step after the commit failed, or the journal cannot say: the new files may be in, so the record stays
+                    // "applying" (as saved in the transaction) and a compile error still rolls them back. If they were undone after
+                    // all, the next load settles the record as failed.
                     Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The update to " + to + " is in, but a later step failed: " + e.Message);
                     return e.Message;
                 }
@@ -195,7 +210,9 @@ namespace OnAirDeck.UnityManager
                 if (SaveWithRetry(record) != null && inTransaction)
                 {
                     // A record still listing the undone swap as "applying" could drive a rollback over files that are already back.
-                    try { System.IO.File.Delete(AutoUpdateLogic.RecordPath(Root)); } catch (Exception) { }
+                    // If it can be neither replaced nor deleted, this editor ignores it; the next load settles it as failed.
+                    try { System.IO.File.Delete(AutoUpdateLogic.RecordPath(Root)); }
+                    catch (Exception) { _abandoned = IdentityOf(record); }
                 }
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update to " + to + " failed: " + e.Message);
                 return e.Message;
@@ -216,7 +233,7 @@ namespace OnAirDeck.UnityManager
         {
             if (messages == null || messages.Length == 0) return;
             var record = AutoUpdateLogic.Load(Root);
-            if (record == null) return;
+            if (record == null || Abandoned(record)) return;
             // A compile failure of the update is acted on by the version that started it; an open rollback by any version.
             if (record.Phase == SelfUpdateRecord.PhaseApplying ? record.From != LoadedVersion : record.Phase != SelfUpdateRecord.PhaseRestoring) return;
             foreach (var message in messages)
@@ -255,6 +272,14 @@ namespace OnAirDeck.UnityManager
                 _rollBackRetryAt = EditorApplication.timeSinceStartup + 2;   // no file moves while Unity reads the sources
                 return;
             }
+            SelfUpdateRecord pending;
+            if (!AutoUpdateLogic.TryLoad(Root, out pending))
+            {
+                // Held for a moment by another process: this counts as a try, and the next one comes.
+                if (++_rollBackRetries > RollBackRetryLimit) EditorApplication.update -= RollBackRetryTick;
+                else _rollBackRetryAt = EditorApplication.timeSinceStartup + RollBackRetrySeconds;
+                return;
+            }
             EditorApplication.update -= RollBackRetryTick;
             RollBack();
         }
@@ -262,7 +287,7 @@ namespace OnAirDeck.UnityManager
         internal static void RollBack()
         {
             var record = AutoUpdateLogic.Load(Root);
-            if (record == null) return;
+            if (record == null || Abandoned(record)) return;
             // A compile failure is acted on only by the version that started the update; an open rollback by any version.
             if (record.Phase == SelfUpdateRecord.PhaseApplying ? record.From != LoadedVersion : record.Phase != SelfUpdateRecord.PhaseRestoring) return;
             try

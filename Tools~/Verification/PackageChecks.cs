@@ -233,9 +233,12 @@ internal static class PackageChecks
     {
         var project = NewProject(true);
         var items = StandardItems(project);
-        Require(!PackageTransaction.LastInstallComplete(project));   // no journal yet
+        Require(PackageTransaction.LastInstallComplete(project) == false);   // no journal yet
         var report = PackageTransaction.Execute(project, items, Now);
-        Require(PackageTransaction.LastInstallComplete(project));
+        Require(PackageTransaction.LastInstallComplete(project) == true);
+        // Held by another process: the journal cannot say, which is not "not complete".
+        using (new FileStream(PackageTransaction.JournalPath(project), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Require(PackageTransaction.LastInstallComplete(project) == null);
 
         Equal(2, report.Installed.Count);
         Equal("0.1.16", InstalledPackages.InstalledVersion(project, Core));
@@ -272,7 +275,21 @@ internal static class PackageChecks
         Require(seen != null && seen.Installed.Count == 2);   // it saw the whole swap, backups included
         Equal(before, Snapshot(project));
         Equal("rolledback", JournalState(project));
-        Require(!PackageTransaction.LastInstallComplete(project));   // the self-update reads this: the swap is not in
+        Require(PackageTransaction.LastInstallComplete(project) == false);   // the self-update reads this: the swap is not in
+        // The "complete" write and the "rolledback" write both fail: the journal the undo leaves never says complete, and recovery
+        // finishes it.
+        project = NewManifestProject();
+        before = Snapshot(project);
+        PackageTransaction.FaultHook = p => { if (p == "journal-write:complete" || p == "journal-write:rolledback") throw new IOException("injected at " + p); };
+        try
+        {
+            Throws<PackageInstallException>(() => PackageTransaction.Execute(project, StandardItems(project), Now), "injected at journal-write", "complete and rolledback");
+        }
+        finally { PackageTransaction.FaultHook = null; }
+        Require(JournalState(project) != "complete");
+        Require(PackageTransaction.LastInstallComplete(project) == false);
+        PackageTransaction.Recover(project);
+        Equal(before, Snapshot(project));
         // Cut inside the callback (the editor quits): the journal is not complete, so the next load puts everything back.
         project = NewManifestProject();
         before = Snapshot(project);

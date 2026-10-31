@@ -113,15 +113,24 @@ namespace OnAirDeck.UnityManager
         /// <summary>How long a folder move keeps retrying while a file inside it is held open (see MoveFolder).</summary>
         internal static int MoveRetryBudgetMs = 5000;
 
-        /// <summary>True when the last install's journal says it completed: its swap is in. False with no journal or an unreadable one.</summary>
-        public static bool LastInstallComplete(string projectRoot)
+        /// <summary>
+        /// Whether the last install's journal says it completed (its swap is in): true, false (no journal, or not complete), or null when
+        /// the journal is there but cannot be read now (held by another process, broken), tried a few times first.
+        /// </summary>
+        public static bool? LastInstallComplete(string projectRoot)
         {
             projectRoot = Path.GetFullPath(projectRoot);
             var path = JournalPath(projectRoot);
-            if (!File.Exists(path)) return false;
-            try { return Journal.Read(projectRoot, path).State == StateComplete; }
-            catch (PackageInstallException) { return false; }
-            catch (IOException) { return false; }
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                if (!File.Exists(path)) return false;
+                try { return Journal.Read(projectRoot, path).State == StateComplete; }
+                catch (PackageInstallException) { }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                System.Threading.Thread.Sleep(100);
+            }
+            return null;
         }
 
         public static string JournalPath(string projectRoot)
@@ -280,6 +289,8 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
+                // The "complete" write may be what failed: from here the journal is an undo in progress, never a finished install.
+                journal.State = StateApplying;
                 if (!journalWritten)
                 {
                     TryDeleteStage(projectRoot, stageFolder);
