@@ -101,11 +101,17 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// Replaces an embedded Manager with the zip a release points at. There is no listing hash for it,
-        /// so its identity rests on package.json (name and version) from <see cref="PackageZip"/>.
+        /// Replaces an embedded Manager with the zip a release points at. Its identity rests on package.json (name and version) from
+        /// <see cref="PackageZip"/>, and on <paramref name="sha256"/> when the release lists one.
         /// </summary>
+        /// <param name="refuseBeforeSwap">Asked after the download and checks, right before anything on disk changes; a reason stops the
+        /// update there (<see cref="SelfUpdateDeferredException"/>), so a moment that turned unsafe during the download is not used.</param>
+        /// <param name="afterTransaction">Gets the transaction's report (every folder swapped and its backup) before the install journal is
+        /// marked complete and before Package Manager and the asset database are told: a refresh may compile, and a rollback must already
+        /// know where the old files went. A throw there undoes the install through the journal.</param>
         public static async Task<InstallReport> SelfUpdateAsync(
-            string downloadUrl, string packageName, string version, string packageFolder, Action<string, float> onProgress, CancellationToken cancel)
+            string downloadUrl, string packageName, string version, string packageFolder, Action<string, float> onProgress, CancellationToken cancel,
+            string sha256 = null, Func<string> refuseBeforeSwap = null, Action<InstallReport> afterTransaction = null)
         {
             LegacyHandoff.ThrowIfWaiting();
             var root = ProjectRoot;
@@ -122,6 +128,7 @@ namespace OnAirDeck.UnityManager
                 var zip = await Downloader.DownloadAsync(downloadUrl, packageName + "-" + version + ".zip",
                     p => Report(onProgress, "Downloading " + packageName + " " + version, p * 0.6f), cancel);
                 cacheFolders.Add(Path.GetDirectoryName(zip));
+                if (!string.IsNullOrEmpty(sha256)) PackageDownloadChecks.RequireSha256(zip, sha256, packageName + " " + version);
                 var manifest = PackageZip.Validate(zip, packageName, version);
 
                 var items = new List<InstallItem>();
@@ -129,7 +136,9 @@ namespace OnAirDeck.UnityManager
                     cacheFolders, onProgress, cancel, 0, null, null, null, false);
                 items.Add(new InstallItem { Name = packageName, Version = version, ZipPath = zip, TargetFolder = packageFolder });
                 await AddCollisionReinstallsAsync(root, items, cacheFolders, onProgress, cancel);
-                return Apply(root, items, onProgress, cancel, null);
+                var refusal = refuseBeforeSwap != null ? refuseBeforeSwap() : null;
+                if (refusal != null) throw new SelfUpdateDeferredException(refusal);
+                return Apply(root, items, onProgress, cancel, null, afterTransaction);
             }
             finally
             {
@@ -154,6 +163,15 @@ namespace OnAirDeck.UnityManager
                             installer = LegacyInstallerFile.ForLegacyCase(root, version.package_name, version, license.versions);
                             if (installer != null) zipFile = LegacyInstallerFile.OfVersion(version);
                         }
+            // The same package in two licenses (MingToon's free and commercial Core): the zip may come from one and the installer of its
+            // label only from the other.
+            if (installer == null && licenseId.Length > 0)
+                foreach (var license in licenses)
+                {
+                    if (installer != null || license == null || license.license_id == licenseId || !CarriesPackage(license, version.package_name)) continue;
+                    installer = LegacyInstallerFile.ForLegacyCase(root, version.package_name, version, license.versions);
+                    if (installer != null) zipFile = LegacyInstallerFile.OfVersion(version);
+                }
             var probes = new List<LegacyProbe>();
             foreach (var item in items)
             {
@@ -165,6 +183,13 @@ namespace OnAirDeck.UnityManager
                 });
             }
             return probes;
+        }
+
+        private static bool CarriesPackage(LicenseEntry license, string package)
+        {
+            foreach (var v in license.versions ?? new LicenseVersionEntry[0])
+                if (v != null && v.IsPackage && v.package_name == package) return true;
+            return false;
         }
 
         // The install did not happen: the moved old install goes back, and the message says so.
@@ -200,11 +225,12 @@ namespace OnAirDeck.UnityManager
             return packageName;
         }
 
-        private static InstallReport Apply(string root, List<InstallItem> items, Action<string, float> onProgress, CancellationToken cancel, LicenseEntry[] watchLicenses)
+        private static InstallReport Apply(string root, List<InstallItem> items, Action<string, float> onProgress, CancellationToken cancel, LicenseEntry[] watchLicenses,
+            Action<InstallReport> afterTransaction = null)
         {
             cancel.ThrowIfCancellationRequested();
             Report(onProgress, "Installing…", 0.8f);
-            var report = PackageTransaction.Execute(root, items, DateTime.Now);
+            var report = PackageTransaction.Execute(root, items, DateTime.Now, afterTransaction);
             // A reload follows Refresh, so the window's own code may never see this result: leave it where the next load can show it.
             SessionState.SetString(ReportKey, report.Describe());
             if (watchLicenses != null)

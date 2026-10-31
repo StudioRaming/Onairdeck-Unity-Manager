@@ -64,6 +64,7 @@ namespace OnAirDeck.UnityManager
         public string download_url;
         public string notes;
         public string published_at;
+        public string sha256 = "";    // hex SHA-256 of download_url's zip when the release row lists one (checked before the swap); "" from today's server
     }
 
     [Serializable]

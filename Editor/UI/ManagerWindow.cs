@@ -64,7 +64,6 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private string _pendingLicenseId;
 
         [NonSerialized] private UpdateState _update;
-        [NonSerialized] private UnityEditor.PackageManager.Requests.AddRequest _applyingUpdate;
 
         private string _message;
         private MessageType _messageType = MessageType.None;
@@ -89,6 +88,7 @@ namespace OnAirDeck.UnityManager
             AtelierManagerApi.SelectLicense = OpenFor;
             AtelierManagerApi.RunImport = RunImportInWindow;
             AtelierManagerApi.WindowBusy = AnyWindowBusy;
+            AutoUpdater.WindowWorking = AnyWindowWorking;
             SRLanguage.RegisterWindowType(typeof(ManagerWindow));
         }
 
@@ -133,7 +133,8 @@ namespace OnAirDeck.UnityManager
             ImportRequestWatcher.SetWindowOpen(true);
             OnEnablePackages();
             HookHandoff();
-            CheckForUpdate();
+            OnEnableAutoUpdate();
+            CheckForUpdate(true);
             StartOrReuseConflictScan();
         }
 
@@ -154,8 +155,8 @@ namespace OnAirDeck.UnityManager
             CancelSignIn();
             CancelWork();
             StopConflictScan();
-            EditorApplication.update -= PollApplyingUpdate;
             EditorApplication.update -= SignInTick;
+            OnDisableAutoUpdate();
             UnhookHandoff();
         }
 
@@ -222,6 +223,9 @@ namespace OnAirDeck.UnityManager
         {
             var notice = DeviceLimitNotice.Current;
             var blocked = (_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired);
+            // The automatic update's note sits above every screen: a first install is usually still signed out.
+            var note = DrawAutoUpdateNote(body);
+            if (note > 0f) body = new Rect(body.x, body.y + note, body.width, Mathf.Max(0f, body.height - note));
             var report = blocked ? null : InstallErrorReporter.Current;
             if (report != null)
             {
@@ -291,6 +295,8 @@ namespace OnAirDeck.UnityManager
             foreach (var entry in _entries)
             {
                 var favorite = entry.Kind == FavoriteKind.Purchase ? FavoritesStore.IsFavorite(userId, entry.Purchase) : FavoritesStore.IsFavorite(userId, entry.License);
+                // A merged row keeps a star given to a license it now stands for.
+                foreach (var id in entry.AlsoLicenseIds) favorite = favorite || FavoritesStore.IsFavorite(userId, FavoriteKind.License, id);
                 if (favorite) _favorites.Add(entry.Key);
             }
             _linesDirty = true;
@@ -336,6 +342,7 @@ namespace OnAirDeck.UnityManager
             _installRecords = InstallRecords.Load(root);
             _mismatches = FindMismatches(root);
             _pendingRestores = LegacyMove.PendingRestores();
+            RefreshVccState(root);
             MarkDirty();
         }
 
@@ -366,9 +373,16 @@ namespace OnAirDeck.UnityManager
             _detailScroll = Vector2.zero;
             _showDetail = true;
             _view = (int)View.Main;
-            if (markSeen && _session != null && PurchaseWatcher.IsUnseen(entry.Key))
-                PurchaseWatcher.MarkSeen(_session.userId, new[] { entry.Key });
+            if (markSeen && _session != null && IsUnseen(entry))
+                PurchaseWatcher.MarkSeen(_session.userId, entry.Keys);
             Repaint();
+        }
+
+        /// <summary>New to the person: the row's own license or purchase, or a license a merged row stands for.</summary>
+        private static bool IsUnseen(CatalogEntry entry)
+        {
+            foreach (var key in entry.Keys) if (PurchaseWatcher.IsUnseen(key)) return true;
+            return false;
         }
 
         private void ApplyPendingSelection()
@@ -378,7 +392,7 @@ namespace OnAirDeck.UnityManager
             {
                 var id = _pendingLicenseId;
                 _pendingLicenseId = null;
-                var entry = FindEntry(FavoritesLogic.EntryKey(FavoriteKind.License, id));
+                var entry = _entries.Find(e => e.HoldsLicense(id));
                 if (entry != null)
                 {
                     _search = "";

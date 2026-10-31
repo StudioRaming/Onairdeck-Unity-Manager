@@ -194,7 +194,124 @@ namespace OnAirDeck.UnityManager.EditModeTests
             Assert.IsNull(ImportRequestWatcher.LoadClaim());
         }
 
+        [UnityTest]
+        public IEnumerator AnItemWithSeveralLicenses_InstallsTheAddOnFirst_WithTheCoreItPins()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _choice = (int)ImportChoice.Import;
+            var core = "com.qa.importcore" + Letters();
+            var addon = core + ".addon";
+            _server.AddFile("cv-110", core + "-1.1.0.zip", PackageZipBytes(core, "1.1.0", null, null));
+            _server.AddFile("cv-100", core + "-1.0.0.zip", PackageZipBytes(core, "1.0.0", null, null));
+            _server.AddFile("av-100", addon + "-1.0.0.zip", PackageZipBytes(addon, "1.0.0", core, "1.0.0"));
+            // The core is listed first, as a Founders edition grants it; its newest version is not the one the add-on pins.
+            _server.SetLicenseItemRequest(_product, _id,
+                FakeAtelier.License("l-core", _product + " Core", FakeAtelier.Version("cv-110", core, "1.1.0"), FakeAtelier.Version("cv-100", core, "1.0.0")),
+                FakeAtelier.License("l-addon", _product + " Add-on", FakeAtelier.Version("av-100", addon, "1.0.0")));
+            try
+            {
+                yield return Await(ImportRequestWatcher.PollNowAsync(Token()), 120);
+
+                Assert.AreEqual(1, _dialogs, "one confirm for the whole edition");
+                CollectionAssert.AreEqual(new[] { "lv:av-100", "lv:cv-100" }, _server.DownloadItems(), "the add-on first, then the core it pins; the core's own newest is skipped");
+                Assert.AreEqual("1.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, addon));
+                Assert.AreEqual("1.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, core));
+                CollectionAssert.AreEqual(new[] { "claim:" + _id + "::", "done:" + _id + ":c-1:" }, _server.Posts());
+            }
+            finally
+            {
+                RemovePackages(core, addon);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnItemWithSeveralLicenses_KeepsACoreThatIsAlreadyAtThePin()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _choice = (int)ImportChoice.Import;
+            var core = "com.qa.importcore" + Letters();
+            var addon = core + ".addon";
+            // The project already runs the core version the add-on pins; the core's newest must not replace it.
+            var folder = InstalledPackages.FolderOf(PackageInstallService.ProjectRoot, core);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "package.json"), "{\"name\":\"" + core + "\",\"version\":\"1.0.0\",\"displayName\":\"" + core + "\",\"unity\":\"2021.3\"}");
+            AssetDatabase.Refresh();
+            _server.AddFile("cv-110", core + "-1.1.0.zip", PackageZipBytes(core, "1.1.0", null, null));
+            _server.AddFile("cv-100", core + "-1.0.0.zip", PackageZipBytes(core, "1.0.0", null, null));
+            _server.AddFile("av-100", addon + "-1.0.0.zip", PackageZipBytes(addon, "1.0.0", core, "1.0.0"));
+            _server.SetLicenseItemRequest(_product, _id,
+                FakeAtelier.License("l-core", _product + " Core", FakeAtelier.Version("cv-110", core, "1.1.0"), FakeAtelier.Version("cv-100", core, "1.0.0")),
+                FakeAtelier.License("l-addon", _product + " Add-on", FakeAtelier.Version("av-100", addon, "1.0.0")));
+            try
+            {
+                yield return Await(ImportRequestWatcher.PollNowAsync(Token()), 120);
+
+                CollectionAssert.AreEqual(new[] { "lv:av-100" }, _server.DownloadItems(), "only the add-on; the core it pins is already here");
+                Assert.AreEqual("1.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, core));
+                Assert.AreEqual("1.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, addon));
+                CollectionAssert.AreEqual(new[] { "claim:" + _id + "::", "done:" + _id + ":c-1:" }, _server.Posts());
+            }
+            finally
+            {
+                RemovePackages(core, addon);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnItemWithTwoUnrelatedLicenses_InstallsBoth()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _choice = (int)ImportChoice.Import;
+            var one = "com.qa.importone" + Letters();
+            var two = "com.qa.importtwo" + Letters();
+            _server.AddFile("o-1", one + "-2.0.0.zip", PackageZipBytes(one, "2.0.0", null, null));
+            _server.AddFile("t-1", two + "-3.0.0.zip", PackageZipBytes(two, "3.0.0", null, null));
+            _server.SetLicenseItemRequest(_product, _id,
+                FakeAtelier.License("l-one", _product + " One", FakeAtelier.Version("o-1", one, "2.0.0")),
+                FakeAtelier.License("l-two", _product + " Two", FakeAtelier.Version("t-1", two, "3.0.0")));
+            try
+            {
+                yield return Await(ImportRequestWatcher.PollNowAsync(Token()), 120);
+
+                CollectionAssert.AreEqual(new[] { "lv:o-1", "lv:t-1" }, _server.DownloadItems());
+                Assert.AreEqual("2.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, one));
+                Assert.AreEqual("3.0.0", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, two));
+                CollectionAssert.AreEqual(new[] { "claim:" + _id + "::", "done:" + _id + ":c-1:" }, _server.Posts());
+            }
+            finally
+            {
+                RemovePackages(one, two);
+            }
+        }
+
         // ------------------------------------------------------------ helpers
+
+        /// <summary>A VPM-style package zip: package.json at the root, with one exact vpmDependency when <paramref name="dependency"/> is set.</summary>
+        private static byte[] PackageZipBytes(string name, string version, string dependency, string dependencyVersion)
+        {
+            var json = "{\"name\":\"" + name + "\",\"version\":\"" + version + "\",\"displayName\":\"" + name + "\",\"unity\":\"2021.3\"" +
+                (dependency != null ? ",\"vpmDependencies\":{\"" + dependency + "\":\"" + dependencyVersion + "\"}" : "") + "}";
+            using (var stream = new MemoryStream())
+            {
+                using (var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    var entry = zip.CreateEntry("package.json");
+                    using (var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false))) writer.Write(json);
+                }
+                return stream.ToArray();
+            }
+        }
+
+        private static void RemovePackages(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var folder = InstalledPackages.FolderOf(PackageInstallService.ProjectRoot, name);
+                if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            }
+            AssetDatabase.Refresh();
+            UnityEditor.PackageManager.Client.Resolve();
+        }
 
         /// <summary>A real .unitypackage of one text file, exported by Unity, with the source removed again.</summary>
         private static byte[] ExportProbePackage(string folder)
@@ -262,7 +379,11 @@ namespace OnAirDeck.UnityManager.EditModeTests
         public int ActionStatus = 200;
         public int RenewStatus = 200;
         public byte[] PackageBytes = new byte[0];
+        /// <summary>The plugin-version answer; null answers 404.</summary>
+        public string VersionJson;
         private readonly List<string> _downloads = new List<string>();
+        private readonly Dictionary<string, byte[]> _files = new Dictionary<string, byte[]>();
+        private readonly Dictionary<string, string> _versionFiles = new Dictionary<string, string>();
         private string _fileName = "readme.txt";
 
         public FakeAtelier()
@@ -285,6 +406,39 @@ namespace OnAirDeck.UnityManager.EditModeTests
             _requestsJson = "{\"requests\":[{\"request_id\":\"" + requestId + "\",\"target\":\"unity\",\"kind\":\"item\",\"item_id\":\"" + (secondItem ? "it-2" : "it-1") + "\",\"license_id\":\"\",\"product_id\":\"p-1\"," +
                 "\"created_at\":\"2026-10-31T00:00:00.000Z\",\"expires_at\":\"" + expires + "\",\"purchase\":" + requested + ",\"licenses\":[]}]}";
             _purchasesJson = "{\"purchases\":[" + first + (secondItem ? "," + requested : "") + "],\"licenses\":[]}";
+        }
+
+        /// <summary>
+        /// A request for an item that grants <paramref name="licenses"/> and has no Unity file of its own (a MingToon Founders edition):
+        /// the request carries the granted licenses, plugin-purchases lists them with their versions.
+        /// </summary>
+        public void SetLicenseItemRequest(string product, string requestId, params string[] licenses)
+        {
+            var expires = DateTime.UtcNow.AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+            var item = "{\"name\":\"" + product + "\",\"date\":\"2026-10-31\",\"item_id\":\"it-1\",\"product_id\":\"p-1\",\"files\":[],\"downloaded\":false,\"update_available\":false," +
+                "\"thumbnail_url\":\"\",\"seller_id\":\"s-1\",\"seller_name\":\"Seller\",\"category\":\"\",\"purchased_at\":\"2026-10-31T00:00:00.000Z\",\"source\":\"purchase\",\"description\":\"\",\"product_url\":\"\",\"versions\":[]}";
+            var list = string.Join(",", licenses);
+            _requestsJson = "{\"requests\":[{\"request_id\":\"" + requestId + "\",\"target\":\"unity\",\"kind\":\"item\",\"item_id\":\"it-1\",\"license_id\":\"\",\"product_id\":\"p-1\"," +
+                "\"created_at\":\"2026-10-31T00:00:00.000Z\",\"expires_at\":\"" + expires + "\",\"purchase\":" + item + ",\"licenses\":[" + list + "]}]}";
+            _purchasesJson = "{\"purchases\":[" + item + "],\"licenses\":[" + list + "]}";
+        }
+
+        public static string License(string id, string name, params string[] versions)
+        {
+            return "{\"license_id\":\"" + id + "\",\"name\":\"" + name + "\",\"rights\":[],\"max_devices\":0,\"devices_used\":0,\"this_device\":false,\"seller_id\":\"s-1\",\"seller_name\":\"Seller\"," +
+                "\"thumbnail_url\":\"\",\"source\":\"grant\",\"description\":\"\",\"product_url\":\"\",\"versions\":[" + string.Join(",", versions) + "]}";
+        }
+
+        public static string Version(string id, string package, string version)
+        {
+            return "{\"version_id\":\"" + id + "\",\"version_label\":\"" + version + "\",\"file_name\":\"" + package + "-" + version + ".zip\",\"file_size\":0,\"released_at\":\"2026-10-31T00:00:00.000Z\"," +
+                "\"release_notes\":\"\",\"package_name\":\"" + package + "\",\"package_version\":\"" + version + "\"}";
+        }
+
+        /// <summary>A license version's file: plugin-download { license_version_id } answers with it, served under /files/.</summary>
+        public void AddFile(string versionId, string fileName, byte[] bytes)
+        {
+            lock (_files) { _files[fileName] = bytes; _versionFiles[versionId] = fileName; }
         }
 
         private static string Purchase(string product, string itemId, string fileName, bool downloaded)
@@ -344,16 +498,34 @@ namespace OnAirDeck.UnityManager.EditModeTests
                 else Reply(context, 200, "{\"request_id\":\"" + request.request_id + "\",\"status\":\"" + request.action + "\"}");
             }
             else if (path == "plugin-purchases") Reply(context, 200, _purchasesJson);
+            else if (path == "plugin-version" && VersionJson != null) Reply(context, 200, VersionJson);
             else if (path == "plugin-download")
             {
                 Interlocked.Increment(ref Downloads);
+                var version = JsonUtility.FromJson<LicenseDownloadRequest>(body);
+                string versionFile = null;
+                if (version != null && !string.IsNullOrEmpty(version.license_version_id))
+                    lock (_files) _versionFiles.TryGetValue(version.license_version_id, out versionFile);
+                if (versionFile != null)
+                {
+                    lock (_downloads) _downloads.Add("lv:" + version.license_version_id);
+                    Reply(context, 200, "{\"files\":[{\"url\":\"" + BaseUrl + "/files/" + versionFile + "\",\"file_name\":\"" + versionFile + "\"}]}");
+                    return;
+                }
                 var download = JsonUtility.FromJson<DownloadRequest>(body);
                 lock (_downloads) _downloads.Add(download != null ? download.item_id : "");
                 Reply(context, 200, "{\"files\":[{\"url\":\"" + BaseUrl + "/files/" + _fileName + "\",\"file_name\":\"" + _fileName + "\"}]}");
             }
             else if (path == "files/readme.txt") Reply(context, 200, "Imported through the one-button import test.\n", "text/plain");
             else if (path == "files/probe.unitypackage") ReplyBytes(context, PackageBytes);
+            else if (path.StartsWith("files/", StringComparison.Ordinal) && Served(path.Substring(6)) != null) ReplyBytes(context, Served(path.Substring(6)));
             else Reply(context, 404, "{\"error\":\"not_found\"}");
+        }
+
+        private byte[] Served(string fileName)
+        {
+            byte[] bytes;
+            lock (_files) return _files.TryGetValue(fileName, out bytes) ? bytes : null;
         }
 
         private static void Reply(HttpListenerContext context, int status, string text, string type = "application/json")

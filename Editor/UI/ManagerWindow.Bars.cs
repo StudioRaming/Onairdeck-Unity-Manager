@@ -7,7 +7,7 @@ namespace OnAirDeck.UnityManager
 {
     /// <summary>
     /// The strip above the panes. One bar at a time, in this order: this PC released (v7), a message, the project check (U3),
-    /// a new purchase, a Manager update, products with a newer version.
+    /// a VCC install to move to the Manager (or its undo), a new purchase, a Manager update, products with a newer version.
     /// </summary>
     internal sealed partial class ManagerWindow
     {
@@ -45,6 +45,9 @@ namespace OnAirDeck.UnityManager
                 var view = new BarButton { Label = ManagerText.CfView, Kind = SRButtonKind.Secondary, Enabled = true, Click = OpenProjectCheck };
                 return DrawBar(body, _conflicts.Count > 0 ? SRTone.Warning : SRTone.Info, text, view);
             }
+            // Before purchases and updates: an update the Manager installs could be put back to VCC's version.
+            var vcc = DrawVccBar(body);
+            if (vcc > 0f) return vcc;
             var unseen = PurchaseWatcher.UnseenCount;
             if (unseen > 0 && _session != null)
             {
@@ -81,7 +84,7 @@ namespace OnAirDeck.UnityManager
         private CatalogEntry FirstUnseen()
         {
             if (_entries == null) return null;
-            foreach (var entry in _entries) if (PurchaseWatcher.IsUnseen(entry.Key)) return entry;
+            foreach (var entry in _entries) if (IsUnseen(entry)) return entry;
             return null;
         }
 
@@ -107,7 +110,10 @@ namespace OnAirDeck.UnityManager
                 total += buttonWidths[i] + SRMetrics.Space6;
             }
             var textWidth = Mathf.Max(80f, body.width - 2f * pad - total);
-            var textHeight = SRStyles.Small.CalcHeight(new GUIContent(text), textWidth);
+            // Measured with the wrapping style it is drawn with: a text longer than one line makes the bar taller, not clipped.
+            var style = new GUIStyle(SRStyles.Small) { wordWrap = true };
+            style.normal.textColor = colors.Text;
+            var textHeight = style.CalcHeight(new GUIContent(text), textWidth);
             var height = Mathf.Max(SRMetrics.ButtonLarge + 2f * SRMetrics.Space6, textHeight + 2f * SRMetrics.Space6);
             var bar = new Rect(body.x, body.y, body.width, height);
 
@@ -117,8 +123,6 @@ namespace OnAirDeck.UnityManager
                 SRTheme.Fill(new Rect(bar.x, bar.yMax - 1f, bar.width, 1f), colors.Border);
             }
             var label = new Rect(bar.x + pad, bar.y + SRMetrics.Space6, textWidth, textHeight);
-            var style = new GUIStyle(SRStyles.Small) { wordWrap = true };
-            style.normal.textColor = colors.Text;
             GUI.Label(label, text, style);
 
             var x = bar.xMax - pad;

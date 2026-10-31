@@ -35,6 +35,7 @@ internal static class PackageChecks
         check("VPM listing: exact version lookup with url and hash", ListingLookup);
         check("transaction: dependency and add-on installed, backup kept, no carry-over, journal complete", TransactionSuccess);
         check("transaction: failure at every step undoes everything (in process)", FailEverywhere);
+        check("transaction: a caller that cannot record the swap (beforeComplete throws) undoes everything; a cut there is recovered", BeforeCompleteThrows);
         check("transaction: crash at every step is rolled back on the next load", CrashEverywhere);
         check("transaction: a rollback that fails is retried by recovery", RollbackRetry);
         check("transaction: a file held open during the swap is waited for; held past the budget rolls back", HeldFileDuringSwap);
@@ -232,7 +233,12 @@ internal static class PackageChecks
     {
         var project = NewProject(true);
         var items = StandardItems(project);
+        Require(PackageTransaction.LastInstallComplete(project) == false);   // no journal yet
         var report = PackageTransaction.Execute(project, items, Now);
+        Require(PackageTransaction.LastInstallComplete(project) == true);
+        // Held by another process: the journal cannot say, which is not "not complete".
+        using (new FileStream(PackageTransaction.JournalPath(project), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Require(PackageTransaction.LastInstallComplete(project) == null);
 
         Equal(2, report.Installed.Count);
         Equal("0.1.16", InstalledPackages.InstalledVersion(project, Core));
@@ -257,6 +263,44 @@ internal static class PackageChecks
         Require(again.Installed[0].Backup != core.Backup && Directory.Exists(core.Backup) && Directory.Exists(again.Installed[0].Backup));
         var third = PackageTransaction.Execute(project, StandardItems(project), Now);
         Require(third.Installed[0].Backup.EndsWith("-2") && Directory.Exists(again.Installed[0].Backup));
+    }
+
+    private static void BeforeCompleteThrows()
+    {
+        var project = NewManifestProject();
+        var before = Snapshot(project);
+        InstallReport seen = null;
+        Throws<PackageInstallException>(() => PackageTransaction.Execute(project, StandardItems(project), Now,
+            r => { seen = r; throw new IOException("record not written"); }), "record not written", "beforeComplete");
+        Require(seen != null && seen.Installed.Count == 2);   // it saw the whole swap, backups included
+        Equal(before, Snapshot(project));
+        Equal("rolledback", JournalState(project));
+        Require(PackageTransaction.LastInstallComplete(project) == false);   // the self-update reads this: the swap is not in
+        // The "complete" write and the "rolledback" write both fail: the journal the undo leaves never says complete, and recovery
+        // finishes it.
+        project = NewManifestProject();
+        before = Snapshot(project);
+        PackageTransaction.FaultHook = p => { if (p == "journal-write:complete" || p == "journal-write:rolledback") throw new IOException("injected at " + p); };
+        try
+        {
+            Throws<PackageInstallException>(() => PackageTransaction.Execute(project, StandardItems(project), Now), "injected at journal-write", "complete and rolledback");
+        }
+        finally { PackageTransaction.FaultHook = null; }
+        Require(JournalState(project) != "complete");
+        Require(PackageTransaction.LastInstallComplete(project) == false);
+        PackageTransaction.Recover(project);
+        Equal(before, Snapshot(project));
+        // Cut inside the callback (the editor quits): the journal is not complete, so the next load puts everything back.
+        project = NewManifestProject();
+        before = Snapshot(project);
+        try
+        {
+            PackageTransaction.Execute(project, StandardItems(project), Now, r => { throw new TransactionCrash("cut in beforeComplete"); });
+            throw new Exception("the cut did not stop the install");
+        }
+        catch (TransactionCrash) { }
+        Require(PackageTransaction.Recover(project) != null);
+        Equal(before, Snapshot(project));
     }
 
     private static void FailEverywhere()

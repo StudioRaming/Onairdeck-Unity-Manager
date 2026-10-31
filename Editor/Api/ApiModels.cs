@@ -57,6 +57,14 @@ namespace OnAirDeck.UnityManager
 
         public bool IsOwn { get { return source == "own"; } }
         public LicenseVersionEntry[] versions;   // active versions, newest first, at most 20
+
+        /// <summary>A copy of this license with another version list (the window's merged row, see ManagerCatalog.MergeSamePackage).</summary>
+        public LicenseEntry WithVersions(LicenseVersionEntry[] list)
+        {
+            var copy = (LicenseEntry)MemberwiseClone();
+            copy.versions = list;
+            return copy;
+        }
     }
 
     [Serializable]

@@ -113,6 +113,26 @@ namespace OnAirDeck.UnityManager
         /// <summary>How long a folder move keeps retrying while a file inside it is held open (see MoveFolder).</summary>
         internal static int MoveRetryBudgetMs = 5000;
 
+        /// <summary>
+        /// Whether the last install's journal says it completed (its swap is in): true, false (no journal, or not complete), or null when
+        /// the journal is there but cannot be read now (held by another process, broken), tried a few times first.
+        /// </summary>
+        public static bool? LastInstallComplete(string projectRoot)
+        {
+            projectRoot = Path.GetFullPath(projectRoot);
+            var path = JournalPath(projectRoot);
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                if (!File.Exists(path)) return false;
+                try { return Journal.Read(projectRoot, path).State == StateComplete; }
+                catch (PackageInstallException) { }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                System.Threading.Thread.Sleep(100);
+            }
+            return null;
+        }
+
         public static string JournalPath(string projectRoot)
         {
             return Path.Combine(projectRoot, "Library", "OnAirDeck", "install-journal.json");
@@ -130,7 +150,10 @@ namespace OnAirDeck.UnityManager
 
         // ---------- install ----------
 
-        public static InstallReport Execute(string projectRoot, IList<InstallItem> items, DateTime now)
+        /// <param name="beforeComplete">Called with the report after every folder and the manifest are in, before the journal says
+        /// "complete": a throw there undoes the whole install like any other failure (and a cut leaves it to recovery), so the caller's own
+        /// record of the swap is either written or the swap is gone.</param>
+        public static InstallReport Execute(string projectRoot, IList<InstallItem> items, DateTime now, Action<InstallReport> beforeComplete = null)
         {
             if (items == null || items.Count == 0) throw new PackageInstallException("Nothing to install.");
             projectRoot = Path.GetFullPath(projectRoot);
@@ -254,6 +277,7 @@ namespace OnAirDeck.UnityManager
                     Fault("after-manifest");
                 }
 
+                if (beforeComplete != null) beforeComplete(report);
                 journal.State = StateComplete;
                 journal.Write(projectRoot, now, "journal-write:complete");
                 TryDeleteStage(projectRoot, stageFolder);
@@ -265,6 +289,8 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
+                // The "complete" write may be what failed: from here the journal is an undo in progress, never a finished install.
+                journal.State = StateApplying;
                 if (!journalWritten)
                 {
                     TryDeleteStage(projectRoot, stageFolder);
@@ -516,7 +542,7 @@ namespace OnAirDeck.UnityManager
         // Puts temp in place of path in one rename, so a crash leaves the old file or the new one, never part of one.
         private static void ReplaceFile(string temp, string path)
         {
-            if (File.Exists(path)) File.Replace(temp, path, null);
+            if (File.Exists(path)) AtomicFile.Replace(temp, path, null);
             else File.Move(temp, path);
         }
 

@@ -19,6 +19,8 @@ namespace OnAirDeck.UnityManager
         public string PackageName;
         public string PackageFolder;
         public string DownloadUrl = "";
+        /// <summary>The Package Manager id of what is installed now (name@source), the way back for a git update that does not compile.</summary>
+        public string PackageId = "";
 
         public bool HasLatest
         {
@@ -106,11 +108,17 @@ namespace OnAirDeck.UnityManager
         {
             var state = new UpdateState { CurrentVersion = version, Response = response };
             var info = PackageInfo.FindForAssembly(typeof(UpdateService).Assembly);
+            if (info != null) state.PackageId = info.packageId ?? "";
             var source = info != null ? info.source : PackageSource.Unknown;
             var hasGitUrl = state.HasLatest && !string.IsNullOrEmpty(response.latest.git_url);
             var downloadUrl = state.HasLatest ? (response.latest.download_url ?? "") : "";
             if (downloadUrl.Length == 0 && response.download_url != null) downloadUrl = response.download_url;
-            if (source == PackageSource.Embedded && downloadUrl.Length > 0)
+            if (source == PackageSource.Embedded && IsWorkingCopy(info.resolvedPath))
+            {
+                // A developer's checkout (or a folder linked to one): never replaced, by a click or automatically.
+                state.ApplyBlockedReason = "This copy of the Manager is a git working copy. Update it with git instead.";
+            }
+            else if (source == PackageSource.Embedded && downloadUrl.Length > 0)
             {
                 // Installed without Git (the unitypackage or zip route): replace the package folder in place.
                 state.UseEmbedded = true;
@@ -126,6 +134,12 @@ namespace OnAirDeck.UnityManager
                 else if (!state.CanApply) state.ApplyBlockedReason = "Installed from disk (" + source + "); update your local copy instead.";
             }
             return state;
+        }
+
+        private static bool IsWorkingCopy(string folder)
+        {
+            if (string.IsNullOrEmpty(folder)) return false;
+            return System.IO.Directory.Exists(System.IO.Path.Combine(folder, ".git")) || System.IO.File.Exists(System.IO.Path.Combine(folder, ".git"));
         }
 
         /// <summary>Switches the package to the published git URL. Package Manager does the rest (and reloads scripts).</summary>

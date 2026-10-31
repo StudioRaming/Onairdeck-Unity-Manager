@@ -25,6 +25,9 @@ namespace OnAirDeck.UnityManager
         private static bool _windowOpen;
         private static bool _wasActive;
         private static bool _busy;
+
+        /// <summary>A request is being handled (claimed, confirmed, installing or reporting): not a moment to replace the Manager.</summary>
+        public static bool Busy { get { return _busy; } }
         private static bool _renewing;
         private static bool _loadChecked;
         private static bool _focusRequested;

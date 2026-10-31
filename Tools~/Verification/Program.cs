@@ -50,6 +50,8 @@ internal static class Program
             ManagerErrorChecks.Run(Check);
             ImportChecks.Run(Check);
             ConflictChecks.Run(Check, _project);
+            MingToonMoveChecks.Run(Check, _project);
+            AutoUpdateChecks.Run(Check, _project);
         }
         finally
         {

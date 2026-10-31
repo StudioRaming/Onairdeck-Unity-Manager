@@ -28,13 +28,35 @@ namespace OnAirDeck.UnityManager
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
                 }
-                if (File.Exists(path)) File.Replace(temp, path, keepPrevious ? path + ".prev" : null);
+                if (File.Exists(path)) Replace(temp, path, keepPrevious ? path + ".prev" : null);
                 else File.Move(temp, path);
             }
             catch (Exception)
             {
                 try { if (File.Exists(temp)) File.Delete(temp); } catch (Exception) { }
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// File.Replace, tried again for up to about a second while Windows refuses it because another process (a virus scanner,
+        /// the search indexer) still has the target open for a moment. Two installs in a row rewrite the same journal within
+        /// milliseconds (seen in Unity 2022.3: "unable to remove the file to be replaced").
+        /// </summary>
+        internal static void Replace(string source, string target, string backup)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    File.Replace(source, target, backup);
+                    return;
+                }
+                catch (IOException)
+                {
+                    if (attempt >= 9 || !File.Exists(source)) throw;
+                    System.Threading.Thread.Sleep(100);
+                }
             }
         }
     }

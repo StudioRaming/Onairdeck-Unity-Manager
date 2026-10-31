@@ -177,6 +177,58 @@ namespace OnAirDeck.UnityManager
             return request != null && request.purchase != null && !string.IsNullOrEmpty(request.purchase.item_id);
         }
 
+        /// <summary>
+        /// The order to install the licenses one import grants (indexes into <paramref name="packages"/>, one package name per license, ""
+        /// for a license with only files). An add-on, named "&lt;other&gt;.&lt;suffix&gt;" after a package of the same import, goes before
+        /// that package: it brings the exact version of it that it pins, and the package's own step is then skipped. File-only licenses
+        /// go last (their .unitypackage import ends the run). Otherwise the given order.
+        /// </summary>
+        public static List<int> InstallOrder(IList<string> packages)
+        {
+            var order = new List<int>();
+            for (var i = 0; i < packages.Count; i++) order.Add(i);
+            Func<int, int> depth = i =>
+            {
+                var name = packages[i] ?? "";
+                if (name.Length == 0) return -1;
+                var n = 0;
+                foreach (var other in packages)
+                    if (!string.IsNullOrEmpty(other) && name.Length > other.Length + 1 && name.StartsWith(other + ".", StringComparison.Ordinal)) n++;
+                return n;
+            };
+            order.Sort((a, b) => { var d = depth(b).CompareTo(depth(a)); return d != 0 ? d : a.CompareTo(b); });
+            return order;
+        }
+
+        /// <summary>
+        /// Every exact version of <paramref name="package"/> that a package installed earlier in the run (<paramref name="installed"/>,
+        /// as its package.json now reads) needs, directly or through the packages it depends on (followed also behind a range, read with
+        /// <paramref name="read"/>, the project's package.json of a name); empty when nothing installed in the run pins it. One version:
+        /// the import installs exactly that one, never the package's own newest, which would break the pin. Two or more: the pins
+        /// conflict and the import must stop. The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
+        /// </summary>
+        public static List<string> PinnedVersions(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
+        {
+            var pins = new List<string>();
+            if (string.IsNullOrEmpty(package)) return pins;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var queue = new Queue<PackageManifest>();
+            foreach (var manifest in installed) if (manifest != null && seen.Add(manifest.Name ?? "")) queue.Enqueue(manifest);
+            while (queue.Count > 0)
+            {
+                var manifest = queue.Dequeue();
+                foreach (var dependency in manifest.VpmDependencies)
+                    if (dependency.Key == package && !pins.Contains(dependency.Value)) pins.Add(dependency.Value);
+                foreach (var name in manifest.VpmDependencyNames)
+                {
+                    if (read == null || !seen.Add(name)) continue;
+                    var next = read(name);
+                    if (next != null) queue.Enqueue(next);
+                }
+            }
+            return pins;
+        }
+
         /// <summary>The confirm's answer: Import goes on (null), Cancel is declined, Not this project gives the request back.</summary>
         public static ImportOutcome FromChoice(int choice)
         {

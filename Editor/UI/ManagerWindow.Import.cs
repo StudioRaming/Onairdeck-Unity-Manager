@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -51,13 +53,89 @@ namespace OnAirDeck.UnityManager
             }
             RebuildIfNeeded();
 
-            var entry = FindImportEntry(request);
-            if (entry == null) return ImportOutcome.Failed("not_available");
+            var entries = FindImportEntries(request);
+            if (entries.Count == 0) return ImportOutcome.Failed("not_available");
             _view = (int)View.Main;
-            _selectedKey = entry.Key;
+            _selectedKey = entries[0].Key;
             Repaint();
 
-            if (entry.Kind == FavoriteKind.Purchase) return await DoDownloadAsync(entry, true);
+            if (entries[0].Kind == FavoriteKind.Purchase) return await DoDownloadAsync(entries[0], true);
+            if (entries.Count == 1) return await InstallLicenseEntry(entries[0], willInstall);
+
+            // An item that grants several licenses (a MingToon Founders edition: Core, the URP add-on, MLC) installs all of them under
+            // the one confirm. Every install ends with a refresh, and a reload in the middle would drop the rest: reloads wait until
+            // the last step, as in a batch. A step that does not end here and now (failed, declined, or waiting for an import or a
+            // hand-off) ends the run with its outcome; what was installed before it stays, and the rest can be installed from the list.
+            var root = PackageInstallService.ProjectRoot;
+            var before = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+                if (entry.PackageName.Length > 0) before[entry.PackageName] = InstalledPackages.InstalledVersion(root, entry.PackageName);
+            ImportOutcome last = null;
+            var installed = new List<string>();
+            EditorApplication.LockReloadAssemblies();
+            try
+            {
+                foreach (var index in ImportRequestLogic.InstallOrder(entries.ConvertAll(e => e.PackageName)))
+                {
+                    var entry = entries[index];
+                    LicenseVersionEntry pinnedRow = null;
+                    if (entry.PackageName.Length > 0)
+                    {
+                        var now = InstalledPackages.InstalledVersion(root, entry.PackageName);
+                        // A package installed before needs an exact version of this one: that version, never this one's newest. Pins that
+                        // disagree, or a pinned version this license does not offer, end the run: installing anything else breaks a pin.
+                        // Read from disk now: a later step may have replaced a package installed before.
+                        var current = installed.ConvertAll(name => InstalledPackages.Read(root, name));
+                        // One that cannot be read now may pin this package: never guess "no pin".
+                        var unread = installed.Find(name => current[installed.IndexOf(name)] == null);
+                        if (unread != null)
+                        {
+                            SetMessage(ManagerText.ImpReadFail.Replace("{p}", unread), MessageType.Error);
+                            return ImportOutcome.Failed("install_failed");
+                        }
+                        // The same for a package they depend on: a folder that is here but cannot be read may hold the pin.
+                        string unreadDependency = null;
+                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, current, name =>
+                        {
+                            var manifest = InstalledPackages.Read(root, name);
+                            if (manifest == null && unreadDependency == null && Directory.Exists(InstalledPackages.FolderOf(root, name))) unreadDependency = name;
+                            return manifest;
+                        });
+                        if (unreadDependency != null)
+                        {
+                            SetMessage(ManagerText.ImpReadFail.Replace("{p}", unreadDependency), MessageType.Error);
+                            return ImportOutcome.Failed("install_failed");
+                        }
+                        if (pins.Count > 0)
+                        {
+                            if (pins.Count == 1 && now == pins[0]) continue;   // the add-on found or brought it
+                            var row = pins.Count == 1 ? entry.Versions.Find(r => r.License != null && r.License.IsPackage
+                                && r.License.package_name == entry.PackageName && r.License.package_version == pins[0]) : null;
+                            if (row == null)
+                            {
+                                SetMessage(ManagerText.ImpPinFail.Replace("{p}", entry.PackageName).Replace("{v}", string.Join(", ", pins.ToArray())), MessageType.Error);
+                                return ImportOutcome.Failed("install_failed");
+                            }
+                            pinnedRow = row.License;
+                        }
+                        else if (now != before[entry.PackageName]) continue;   // it came with a step before
+                    }
+                    _selectedKey = entry.Key;
+                    var outcome = pinnedRow != null ? await DoInstallAsync(entry, pinnedRow, true, willInstall) : await InstallLicenseEntry(entry, willInstall);
+                    if (outcome.Report != ImportReport.Done) return outcome;
+                    if (entry.PackageName.Length > 0) installed.Add(entry.PackageName);
+                    last = outcome;
+                }
+            }
+            finally
+            {
+                EditorApplication.UnlockReloadAssemblies();
+            }
+            return last ?? ImportOutcome.Failed("not_available");
+        }
+
+        private async Task<ImportOutcome> InstallLicenseEntry(CatalogEntry entry, Action<string, string> willInstall)
+        {
             var package = OfferedPackage(entry);
             if (package != null) return await DoInstallAsync(entry, package, true, willInstall);
             var file = OfferedFileVersion(entry);
@@ -66,33 +144,35 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The list entry a request is for: the purchase of exactly that item, else the license the item grants or the license of a
-        /// license request, when that license has something to install here. The list shows one row per product, so a second line
+        /// The list entries a request is for: the purchase of exactly that item, else every license the item grants (or the license of a
+        /// license request) that has something to install here, each row once. The list shows one row per product, so a second line
         /// item of the same product gets an entry of its own here: another item of the product must never be downloaded in its
         /// place (the first download of an item ends its refund).
         /// </summary>
-        private CatalogEntry FindImportEntry(ImportRequest request)
+        private List<CatalogEntry> FindImportEntries(ImportRequest request)
         {
-            if (_entries == null) return null;
+            var found = new List<CatalogEntry>();
+            if (_entries == null) return found;
             if (request.kind == "item" && _purchases != null)
             {
                 foreach (var item in _purchases)
                 {
                     if (item == null || item.item_id != request.item_id || !item.ShownInUnity || !item.HasUnityFiles) continue;
                     foreach (var entry in _entries)
-                        if (entry.Purchase != null && ReferenceEquals(entry.Purchase, item)) return entry;
-                    return new CatalogEntry { Key = "import:" + item.item_id, Kind = FavoriteKind.Purchase, Purchase = item, Name = item.name ?? "" };
+                        if (entry.Purchase != null && ReferenceEquals(entry.Purchase, item)) { found.Add(entry); return found; }
+                    found.Add(new CatalogEntry { Key = "import:" + item.item_id, Kind = FavoriteKind.Purchase, Purchase = item, Name = item.name ?? "" });
+                    return found;
                 }
             }
-            var licenseIds = new System.Collections.Generic.List<string>();
+            var licenseIds = new List<string>();
             if (!string.IsNullOrEmpty(request.license_id)) licenseIds.Add(request.license_id);
             if (request.licenses != null)
                 foreach (var license in request.licenses)
                     if (license != null && !string.IsNullOrEmpty(license.license_id)) licenseIds.Add(license.license_id);
             foreach (var id in licenseIds)
                 foreach (var entry in _entries)
-                    if (entry.IsLicense && entry.LicenseId == id && (OfferedPackage(entry) != null || OfferedFileVersion(entry) != null)) return entry;
-            return null;
+                    if (entry.HoldsLicense(id) && !found.Contains(entry) && (OfferedPackage(entry) != null || OfferedFileVersion(entry) != null)) found.Add(entry);
+            return found;
         }
     }
 }

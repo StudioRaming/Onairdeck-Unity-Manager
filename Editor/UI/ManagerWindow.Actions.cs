@@ -25,7 +25,7 @@ namespace OnAirDeck.UnityManager
 
         private bool Busy
         {
-            get { return _workKey != null || (_batch != null && _batch.IsRunning) || _applyingSelfUpdate || _applyingUpdate != null || HandoffWaiting; }
+            get { return _workKey != null || (_batch != null && _batch.IsRunning) || _applyingSelfUpdate || HandoffWaiting || AutoUpdater.Running; }
         }
 
         /// <summary>0 nothing, 1 working on this entry now, 2 waiting in a running batch.</summary>
@@ -322,6 +322,8 @@ namespace OnAirDeck.UnityManager
             try
             {
                 await LicenseService.IssueSellerLicenseAsync(token, _licenses, entry.LicenseId, true);
+                // A merged row (same package in two licenses) stands for each of them; every one gets its file again.
+                foreach (var other in entry.AlsoLicenseIds) await LicenseService.IssueSellerLicenseAsync(token, _licenses, other, true);
                 SetMessage(ManagerText.LicenseReissued, MessageType.Info);
             }
             catch (SessionExpiredException e)

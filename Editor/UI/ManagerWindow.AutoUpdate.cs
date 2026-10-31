@@ -1,0 +1,104 @@
+using System;
+using OnAirDeck.UnityManager.Theme;
+using UnityEditor;
+using UnityEngine;
+
+namespace OnAirDeck.UnityManager
+{
+    /// <summary>
+    /// The window's half of the automatic self-update (<see cref="AutoUpdater"/>): asks on open and once a day while open, installs a
+    /// newer release at a safe moment, and shows once what happened ("업데이트됨 a → b", or the rollback).
+    /// </summary>
+    internal sealed partial class ManagerWindow
+    {
+        private const double AutoTickSeconds = 5;
+        [NonSerialized] private double _autoNextTick;
+        [NonSerialized] private bool _checkingUpdate;
+        [NonSerialized] private long _nextCheckAttempt;
+        [NonSerialized] private SelfUpdateRecord _autoNote;
+        [NonSerialized] private string _autoNoteKind;
+        // No check ever ran in this project: the Manager was just installed (maybe from an old file), so it goes to the latest first.
+        [NonSerialized] private bool _firstRun;
+
+        private void OnEnableAutoUpdate()
+        {
+            _firstRun = AutoUpdater.LastCheck == 0;
+            _autoNote = AutoUpdater.PendingNote(out _autoNoteKind);
+            EditorApplication.update -= AutoUpdateTick;
+            EditorApplication.update += AutoUpdateTick;
+        }
+
+        private void OnDisableAutoUpdate()
+        {
+            EditorApplication.update -= AutoUpdateTick;
+        }
+
+        private void AutoUpdateTick()
+        {
+            if (EditorApplication.timeSinceStartup < _autoNextTick) return;
+            _autoNextTick = EditorApplication.timeSinceStartup + AutoTickSeconds;
+            var now = AutoUpdater.Now();
+            var retry = _nextCheckAttempt > 0 && now >= _nextCheckAttempt;   // a failed check, due again after 10 minutes
+            if (!_checkingUpdate && (retry || (_nextCheckAttempt == 0 && AutoUpdateLogic.CheckDue(false, now, AutoUpdater.LastCheck))))
+            {
+                CheckForUpdate(false, retry);
+                return;
+            }
+            TryAutoUpdate();
+        }
+
+        /// <summary>Installs the newer release by itself when this install can take it, it did not fail here before, and nothing is running.</summary>
+        private async void TryAutoUpdate()
+        {
+            var state = _update;
+            if (state == null || !state.HasLatest || AutoUpdater.Running) return;
+            var action = AutoUpdateLogic.Decide(state.UpdateAvailable || state.MustUpdate, state.CanApply, state.Response.latest.version,
+                AutoUpdater.LoadedVersion, AutoUpdater.BlockedVersion(), AutoUpdater.Moment(Busy));
+            if (action != AutoUpdateAction.Apply) return;
+            _applyingSelfUpdate = true;
+            SetMessage(ManagerText.AuRunning.Replace("{v}", state.Response.latest.version), MessageType.Info);
+            Repaint();
+            try
+            {
+                var error = await AutoUpdater.ApplyAsync(state, _firstRun);
+                if (error == "deferred") SetMessage(null, MessageType.None);   // the moment turned unsafe during the download: next tick
+                else if (error != null) SetMessage(ManagerText.AuFailed.Replace("{v}", state.Response.latest.version).Replace("{m}", error), MessageType.Warning);
+            }
+            catch (Exception e)
+            {
+                SetMessage(ManagerText.AuFailed.Replace("{v}", state.Response.latest.version).Replace("{m}", e.Message), MessageType.Warning);
+                _messageReport = ManagerErrorWatch.OfferCaught("Updating the Manager automatically", e);
+            }
+            finally
+            {
+                _applyingSelfUpdate = false;
+                Repaint();
+            }
+        }
+
+        /// <summary>The note of the last automatic update, shown once above every screen (also signed out); 0 when there is none.</summary>
+        private float DrawAutoUpdateNote(Rect body)
+        {
+            if (_autoNote == null || _autoNoteKind == null) return 0f;
+            var close = new BarButton { Label = ManagerText.Close, Kind = SRButtonKind.Ghost, Enabled = true, Click = CloseAutoUpdateNote };
+            if (_autoNoteKind == "updated")
+                return DrawBar(body, SRTone.Brand, (_autoNote.FirstRun ? ManagerText.AuFirst : ManagerText.AuDone).Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
+            return DrawBar(body, SRTone.Warning, ManagerText.AuBack.Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
+        }
+
+        /// <summary>Installs, batches and hand-offs of any window, but not a self-update: what must not overlap the swap.</summary>
+        private static bool AnyWindowWorking()
+        {
+            foreach (var window in Resources.FindObjectsOfTypeAll<ManagerWindow>())
+                if (window != null && (window._workKey != null || (window._batch != null && window._batch.IsRunning) || window.HandoffWaiting)) return true;
+            return false;
+        }
+
+        private void CloseAutoUpdateNote()
+        {
+            AutoUpdater.NoteSeen(_autoNote);
+            _autoNote = null;
+            _autoNoteKind = null;
+        }
+    }
+}

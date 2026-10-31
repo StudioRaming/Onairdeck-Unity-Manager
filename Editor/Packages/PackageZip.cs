@@ -16,6 +16,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<KeyValuePair<string, string>> VpmDependencies = new List<KeyValuePair<string, string>>();
         /// <summary>The same dependencies with the value exactly as package.json wrote it ("=0.1.16" or "0.1.16"), same order.</summary>
         public readonly List<KeyValuePair<string, string>> VpmDependenciesRaw = new List<KeyValuePair<string, string>>();
+        /// <summary>Every vpmDependencies name, a range too (an installed package read without strict checks keeps its ranges here only).</summary>
+        public readonly List<string> VpmDependencyNames = new List<string>();
         /// <summary>Contract v9: "atelier": {"replacesAssetFolders": [...]} as written; unchecked, LegacyInstall applies the guard rails.</summary>
         public readonly List<string> ReplacesAssetFolders = new List<string>();
         /// <summary>"atelier": {"legacyInventory": "&lt;path in zip&gt;"}: the file listing exactly what the old Assets install held; "" when absent.</summary>
@@ -109,6 +111,7 @@ namespace OnAirDeck.UnityManager
                 foreach (var pair in map)
                 {
                     var raw = pair.Value as string;
+                    manifest.VpmDependencyNames.Add(pair.Key);
                     string version;
                     if (!PackageVersion.TryParsePin(raw, out version))
                     {

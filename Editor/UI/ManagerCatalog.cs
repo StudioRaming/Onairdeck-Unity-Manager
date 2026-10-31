@@ -47,8 +47,31 @@ namespace OnAirDeck.UnityManager
         public EntryState State = EntryState.None;
         public int MaxDevices;
         public int DevicesUsed;
+        /// <summary>License: the other licenses of the account this row also stands for (same package, see ManagerCatalog.MergeSamePackage).</summary>
+        public readonly List<string> AlsoLicenseIds = new List<string>();
 
         public bool IsLicense { get { return Kind == FavoriteKind.License; } }
+
+        /// <summary>The favorites and new-purchase keys of this row: its own, and those of the licenses it stands for.</summary>
+        public List<string> Keys
+        {
+            get
+            {
+                var keys = new List<string> { Key };
+                foreach (var id in AlsoLicenseIds)
+                {
+                    var key = FavoritesLogic.EntryKey(FavoriteKind.License, id);
+                    if (key != null) keys.Add(key);
+                }
+                return keys;
+            }
+        }
+
+        /// <summary>True when this row is the license <paramref name="licenseId"/> or stands for it.</summary>
+        public bool HoldsLicense(string licenseId)
+        {
+            return IsLicense && !string.IsNullOrEmpty(licenseId) && (LicenseId == licenseId || AlsoLicenseIds.Contains(licenseId));
+        }
         public bool HasPackageVersions { get { return Kind == FavoriteKind.License && !string.IsNullOrEmpty(PackageName); } }
         public bool HasDeviceLimit { get { return Kind == FavoriteKind.License && MaxDevices > 0; } }
         public string LicenseId { get { return License != null ? License.license_id : ""; } }
@@ -90,16 +113,116 @@ namespace OnAirDeck.UnityManager
             }
             if (licenses != null)
             {
-                foreach (var license in licenses)
+                var also = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                foreach (var license in MergeSamePackage(licenses, also))
                 {
                     if (license == null) continue;
                     var key = FavoritesLogic.EntryKey(FavoriteKind.License, license.license_id);
                     if (key == null || !keys.Add(key)) continue;
                     var entry = FromLicense(key, license, installedVersion, markerLicenseIds, installRecords);
-                    if (entry != null) list.Add(entry);
+                    if (entry == null) continue;
+                    List<string> ids;
+                    if (also.TryGetValue(license.license_id, out ids)) entry.AlsoLicenseIds.AddRange(ids);
+                    list.Add(entry);
                 }
             }
             return list;
+        }
+
+        /// <summary>
+        /// Licenses of the account that carry the same package are one row (MingToon: the free Core license and the commercial one,
+        /// owner decision 2026-10-31). The row is the stronger license (more rights, then more package versions, then the lower id),
+        /// with one entry per version label from all of them (a package version and its installer file share the label, so they come
+        /// together); for a label both offer, the zip and the installer each come from the row's license, or from the other one first
+        /// when the row's license has a device limit, and each from whichever license has it. Downloading either version works, since the account holds both licenses; the
+        /// license files are planned from the account's real list, so every held license still gets its own file. A license with a
+        /// device limit keeps its own row, so its devices stay manageable. <paramref name="merged"/> gets row id to the ids folded in.
+        /// </summary>
+        internal static List<LicenseEntry> MergeSamePackage(LicenseEntry[] licenses, IDictionary<string, List<string>> merged)
+        {
+            var result = new List<LicenseEntry>();
+            if (licenses == null) return result;
+            var groups = new Dictionary<string, List<LicenseEntry>>(StringComparer.Ordinal);
+            foreach (var license in licenses)
+            {
+                var package = PackageOf(license);
+                if (package.Length == 0) continue;
+                List<LicenseEntry> group;
+                if (!groups.TryGetValue(package, out group)) groups[package] = group = new List<LicenseEntry>();
+                group.Add(license);
+            }
+            var replaced = new Dictionary<LicenseEntry, LicenseEntry>();
+            var folded = new HashSet<LicenseEntry>();
+            foreach (var group in groups.Values)
+            {
+                if (group.Count < 2) continue;
+                group.Sort(Stronger);
+                var primary = group[0];
+                var members = new List<LicenseEntry>();
+                var ids = new List<string>();
+                for (var i = 1; i < group.Count; i++)
+                {
+                    var other = group[i];
+                    if (other.max_devices > 0) continue;
+                    members.Add(other);
+                    ids.Add(other.license_id);
+                    folded.Add(other);
+                }
+                if (ids.Count == 0) continue;
+                // A version both licenses offer is downloaded through one without a device limit when the row's own license has one:
+                // a full seat count must not stop an install the other license allows.
+                if (primary.max_devices > 0) members.Add(primary); else members.Insert(0, primary);
+                // Per label, the package zip comes from the first license in that order that has one, and the other files of the label
+                // (the legacy installer) from the first that has them, so a lone zip never hides the other license's installer.
+                var zipFrom = new Dictionary<string, LicenseEntry>(StringComparer.Ordinal);
+                var filesFrom = new Dictionary<string, LicenseEntry>(StringComparer.Ordinal);
+                foreach (var member in members)
+                    foreach (var v in member.versions ?? new LicenseVersionEntry[0])
+                    {
+                        if (v == null) continue;
+                        var from = v.IsPackage ? zipFrom : filesFrom;
+                        if (!from.ContainsKey(v.version_label ?? "")) from[v.version_label ?? ""] = member;
+                    }
+                var versions = new List<LicenseVersionEntry>();
+                foreach (var member in members)
+                    foreach (var v in member.versions ?? new LicenseVersionEntry[0])
+                        if (v != null && (v.IsPackage ? zipFrom : filesFrom)[v.version_label ?? ""] == member) versions.Add(v);
+                replaced[primary] = primary.WithVersions(versions.ToArray());
+                merged[primary.license_id] = ids;
+            }
+            foreach (var license in licenses)
+            {
+                if (license == null || folded.Contains(license)) continue;
+                LicenseEntry row;
+                result.Add(replaced.TryGetValue(license, out row) ? row : license);
+            }
+            return result;
+        }
+
+        /// <summary>The package of a license's newest package version, "" when it has none.</summary>
+        private static string PackageOf(LicenseEntry license)
+        {
+            if (license == null || license.versions == null || string.IsNullOrEmpty(license.license_id)) return "";
+            LicenseVersionEntry newest = null;
+            foreach (var v in license.versions)
+                if (v != null && v.IsPackage && (newest == null || PackageVersion.Compare(v.package_version, newest.package_version) > 0)) newest = v;
+            return newest != null ? newest.package_name : "";
+        }
+
+        private static int Stronger(LicenseEntry a, LicenseEntry b)
+        {
+            var rights = (b.rights != null ? b.rights.Length : 0).CompareTo(a.rights != null ? a.rights.Length : 0);
+            if (rights != 0) return rights;
+            var count = PackageCount(b).CompareTo(PackageCount(a));
+            if (count != 0) return count;
+            return string.CompareOrdinal(a.license_id, b.license_id);
+        }
+
+        private static int PackageCount(LicenseEntry license)
+        {
+            var n = 0;
+            if (license.versions != null) foreach (var v in license.versions) if (v != null && v.IsPackage) n++;
+            return n;
         }
 
         private static CatalogEntry FromPurchase(string key, PurchaseItem item)
