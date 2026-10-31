@@ -212,7 +212,7 @@ namespace OnAirDeck.UnityManager
         /// Asks plugin-version when the window opens (not again within 10 minutes) and once a day while it stays open (the session's
         /// answer is reused in between), then lets the automatic update decide.
         /// </summary>
-        private async void CheckForUpdate(bool onOpen)
+        private async void CheckForUpdate(bool onOpen, bool force = false)
         {
             if (_checkingUpdate) return;
             _checkingUpdate = true;
@@ -220,11 +220,15 @@ namespace OnAirDeck.UnityManager
             {
                 UpdateState state;
                 var now = AutoUpdater.Now();
-                if (AutoUpdateLogic.CheckDue(onOpen, now, AutoUpdater.LastCheck))
+                if (force || AutoUpdateLogic.CheckDue(onOpen, now, AutoUpdater.LastCheck))
                 {
                     state = await UpdateService.CheckAsync();
-                    if (state != null && state.Response != null) AutoUpdater.LastCheck = now;
-                    else _nextCheckAttempt = now + AutoUpdateLogic.RetrySeconds;   // offline or a server error: not again on every tick
+                    if (state != null && state.Response != null)
+                    {
+                        AutoUpdater.LastCheck = now;
+                        _nextCheckAttempt = 0;
+                    }
+                    else _nextCheckAttempt = now + AutoUpdateLogic.RetrySeconds;   // offline or a server error: again in 10 minutes, not every tick
                 }
                 else state = await UpdateService.CheckOncePerSessionAsync();
                 if (state != null && (state.Response != null || _update == null)) _update = state;

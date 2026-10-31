@@ -91,6 +91,14 @@ namespace OnAirDeck.UnityManager.EditModeTests
             Assert.AreEqual("embedded", seen.Route);
             Assert.AreEqual(newer, AutoUpdater.BlockedVersion(), "an update in progress blocks another automatic one");
 
+            // While it settles (no reload yet), nothing may start another update over it, not even a click.
+            var second = AutoUpdater.ApplyAsync(state, false, true);
+            yield return Await(second, 30);
+            StringAssert.Contains("still settling", second.Result);
+            // As after the reload: the update is done; a later failure of the same release blocks only automatic installs.
+            var settled = AutoUpdateLogic.Load(PackageInstallService.ProjectRoot);
+            settled.Phase = SelfUpdateRecord.PhaseShown;
+            AutoUpdateLogic.Save(PackageInstallService.ProjectRoot, settled);
             AutoUpdater.ApplySeam = (s, record) => { throw new PackageInstallException("download failed"); };
             var failing = AutoUpdater.ApplyAsync(state);
             yield return Await(failing, 30);

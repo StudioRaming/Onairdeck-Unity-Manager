@@ -44,8 +44,11 @@ namespace OnAirDeck.UnityManager
     /// <summary>One folder an update swapped and where its previous contents went (the install transaction's backup).</summary>
     internal sealed class SelfUpdateSwap
     {
+        public string Name = "";
         public string Target = "";
         public string Backup = "";
+        /// <summary>The rollback has put this folder back (saved after each folder, so a cut rollback resumes after it).</summary>
+        public bool Restored;
     }
 
     /// <summary>
@@ -82,6 +85,8 @@ namespace OnAirDeck.UnityManager
         public string ManifestBackup = "";
         /// <summary>Git: the package id to add back (name@url#tag) when the new version does not compile.</summary>
         public string OldPackageId = "";
+        /// <summary>The Manager's package name (its logical path Packages/&lt;name&gt;/ is what the compiler reports, whatever the route).</summary>
+        public string PackageName = "";
         public string Error = "";
         public string Updated = "";
         /// <summary>The first check of this project found the release (an old .unitypackage or a pinned git URL was installed): "최신 버전으로 업데이트했어요".</summary>
@@ -126,6 +131,12 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>The release no automatic install may take now: one being installed or rolled back, or one that failed. "" when none.</summary>
+        /// <summary>An update is in flight or being undone: no other update, by a click either, may start (it would overwrite the record and the backup).</summary>
+        public static bool InFlight(SelfUpdateRecord record)
+        {
+            return record != null && (record.Phase == SelfUpdateRecord.PhaseApplying || record.Phase == SelfUpdateRecord.PhaseRestoring);
+        }
+
         public static string BlockedVersion(SelfUpdateRecord record)
         {
             if (record == null) return "";
@@ -179,10 +190,19 @@ namespace OnAirDeck.UnityManager
         public static bool ErrorInUpdate(SelfUpdateRecord record, string projectRoot, string file)
         {
             if (record == null || string.IsNullOrEmpty(file)) return false;
+            // Embedded: nothing of the update is on disk until the swap is recorded; an error before it is the old code's own.
+            if (record.Route == "embedded" && record.Swaps.Count == 0) return false;
+            var logical = file.Replace('\\', '/');
+            var names = new List<string>();
+            foreach (var swap in record.Swaps) if (!string.IsNullOrEmpty(swap.Name)) names.Add(swap.Name);
+            if (record.PackageName.Length > 0) names.Add(record.PackageName);
+            // The compiler names a package's file by its logical path, the same for an embedded folder and a git copy in the cache.
+            foreach (var name in names)
+                if (logical.StartsWith("Packages/" + name + "/", StringComparison.OrdinalIgnoreCase)) return true;
             var full = Normalize(Path.IsPathRooted(file) ? file : Path.Combine(projectRoot, file));
             var folders = new List<string>();
             foreach (var swap in record.Swaps) folders.Add(swap.Target);
-            if (record.PackageFolder.Length > 0) folders.Add(record.PackageFolder);
+            if (record.Route == "embedded" && record.PackageFolder.Length > 0) folders.Add(record.PackageFolder);
             foreach (var folder in folders)
             {
                 if (string.IsNullOrEmpty(folder)) continue;
@@ -235,6 +255,7 @@ namespace OnAirDeck.UnityManager
                     ManifestPath = MiniJson.GetString(root, "manifestPath") ?? "",
                     ManifestBackup = MiniJson.GetString(root, "manifestBackup") ?? "",
                     OldPackageId = MiniJson.GetString(root, "oldPackageId") ?? "",
+                    PackageName = MiniJson.GetString(root, "packageName") ?? "",
                     Error = MiniJson.GetString(root, "error") ?? "",
                     Updated = MiniJson.GetString(root, "updated") ?? "",
                     FirstRun = MiniJson.GetString(root, "firstRun") == "1",
@@ -245,7 +266,11 @@ namespace OnAirDeck.UnityManager
                     foreach (var item in (List<object>)swaps)
                     {
                         var swap = item as Dictionary<string, object>;
-                        if (swap != null) record.Swaps.Add(new SelfUpdateSwap { Target = MiniJson.GetString(swap, "target") ?? "", Backup = MiniJson.GetString(swap, "backup") ?? "" });
+                        if (swap != null) record.Swaps.Add(new SelfUpdateSwap
+                        {
+                            Name = MiniJson.GetString(swap, "name") ?? "", Target = MiniJson.GetString(swap, "target") ?? "",
+                            Backup = MiniJson.GetString(swap, "backup") ?? "", Restored = MiniJson.GetString(swap, "restored") == "1",
+                        });
                     }
                 return record;
             }
@@ -267,11 +292,12 @@ namespace OnAirDeck.UnityManager
             root["backup"] = record.Backup;
             var swaps = new List<object>();
             foreach (var swap in record.Swaps)
-                swaps.Add(new Dictionary<string, object> { { "target", swap.Target }, { "backup", swap.Backup } });
+                swaps.Add(new Dictionary<string, object> { { "name", swap.Name }, { "target", swap.Target }, { "backup", swap.Backup }, { "restored", swap.Restored ? "1" : "" } });
             root["swaps"] = swaps;
             root["manifestPath"] = record.ManifestPath;
             root["manifestBackup"] = record.ManifestBackup;
             root["oldPackageId"] = record.OldPackageId;
+            root["packageName"] = record.PackageName;
             root["error"] = record.Error;
             root["firstRun"] = record.FirstRun ? "1" : "";
             root["manual"] = record.Manual ? "1" : "";
@@ -286,7 +312,7 @@ namespace OnAirDeck.UnityManager
             record.Swaps.Clear();
             foreach (var entry in report.Installed)
             {
-                record.Swaps.Add(new SelfUpdateSwap { Target = entry.Target, Backup = entry.Backup });
+                record.Swaps.Add(new SelfUpdateSwap { Name = entry.Name, Target = entry.Target, Backup = entry.Backup });
                 if (entry.Name == packageName) record.Backup = entry.Backup;
             }
             if (report.ManifestUpdated && report.ManifestBackup.Length > 0)
@@ -303,12 +329,21 @@ namespace OnAirDeck.UnityManager
         /// "&lt;backup&gt;-failed" and the old ones come back from the backup; a folder the update created (no backup) is emptied into
         /// "-failed". A folder whose restore fails mid-way is put back the way it was before the restore started, and the error goes up.
         /// </summary>
-        public static void RestoreAll(SelfUpdateRecord record)
+        /// <param name="failedRoot">Where the new contents of a folder the update created go (outside Packages/, so Unity no longer sees
+        /// that package): Library/OnAirDeck/Backup.</param>
+        /// <param name="saveProgress">Called after each folder is back (<see cref="SelfUpdateSwap.Restored"/> set), so a cut rollback resumes
+        /// after it instead of finding that folder's backup empty.</param>
+        public static void RestoreAll(SelfUpdateRecord record, string failedRoot, Action saveProgress)
         {
-            var swaps = new List<SelfUpdateSwap>(record.Swaps);
-            if (swaps.Count == 0 && record.PackageFolder.Length > 0) swaps.Add(new SelfUpdateSwap { Target = record.PackageFolder, Backup = record.Backup });
-            if (swaps.Count == 0) throw new PackageInstallException("There is nothing recorded to put back.");
-            for (var i = swaps.Count - 1; i >= 0; i--) RestoreBackup(swaps[i].Target, swaps[i].Backup);
+            if (record.Swaps.Count == 0) throw new PackageInstallException("There is nothing recorded to put back.");
+            for (var i = record.Swaps.Count - 1; i >= 0; i--)
+            {
+                var swap = record.Swaps[i];
+                if (swap.Restored) continue;
+                RestoreBackup(swap.Target, swap.Backup, failedRoot);
+                swap.Restored = true;
+                if (saveProgress != null) saveProgress();
+            }
             if (record.ManifestBackup.Length > 0 && File.Exists(record.ManifestBackup) && record.ManifestPath.Length > 0)
                 AtomicFile.Write(record.ManifestPath, File.ReadAllText(record.ManifestBackup, Encoding.UTF8));
         }
@@ -317,14 +352,18 @@ namespace OnAirDeck.UnityManager
         /// One folder back from its backup. Throws before anything moves when the folder is gone or a backup is named but missing or
         /// empty; a move that fails puts back what this call already moved, then rethrows.
         /// </summary>
-        public static void RestoreBackup(string packageFolder, string backup)
+        public static void RestoreBackup(string packageFolder, string backup, string failedRoot)
         {
+            var created = string.IsNullOrEmpty(backup);
+            // A folder the update created that is already gone needs nothing.
+            if (created && (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))) return;
             if (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))
                 throw new PackageInstallException("Cannot find the folder the Manager is installed in.");
-            var created = string.IsNullOrEmpty(backup);
             if (!created && (!Directory.Exists(backup) || Directory.GetFileSystemEntries(backup).Length == 0))
                 throw new PackageInstallException("The backup of the previous Manager is gone; it cannot be put back.");
-            var baseName = created ? packageFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "-new"
+            if (created && string.IsNullOrEmpty(failedRoot))
+                throw new PackageInstallException("There is no place outside Packages/ for the files of a package the update added.");
+            var baseName = created ? Path.Combine(failedRoot, Path.GetFileName(packageFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + "-new")
                                    : backup.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var failed = baseName + "-failed";
             for (var n = 2; Directory.Exists(failed); n++) failed = baseName + "-failed-" + n.ToString(CultureInfo.InvariantCulture);
@@ -355,6 +394,12 @@ namespace OnAirDeck.UnityManager
                     catch (Exception) { }
                 }
                 throw;
+            }
+            // A package the update added leaves Packages/ entirely: an empty folder there would still be a folder Unity looks at.
+            if (created)
+            {
+                try { Directory.Delete(packageFolder); }
+                catch (IOException) { }
             }
         }
     }

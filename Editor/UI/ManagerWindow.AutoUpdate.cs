@@ -38,9 +38,10 @@ namespace OnAirDeck.UnityManager
             if (EditorApplication.timeSinceStartup < _autoNextTick) return;
             _autoNextTick = EditorApplication.timeSinceStartup + AutoTickSeconds;
             var now = AutoUpdater.Now();
-            if (!_checkingUpdate && now >= _nextCheckAttempt && AutoUpdateLogic.CheckDue(false, now, AutoUpdater.LastCheck))
+            var retry = _nextCheckAttempt > 0 && now >= _nextCheckAttempt;   // a failed check, due again after 10 minutes
+            if (!_checkingUpdate && (retry || (_nextCheckAttempt == 0 && AutoUpdateLogic.CheckDue(false, now, AutoUpdater.LastCheck))))
             {
-                CheckForUpdate(false);
+                CheckForUpdate(false, retry);
                 return;
             }
             TryAutoUpdate();

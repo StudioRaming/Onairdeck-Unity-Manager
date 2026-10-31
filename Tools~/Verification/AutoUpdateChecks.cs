@@ -13,9 +13,9 @@ internal static class AutoUpdateChecks
         check("auto update decision: only a release newer than the running code that this install can take; never one being installed, rolled back or failed here; waits while an install, import, compile or play mode runs", Decision);
         check("auto update settle: the new version marks the update done; the old one marks it failed, or deferred when it was cut before any swap", Settle);
         check("auto update note: 'updated' once in the new version, 'rolled-back' in the old one, nothing while applying or after it was seen", Note);
-        check("auto update rollback trigger: only an error in a file inside a folder the update swapped (any assembly there)", ErrorScope(project));
+        check("auto update rollback trigger: an error in a package the update swapped (by its logical Packages/<name>/ path, also on the git route), never before the swap is recorded; an update in flight blocks every other", ErrorScope(project));
         check("auto update record: written and read back with every field and every swapped folder; a missing or broken file reads as none", Record(project));
-        check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update created is emptied, the failed files are kept; a missing or empty backup refuses before anything moves", Rollback(project));
+        check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update added leaves Packages/, the failed files are kept, a resumed rollback skips folders already back; nothing recorded or a missing or empty backup refuses before anything moves", Rollback(project));
         check("auto update rollback: a move that fails mid-way puts the folder back as it was before the restore, and says so", RollbackUndo(project));
         check("auto update pref key: the project hash is the same in every run and ignores case", () =>
         {
@@ -119,14 +119,27 @@ internal static class AutoUpdateChecks
         {
             var root = Path.Combine(parent, "autoupdate-scope");
             var manager = Path.Combine(root, "Packages", "com.studioraming.manager");
-            var record = new SelfUpdateRecord { PackageFolder = manager };
-            record.Swaps.Add(new SelfUpdateSwap { Target = manager });
-            record.Swaps.Add(new SelfUpdateSwap { Target = Path.Combine(root, "Packages", "com.studioraming.helper") });
+            var record = new SelfUpdateRecord { Route = "embedded", PackageFolder = manager, PackageName = "com.studioraming.manager" };
+            // Before the swap is recorded nothing of the update is on disk: an error in the Manager's files is its own.
+            Require(!AutoUpdateLogic.ErrorInUpdate(record, root, "Packages/com.studioraming.manager/Editor/A.cs"));
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.manager", Target = manager });
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.helper", Target = Path.Combine(root, "Packages", "com.studioraming.helper") });
             Require(AutoUpdateLogic.ErrorInUpdate(record, root, "Packages/com.studioraming.manager/Editor/NewThing/Broken.cs"));   // a new asmdef too
             Require(AutoUpdateLogic.ErrorInUpdate(record, root, Path.Combine(root, "Packages", "com.studioraming.helper", "Runtime", "A.cs")));
             Require(!AutoUpdateLogic.ErrorInUpdate(record, root, "Assets/Scripts/UserCode.cs"));
             Require(!AutoUpdateLogic.ErrorInUpdate(record, root, "Packages/com.studioraming.manager-old/Editor/A.cs"));   // a sibling, not inside
             Require(!AutoUpdateLogic.ErrorInUpdate(record, root, ""));
+            Require(AutoUpdateLogic.ErrorInUpdate(record, root, "Packages\\com.studioraming.helper\\Editor\\B.cs"));   // the compiler's Windows separators
+            // Git: the package lives in Library/PackageCache under a new hash; the compiler still names it Packages/<name>/.
+            var git = new SelfUpdateRecord { Route = "git", PackageName = "com.studioraming.manager" };
+            Require(AutoUpdateLogic.ErrorInUpdate(git, root, "Packages/com.studioraming.manager/Editor/UI/ManagerWindow.cs"));
+            Require(!AutoUpdateLogic.ErrorInUpdate(git, root, "Packages/com.unity.textmeshpro/Scripts/X.cs"));
+            Require(!AutoUpdateLogic.ErrorInUpdate(git, root, "Assets/Editor/Mine.cs"));
+            // An update in flight or being undone blocks every other update; done, failed and deferred ones do not.
+            Require(AutoUpdateLogic.InFlight(new SelfUpdateRecord { Phase = SelfUpdateRecord.PhaseApplying }));
+            Require(AutoUpdateLogic.InFlight(new SelfUpdateRecord { Phase = SelfUpdateRecord.PhaseRestoring }));
+            Require(!AutoUpdateLogic.InFlight(new SelfUpdateRecord { Phase = SelfUpdateRecord.PhaseFailed }));
+            Require(!AutoUpdateLogic.InFlight(null));
         };
     }
 
@@ -144,15 +157,17 @@ internal static class AutoUpdateChecks
                 ManifestPath = Path.Combine(root, "Packages", "vpm-manifest.json"), ManifestBackup = Path.Combine(root, "Library", "m.json"),
                 OldPackageId = "com.studioraming.manager@https://example.invalid/m.git#0.1.4", Error = "", FirstRun = true, Manual = true,
             };
-            record.Swaps.Add(new SelfUpdateSwap { Target = "t1", Backup = "b1" });
-            record.Swaps.Add(new SelfUpdateSwap { Target = "t2", Backup = "" });
+            record.PackageName = "com.studioraming.manager";
+            record.Swaps.Add(new SelfUpdateSwap { Name = "n1", Target = "t1", Backup = "b1", Restored = true });
+            record.Swaps.Add(new SelfUpdateSwap { Name = "n2", Target = "t2", Backup = "" });
             AutoUpdateLogic.Save(root, record);
             var back = AutoUpdateLogic.Load(root);
             Equal(record.From, back.From); Equal(record.To, back.To); Equal(record.Route, back.Route); Equal(record.Phase, back.Phase);
             Equal(record.PackageFolder, back.PackageFolder); Equal(record.Backup, back.Backup); Equal(record.OldPackageId, back.OldPackageId);
             Equal(record.ManifestPath, back.ManifestPath); Equal(record.ManifestBackup, back.ManifestBackup);
             Require(back.FirstRun && back.Manual);
-            Equal("t1|b1,t2|", string.Join(",", back.Swaps.Select(s => s.Target + "|" + s.Backup)));
+            Equal("n1|t1|b1|True,n2|t2||False", string.Join(",", back.Swaps.Select(s => s.Name + "|" + s.Target + "|" + s.Backup + "|" + s.Restored)));
+            Equal("com.studioraming.manager", back.PackageName);
             Require(back.Updated.Length > 0);
             record.FirstRun = false;
             AutoUpdateLogic.Save(root, record);
@@ -184,24 +199,35 @@ internal static class AutoUpdateChecks
             File.WriteAllText(manifestBackup, "{\"old\":1}");
 
             // Refusals first: nothing moves.
-            try { AutoUpdateLogic.RestoreBackup(folder, Path.Combine(root, "missing")); throw new Exception("a missing backup did not refuse"); }
+            var failedRoot = Path.Combine(root, "Library", "OnAirDeck", "Backup");
+            try { AutoUpdateLogic.RestoreBackup(folder, Path.Combine(root, "missing"), failedRoot); throw new Exception("a missing backup did not refuse"); }
             catch (PackageInstallException) { }
             var empty = Path.Combine(root, "empty");
             Directory.CreateDirectory(empty);
-            try { AutoUpdateLogic.RestoreBackup(folder, empty); throw new Exception("an empty backup did not refuse"); }
+            try { AutoUpdateLogic.RestoreBackup(folder, empty, failedRoot); throw new Exception("an empty backup did not refuse"); }
             catch (PackageInstallException) { }
             Require(File.ReadAllText(Path.Combine(folder, "package.json")).Contains("0.1.5"));
 
             var record = new SelfUpdateRecord { PackageFolder = folder, Backup = backup, ManifestPath = manifest, ManifestBackup = manifestBackup };
-            record.Swaps.Add(new SelfUpdateSwap { Target = helper, Backup = "" });
-            record.Swaps.Add(new SelfUpdateSwap { Target = folder, Backup = backup });
-            AutoUpdateLogic.RestoreAll(record);
+            // With nothing recorded there is nothing to put back: an untouched Manager is never emptied.
+            try { AutoUpdateLogic.RestoreAll(record, failedRoot, null); throw new Exception("an empty record did not refuse"); }
+            catch (PackageInstallException) { }
+            Require(File.Exists(Path.Combine(folder, "Editor", "New.cs")));
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.manager", Target = folder, Backup = backup });
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.helper", Target = helper, Backup = "" });
+            var saves = 0;
+            AutoUpdateLogic.RestoreAll(record, failedRoot, () => saves++);
+            Equal(2, saves);
+            Require(record.Swaps.All(s => s.Restored));
+            // Resumed after a cut: every folder already back is skipped (its backup is empty now and would refuse).
+            AutoUpdateLogic.RestoreAll(record, failedRoot, () => saves++);
+            Equal(2, saves);
             Require(File.ReadAllText(Path.Combine(folder, "package.json")).Contains("0.1.4"));
             Require(File.Exists(Path.Combine(folder, "Editor", "Old.cs")) && !File.Exists(Path.Combine(folder, "Editor", "New.cs")));
             Require(File.Exists(Path.Combine(backup + "-failed", "Editor", "New.cs")));
             Equal(0, Directory.GetFileSystemEntries(backup).Length);
-            Equal(0, Directory.GetFileSystemEntries(helper).Length);   // created by the update: emptied
-            Require(File.Exists(Path.Combine(helper + "-new-failed", "package.json")));
+            Require(!Directory.Exists(helper));   // created by the update: gone from Packages/, so Unity no longer finds it
+            Require(File.Exists(Path.Combine(failedRoot, "com.studioraming.helper-new-failed", "package.json")));
             Equal("{\"old\":1}", File.ReadAllText(manifest));
         };
     }
@@ -222,7 +248,7 @@ internal static class AutoUpdateChecks
             // A file of the backup is held open: the move of it fails after the new files went out.
             using (new FileStream(Path.Combine(backup, "z-old.txt"), FileMode.Open, FileAccess.Read, FileShare.None))
             {
-                try { AutoUpdateLogic.RestoreBackup(folder, backup); throw new Exception("a held file did not stop the restore"); }
+                try { AutoUpdateLogic.RestoreBackup(folder, backup, Path.Combine(root, "Library")); throw new Exception("a held file did not stop the restore"); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }

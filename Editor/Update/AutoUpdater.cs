@@ -125,10 +125,18 @@ namespace OnAirDeck.UnityManager
             var to = state.Response.latest.version;
             if (!AutoUpdateLogic.IsNewer(to, LoadedVersion)) return "The release (" + to + ") is not newer than the running version (" + LoadedVersion + ").";
             if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return "Another update is running.";
+            // An update that is still settling (its reload has not happened) or being undone keeps the record and the backup: nothing,
+            // not even a click, may start another one over it.
+            if (AutoUpdateLogic.InFlight(AutoUpdateLogic.Load(Root)))
+            {
+                Interlocked.Exchange(ref _running, 0);
+                return "An earlier update is still settling; it finishes when Unity reloads the scripts.";
+            }
             var record = new SelfUpdateRecord
             {
                 From = LoadedVersion, To = to, Route = state.UseEmbedded ? "embedded" : "git", Phase = SelfUpdateRecord.PhaseApplying,
                 PackageFolder = state.PackageFolder ?? "", OldPackageId = state.PackageId ?? "", FirstRun = firstRun, Manual = manual,
+                PackageName = !string.IsNullOrEmpty(state.PackageName) ? state.PackageName : NameOf(state.PackageId),
             };
             try
             {
@@ -141,9 +149,20 @@ namespace OnAirDeck.UnityManager
                         state.Response.latest.sha256, UnsafeNow,
                         report =>
                         {
-                            // Before Package Manager and the asset database hear of it: a refresh may compile at once.
+                            // Before Package Manager and the asset database hear of it: a refresh may compile at once. Without this
+                            // record no rollback could find the backups, so a record that cannot be written undoes the swap at once.
                             AutoUpdateLogic.TakeSwaps(record, report, state.PackageName, Root);
-                            AutoUpdateLogic.Save(Root, record);
+                            Exception saveError = null;
+                            for (var attempt = 0; attempt < 5; attempt++)
+                            {
+                                try { AutoUpdateLogic.Save(Root, record); saveError = null; break; }
+                                catch (Exception e) { saveError = e; Thread.Sleep(100); }
+                            }
+                            if (saveError != null)
+                            {
+                                AutoUpdateLogic.RestoreAll(record, PackageTransaction.BackupRoot(Root), null);
+                                throw new PackageInstallException("The update could not be recorded, so it was undone: " + saveError.Message);
+                            }
                         });
                 }
                 else
@@ -209,7 +228,18 @@ namespace OnAirDeck.UnityManager
                 AutoUpdateLogic.Save(Root, record);
                 if (record.Route == "embedded")
                 {
-                    AutoUpdateLogic.RestoreAll(record);
+                    try
+                    {
+                        AutoUpdateLogic.RestoreAll(record, PackageTransaction.BackupRoot(Root), () => AutoUpdateLogic.Save(Root, record));
+                    }
+                    catch (Exception e)
+                    {
+                        // The folder that failed is as it was before; the record stays "restoring" and the next load tries again.
+                        record.Error = "Rollback interrupted: " + e.Message;
+                        try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
+                        Debug.LogError(OnAirDeckConfig.LogPrefix + "Putting the previous Manager back was interrupted (it is tried again on the next load): " + e.Message);
+                        return;
+                    }
                     Finish(record, null);
                     AssetDatabase.Refresh();
                 }
@@ -231,6 +261,14 @@ namespace OnAirDeck.UnityManager
             {
                 Finish(record, e.Message);
             }
+        }
+
+        /// <summary>The package name of a Package Manager id (name@source).</summary>
+        private static string NameOf(string packageId)
+        {
+            if (string.IsNullOrEmpty(packageId)) return "";
+            var at = packageId.IndexOf('@');
+            return at > 0 ? packageId.Substring(0, at) : packageId;
         }
 
         private static void Finish(SelfUpdateRecord record, string error)
