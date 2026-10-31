@@ -379,6 +379,8 @@ namespace OnAirDeck.UnityManager.EditModeTests
         public int ActionStatus = 200;
         public int RenewStatus = 200;
         public byte[] PackageBytes = new byte[0];
+        /// <summary>The plugin-version answer; null answers 404.</summary>
+        public string VersionJson;
         private readonly List<string> _downloads = new List<string>();
         private readonly Dictionary<string, byte[]> _files = new Dictionary<string, byte[]>();
         private readonly Dictionary<string, string> _versionFiles = new Dictionary<string, string>();
@@ -496,6 +498,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
                 else Reply(context, 200, "{\"request_id\":\"" + request.request_id + "\",\"status\":\"" + request.action + "\"}");
             }
             else if (path == "plugin-purchases") Reply(context, 200, _purchasesJson);
+            else if (path == "plugin-version" && VersionJson != null) Reply(context, 200, VersionJson);
             else if (path == "plugin-download")
             {
                 Interlocked.Increment(ref Downloads);

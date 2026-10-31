@@ -51,6 +51,7 @@ internal static class Program
             ImportChecks.Run(Check);
             ConflictChecks.Run(Check, _project);
             MingToonMoveChecks.Run(Check, _project);
+            AutoUpdateChecks.Run(Check, _project);
         }
         finally
         {

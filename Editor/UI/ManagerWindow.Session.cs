@@ -208,18 +208,36 @@ namespace OnAirDeck.UnityManager
 
         // ---------- the Manager's own update ----------
 
-        private async void CheckForUpdate()
+        /// <summary>
+        /// Asks plugin-version when the window opens (not again within 10 minutes) and once a day while it stays open (the session's
+        /// answer is reused in between), then lets the automatic update decide.
+        /// </summary>
+        private async void CheckForUpdate(bool onOpen)
         {
+            if (_checkingUpdate) return;
+            _checkingUpdate = true;
             try
             {
-                var state = await UpdateService.CheckOncePerSessionAsync();
-                if (state != null) _update = state;
+                UpdateState state;
+                var now = AutoUpdater.Now();
+                if (AutoUpdateLogic.CheckDue(onOpen, now, AutoUpdater.LastCheck))
+                {
+                    state = await UpdateService.CheckAsync();
+                    if (state != null && state.Response != null) AutoUpdater.LastCheck = now;
+                }
+                else state = await UpdateService.CheckOncePerSessionAsync();
+                if (state != null && (state.Response != null || _update == null)) _update = state;
             }
             catch (Exception e)
             {
                 ManagerErrorWatch.OfferCaught("Checking for a Manager update", e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update check failed: " + e.Message);
             }
+            finally
+            {
+                _checkingUpdate = false;
+            }
+            TryAutoUpdate();
             Repaint();
         }
 

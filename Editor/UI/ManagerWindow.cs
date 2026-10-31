@@ -133,7 +133,8 @@ namespace OnAirDeck.UnityManager
             ImportRequestWatcher.SetWindowOpen(true);
             OnEnablePackages();
             HookHandoff();
-            CheckForUpdate();
+            OnEnableAutoUpdate();
+            CheckForUpdate(true);
             StartOrReuseConflictScan();
         }
 
@@ -156,6 +157,7 @@ namespace OnAirDeck.UnityManager
             StopConflictScan();
             EditorApplication.update -= PollApplyingUpdate;
             EditorApplication.update -= SignInTick;
+            OnDisableAutoUpdate();
             UnhookHandoff();
         }
 
