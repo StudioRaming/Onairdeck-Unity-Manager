@@ -164,11 +164,24 @@ internal static class ImportChecks
 
         var handoff = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseWaiting, claimed_at = t, wait_since = t, wait_package = true, package_name = "com.seller.tool", package_version = "2.0.0" };
         Equal(ImportReport.Done, ImportRequestLogic.Settle(handoff, t, result, installed).Report);
+        // The installer's own state decides: in place but still checking waits, stopped fails, done needs the version too.
+        Equal(ImportReport.Waiting, ImportRequestLogic.Settle(handoff, t, result, installed, p => "pending").Report);
+        Equal("install_failed", ImportRequestLogic.Settle(handoff, t, result, installed, p => "stopped").Code);
+        Equal(ImportReport.Done, ImportRequestLogic.Settle(handoff, t, result, installed, p => "done").Report);
         handoff.package_version = "2.1.0";
+        Equal("install_failed", ImportRequestLogic.Settle(handoff, t, result, installed, p => "done").Code);
         Equal(ImportReport.Waiting, ImportRequestLogic.Settle(handoff, t, result, installed).Report);
         handoff.wait_since = t - ImportRequestLogic.MaxWaitSeconds - 1;
         Equal("interrupted", ImportRequestLogic.Settle(handoff, t, result, installed).Code);
         Equal(ImportReport.Waiting, ImportOutcome.WaitForImports(new List<string> { "x" }).Report);
+
+        // A reload ended the install path after it queued imports (the queue told the record first): the imports decide.
+        var running = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseRunning, claimed_at = t - 10, wait_imports = new[] { "a" } };
+        Equal(ImportReport.Done, ImportRequestLogic.Resume(running, t, installed, result).Report);
+        running.wait_imports = new[] { "b" };
+        Equal(ImportReport.Waiting, ImportRequestLogic.Resume(running, t, installed, result).Report);
+        running.wait_imports = new string[0];
+        Equal("interrupted", ImportRequestLogic.Resume(running, t, installed, result).Code);
     }
 
     private static void Errors()

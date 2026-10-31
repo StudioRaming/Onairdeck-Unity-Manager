@@ -8,6 +8,12 @@ using OnAirDeck.License;
 
 namespace OnAirDeck.UnityManager
 {
+    /// <summary>What a fix was about to touch changed after the check: nothing was changed, the check runs again.</summary>
+    internal sealed class ConflictChangedException : PackageInstallException
+    {
+        public ConflictChangedException(string path) : base(path + " changed after the project check, so nothing was changed. The check runs again; look at the result first.") { }
+    }
+
     /// <summary>A manifest.json entry the project check took out, with its backup (Library/OnAirDeck/Backup/manifest-&lt;stamp&gt;/).</summary>
     internal sealed class ManifestRemoval
     {
@@ -43,6 +49,13 @@ namespace OnAirDeck.UnityManager
         public static LegacyMove MoveToBackup(string projectRoot, ProjectConflict conflict, DateTime now)
         {
             if (conflict == null || conflict.Movable.Count == 0) throw new PackageInstallException("Nothing here can be moved to the backup.");
+            // The check may be minutes old: move only what still holds exactly what was checked (no user file added since).
+            for (var i = 0; i < conflict.Movable.Count; i++)
+            {
+                var print = i < conflict.MovablePrints.Count ? conflict.MovablePrints[i] : "";
+                if (print.Length == 0 || print != ProjectConflictScan.Fingerprint(projectRoot, conflict.Movable[i]))
+                    throw new ConflictChangedException(conflict.Movable[i]);
+            }
             var plan = new LegacyPlan();
             foreach (var path in conflict.Movable)
                 plan.Items.Add(new LegacyItem { Path = path, Files = CountFiles(projectRoot, path), Product = conflict.Package, Source = "project-check" });
@@ -99,11 +112,21 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static ManifestRemoval RemoveManifestEntry(string projectRoot, string package, DateTime now)
         {
+            return RemoveManifestEntry(projectRoot, package, null, null, now);
+        }
+
+        /// <param name="expectedValue">The entry's value the check showed (null: any). Another value now refuses.</param>
+        /// <param name="embeddedFolder">"Packages/&lt;folder&gt;" that must still hold <paramref name="package"/> (null: not checked).</param>
+        public static ManifestRemoval RemoveManifestEntry(string projectRoot, string package, string expectedValue, string embeddedFolder, DateTime now)
+        {
             var manifest = Path.Combine(projectRoot, "Packages", "manifest.json");
             var text = File.ReadAllText(manifest, Encoding.UTF8);
             string value;
             var edited = RemoveDependency(text, package, out value);
-            if (edited == null) throw new PackageInstallException("Packages/manifest.json has no entry for " + package + ".");
+            if (edited == null) throw new ConflictChangedException("Packages/manifest.json");
+            // Unity still has to use the folder, and the entry must be the one that was shown: else the check is out of date.
+            if (expectedValue != null && UnescapeJson(value) != expectedValue) throw new ConflictChangedException("Packages/manifest.json");
+            if (embeddedFolder != null && !EmbeddedHolds(projectRoot, embeddedFolder, package)) throw new ConflictChangedException(embeddedFolder);
             Verify(text, edited, package, false);
 
             var stamp = "manifest-" + now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
@@ -131,6 +154,25 @@ namespace OnAirDeck.UnityManager
             AtomicFile.Write(manifest, edited);
             removal.State = StateRestored;
             WriteRemoval(removal);
+        }
+
+        private static bool EmbeddedHolds(string projectRoot, string folder, string package)
+        {
+            try
+            {
+                var json = Path.Combine(projectRoot, folder.Replace('/', Path.DirectorySeparatorChar), "package.json");
+                return File.Exists(json) && MiniJson.GetString(MiniJson.ParseObject(File.ReadAllText(json, Encoding.UTF8)), "name") == package;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static string UnescapeJson(string raw)
+        {
+            var parsed = MiniJson.ParseObject("{\"v\":\"" + raw + "\"}");
+            return parsed != null ? MiniJson.GetString(parsed, "v") ?? raw : raw;
         }
 
         public static void KeepManifestRemoval(ManifestRemoval removal)

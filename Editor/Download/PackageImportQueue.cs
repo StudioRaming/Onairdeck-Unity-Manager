@@ -31,6 +31,11 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>Raised after an install record was saved (the window re-reads which versions are installed).</summary>
         public static event Action RecordSaved;
+        /// <summary>
+        /// Raised with the package files just queued, before the first of them starts importing (an import with scripts may reload the
+        /// domain before the code that queued them runs on). A failing listener does not stop the queue.
+        /// </summary>
+        public static event Action<IList<string>> Queued;
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
 
@@ -62,6 +67,15 @@ namespace OnAirDeck.UnityManager
                 SaveContexts(contexts);
             }
             Save(list);
+            try
+            {
+                var queued = Queued;
+                if (queued != null) queued(added);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A listener of the import queue failed: " + e.Message);
+            }
             ProcessNext();
         }
 

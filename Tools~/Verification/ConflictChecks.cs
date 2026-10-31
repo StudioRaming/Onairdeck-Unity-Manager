@@ -17,7 +17,9 @@ internal static class ConflictChecks
         check("project check: a package both embedded and in manifest.json (not as file: of itself) is found; removing the entry keeps CRLF, order and every other entry, and undo puts it back", EmbeddedAndManifest(project));
         check("project check: dependency text edits (first, middle, last, only entry; a key-looking text inside another value stays)", DependencyEdits);
         check("project check: move to backup, undo and keep (the backup stays, the undo offer goes)", MoveUndoKeep(project));
-        check("project check: plugin meta Editor setting (explicit Editor, Any, Exclude Editor, missing meta)", EditorSetting);
+        check("project check: plugin meta Editor setting (explicit Editor, Any, Exclude Editor, missing meta, the Editor's OS and CPU)", EditorSetting);
+        check("project check: a cached package Unity did not resolve is no conflict partner; a resolved one is", CachedPackages(project));
+        check("project check: a fix re-checks what it touches (a user file added to a checked folder, a changed manifest entry or a gone embedded package refuse and change nothing)", StaleFixes(project));
     }
 
     private static string NewProject(string parent, string name)
@@ -52,9 +54,9 @@ internal static class ConflictChecks
         File.WriteAllText(Path.Combine(full, "package.json"), "{\"name\":\"" + name + "\",\"version\":\"" + version + "\"}");
     }
 
-    private static List<ProjectConflict> Scan(string root, Dictionary<string, string> licenses = null)
+    private static List<ProjectConflict> Scan(string root, Dictionary<string, string> licenses = null, List<string> resolvedCache = null)
     {
-        var input = new ConflictScanInput { ProjectRoot = root, IncludePackageCache = false };
+        var input = new ConflictScanInput { ProjectRoot = root, ResolvedCacheFolders = resolvedCache ?? new List<string>() };
         if (licenses != null) input.LicenseOfPackage = licenses;
         return ProjectConflictScan.Run(input, CancellationToken.None);
     }
@@ -263,6 +265,74 @@ internal static class ConflictChecks
         Require(ProjectConflictScan.EditorEnabled("platformData:\r\n  - first:\r\n      Editor: Editor\r\n    second:\r\n      enabled: 1\r\n"));
         Require(!ProjectConflictScan.EditorEnabled("platformData:\n  - first:\n      Any: \n    second:\n      enabled: 0\n"));
         Require(!ProjectConflictScan.EditorEnabled("  - first:\n      Any: \n    second:\n      enabled: 1\n      settings:\n        Exclude Editor: 1\n"));
+        const string editorBlock = "platformData:\n  - first:\n      Editor: Editor\n    second:\n      enabled: 1\n      settings:\n        CPU: {cpu}\n        DefaultValueInitialized: true\n        OS: {os}\n  - first:\n      Standalone: Linux64\n    second:\n      enabled: 1\n      settings:\n        CPU: None\n";
+        Require(ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "AnyCPU").Replace("{os}", "AnyOS"), "Windows"));
+        Require(ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "x86_64").Replace("{os}", "Windows"), "Windows"));
+        Require(!ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "AnyCPU").Replace("{os}", "Linux"), "Windows"));
+        Require(ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "AnyCPU").Replace("{os}", "Linux"), "Linux"));
+        Require(!ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "None").Replace("{os}", "AnyOS"), "Windows"));
+        // The next platform's "CPU: None" belongs to that platform, not to the Editor.
+        Require(ProjectConflictScan.EditorEnabled(editorBlock.Replace("{cpu}", "AnyCPU").Replace("{os}", "Windows"), "Windows"));
+    }
+
+    private static Action CachedPackages(string parent)
+    {
+        return () =>
+        {
+            var root = NewProject(parent, "cache");
+            var cached = Path.Combine(root, "Library", "PackageCache", "com.vendor.tool@1.0.0");
+            Directory.CreateDirectory(cached);
+            File.WriteAllText(Path.Combine(cached, "package.json"), "{\"name\":\"com.vendor.tool\",\"version\":\"1.0.0\"}");
+            File.Copy(typeof(ConflictChecks).Assembly.Location, Path.Combine(cached, "Tool.dll"));
+            Directory.CreateDirectory(Path.Combine(root, "Assets", "Plugins"));
+            File.Copy(typeof(ConflictChecks).Assembly.Location, Path.Combine(root, "Assets", "Plugins", "Tool.dll"));
+
+            Equal(0, Scan(root).Count(c => c.Kind == ConflictKind.DuplicateAssembly));
+            var found = Scan(root, null, new List<string> { cached }).Where(c => c.Kind == ConflictKind.DuplicateAssembly).ToList();
+            Equal(1, found.Count);
+            Equal("Assets/Plugins/Tool.dll", string.Join(",", found[0].Movable));
+            // A resolved path outside the cache (a local package elsewhere) is not read.
+            Equal(0, Scan(root, null, new List<string> { Path.Combine(parent, "elsewhere") }).Count(c => c.Kind == ConflictKind.DuplicateAssembly));
+        };
+    }
+
+    private static Action StaleFixes(string parent)
+    {
+        return () =>
+        {
+            var root = NewProject(parent, "stale");
+            Package(root, "com.seller.tool", "com.seller.tool", "1.0.0");
+            string g1 = Guid32(), gf = Guid32();
+            Folder(root, "Packages/com.seller.tool/Runtime", gf);
+            Asset(root, "Packages/com.seller.tool/Runtime/A.mat", g1);
+            Folder(root, "Assets/Copy", gf);
+            Asset(root, "Assets/Copy/A.mat", g1);
+
+            var conflict = Scan(root).Single(c => c.Kind == ConflictKind.DuplicateGuid);
+            Equal("Assets/Copy", string.Join(",", conflict.Movable));
+            Equal(1, conflict.MovablePrints.Count);
+            // The user adds a material of their own to the checked folder before pressing Move.
+            Asset(root, "Assets/Copy/Mine.mat", Guid32());
+            try { ProjectConflictFixes.MoveToBackup(root, conflict, DateTime.Now); throw new Exception("a stale move went ahead"); }
+            catch (ConflictChangedException) { }
+            Require(File.Exists(Path.Combine(root, "Assets", "Copy", "Mine.mat")) && File.Exists(Path.Combine(root, "Assets", "Copy", "A.mat")));
+            Equal(0, ProjectConflictFixes.PendingMoves(root).Count);
+
+            var manifest = Path.Combine(root, "Packages", "manifest.json");
+            File.WriteAllText(manifest, "{\n  \"dependencies\": {\n    \"com.seller.tool\": \"1.0.0\"\n  }\n}\n");
+            var entry = Scan(root).Single(c => c.Kind == ConflictKind.EmbeddedAndManifest);
+            Equal("Packages/com.seller.tool", entry.EmbeddedFolder);
+            File.WriteAllText(manifest, "{\n  \"dependencies\": {\n    \"com.seller.tool\": \"2.0.0\"\n  }\n}\n");
+            var before = File.ReadAllText(manifest);
+            try { ProjectConflictFixes.RemoveManifestEntry(root, entry.Package, entry.ManifestValue, entry.EmbeddedFolder, DateTime.Now); throw new Exception("a changed entry was removed"); }
+            catch (ConflictChangedException) { }
+            Equal(before, File.ReadAllText(manifest));
+            Directory.Delete(Path.Combine(root, "Packages", "com.seller.tool"), true);
+            try { ProjectConflictFixes.RemoveManifestEntry(root, entry.Package, "2.0.0", entry.EmbeddedFolder, DateTime.Now); throw new Exception("an entry was removed although its folder is gone"); }
+            catch (ConflictChangedException) { }
+            Equal(before, File.ReadAllText(manifest));
+            Equal(0, ProjectConflictFixes.PendingRemovals(root).Count);
+        };
     }
 
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }

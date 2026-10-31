@@ -134,7 +134,7 @@ namespace OnAirDeck.UnityManager
             OnEnablePackages();
             HookHandoff();
             CheckForUpdate();
-            StartConflictScan();
+            StartOrReuseConflictScan();
         }
 
         private void OnDisable()

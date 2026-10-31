@@ -220,7 +220,8 @@ namespace OnAirDeck.UnityManager
         /// "waiting": <see cref="Settle"/> (possibly still waiting). A record older than <see cref="MaxRecordAgeSeconds"/> or without
         /// ids is forgotten (null).
         /// </summary>
-        public static ImportOutcome Resume(ImportClaim claim, long now, Func<string, string> installedVersion, Func<string, string> importResult = null)
+        public static ImportOutcome Resume(ImportClaim claim, long now, Func<string, string> installedVersion, Func<string, string> importResult = null,
+            Func<string, string> handoffState = null)
         {
             if (claim == null || string.IsNullOrEmpty(claim.request_id) || string.IsNullOrEmpty(claim.claim_id)) return null;
             if (claim.claimed_at > 0 && now - claim.claimed_at > MaxRecordAgeSeconds) return null;
@@ -233,8 +234,10 @@ namespace OnAirDeck.UnityManager
                 case PhaseClaimed:
                     return ImportOutcome.Release();
                 case PhaseWaiting:
-                    return Settle(claim, now, importResult, installedVersion);
+                    return Settle(claim, now, importResult, installedVersion, handoffState);
                 case PhaseRunning:
+                    // Imports were queued before the reload ended the install path: they decide.
+                    if (claim.wait_imports != null && claim.wait_imports.Length > 0) return Settle(claim, now, importResult, installedVersion, handoffState);
                     if (!string.IsNullOrEmpty(claim.package_name) && !string.IsNullOrEmpty(claim.package_version) && installedVersion != null
                         && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase))
                         return ImportOutcome.Done();
@@ -251,14 +254,22 @@ namespace OnAirDeck.UnityManager
         /// editor restart) is failed "interrupted". A hand-off: done once the package is in at the version. Anything still open after
         /// <see cref="MaxWaitSeconds"/> is failed "interrupted".
         /// </summary>
-        public static ImportOutcome Settle(ImportClaim claim, long now, Func<string, string> importResult, Func<string, string> installedVersion)
+        /// <param name="handoffState">The hand-off of a package: "done", "stopped", "pending" or "" when there is no hand-off record.</param>
+        public static ImportOutcome Settle(ImportClaim claim, long now, Func<string, string> importResult, Func<string, string> installedVersion,
+            Func<string, string> handoffState = null)
         {
-            var timedOut = claim.wait_since > 0 && now - claim.wait_since > MaxWaitSeconds;
+            var since = claim.wait_since > 0 ? claim.wait_since : claim.claimed_at;
+            var timedOut = since > 0 && now - since > MaxWaitSeconds;
             if (claim.wait_package)
             {
-                if (installedVersion != null && !string.IsNullOrEmpty(claim.package_name)
-                    && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase))
-                    return ImportOutcome.Done();
+                // The installer's own result decides; the version only confirms a finished one (a package can be in place while the
+                // installer still checks it, or fail after it was put there).
+                var state = handoffState != null ? handoffState(claim.package_name) ?? "" : "";
+                var versionIn = installedVersion != null && !string.IsNullOrEmpty(claim.package_name)
+                    && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase);
+                if (state == "stopped") return ImportOutcome.Failed("install_failed");
+                if (state == "done") return versionIn ? ImportOutcome.Done() : ImportOutcome.Failed("install_failed");
+                if (state.Length == 0 && versionIn) return ImportOutcome.Done();
                 return timedOut ? ImportOutcome.Failed("interrupted") : ImportOutcome.StillWaiting();
             }
             var imports = claim.wait_imports ?? new string[0];

@@ -21,21 +21,29 @@ namespace OnAirDeck.UnityManager
         EmbeddedAndManifest,
     }
 
-    /// <summary>One problem of the project, with what a fix may touch.</summary>
+    /// <summary>One problem of the project, with what a fix may touch. Serializable, so the last result survives a script reload.</summary>
+    [Serializable]
     internal sealed class ProjectConflict
     {
         public ConflictKind Kind;
         /// <summary>A GUID, an assembly name, a package name or a group of folders: with <see cref="Kind"/> it names the conflict.</summary>
         public string Subject = "";
         /// <summary>Project-relative paths ('/' separators) of every copy, sorted.</summary>
-        public readonly List<string> Paths = new List<string>();
+        public List<string> Paths = new List<string>();
         /// <summary>How many GUIDs a grouped duplicate-GUID conflict holds.</summary>
         public int Count = 1;
         /// <summary>The installed package this is about ("" when none): the one a reinstall would put back.</summary>
         public string Package = "";
         public string Version = "";
         /// <summary>Paths under Assets/ that "move to backup" may take (each passes the old-install guard rails).</summary>
-        public readonly List<string> Movable = new List<string>();
+        public List<string> Movable = new List<string>();
+        /// <summary>
+        /// What each <see cref="Movable"/> path held when it was checked (<see cref="ProjectConflictScan.Fingerprint"/>): a move first
+        /// checks that nothing was added or changed there since, so a user file put in later never leaves with the copy.
+        /// </summary>
+        public List<string> MovablePrints = new List<string>();
+        /// <summary>The embedded folder of an <see cref="ConflictKind.EmbeddedAndManifest"/> conflict ("Packages/&lt;folder&gt;").</summary>
+        public string EmbeddedFolder = "";
         /// <summary>Only a reinstall of <see cref="Package"/> cleans this up (its own installer, or files inside a package folder).</summary>
         public bool NeedsReinstall;
         /// <summary>The value of the manifest.json entry (<see cref="ConflictKind.EmbeddedAndManifest"/>).</summary>
@@ -49,8 +57,13 @@ namespace OnAirDeck.UnityManager
     {
         public string ProjectRoot = "";
         public Dictionary<string, string> LicenseOfPackage = new Dictionary<string, string>(StringComparer.Ordinal);
-        /// <summary>Look at the asmdef and DLL names in Library/PackageCache too (registry and git packages).</summary>
-        public bool IncludePackageCache = true;
+        /// <summary>
+        /// Folders under Library/PackageCache of the packages Unity resolved for this project (registry and git packages), read for
+        /// their assembly names. Anything else in the cache is an old or replaced version Unity does not load, and never a conflict.
+        /// </summary>
+        public List<string> ResolvedCacheFolders = new List<string>();
+        /// <summary>The Editor's OS as a plugin's settings name it: "Windows", "OSX" or "Linux".</summary>
+        public string EditorOs = "Windows";
     }
 
     /// <summary>
@@ -65,6 +78,8 @@ namespace OnAirDeck.UnityManager
         private static readonly Regex EditorPlatform = new Regex(@"first:\s*\n\s*Editor:\s*Editor\s*\n\s*second:\s*\n\s*enabled:\s*(\d)", RegexOptions.CultureInvariant);
         private static readonly Regex AnyPlatform = new Regex(@"first:\s*\n\s*Any:\s*\n\s*second:\s*\n\s*enabled:\s*(\d)", RegexOptions.CultureInvariant);
         private static readonly Regex ExcludeEditor = new Regex(@"Exclude Editor:\s*1", RegexOptions.CultureInvariant);
+        private static readonly Regex SettingOs = new Regex(@"^\s*OS:\s*(\w+)", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        private static readonly Regex SettingCpu = new Regex(@"^\s*CPU:\s*(\w+)", RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
         /// <summary>One copy found on disk: its project-relative path and the root it came from.</summary>
         private sealed class Found
@@ -82,26 +97,69 @@ namespace OnAirDeck.UnityManager
             public readonly List<KeyValuePair<string, Found>> Metas = new List<KeyValuePair<string, Found>>();   // guid → copy
             public readonly List<KeyValuePair<string, Found>> Assemblies = new List<KeyValuePair<string, Found>>(); // name → copy
             public readonly List<Found> Packages = new List<Found>();   // embedded and cached package roots
+            public string EditorOs = "Windows";
         }
 
         public static List<ProjectConflict> Run(ConflictScanInput input, CancellationToken cancel)
         {
             var root = Path.GetFullPath(input.ProjectRoot);
-            var inventory = Collect(root, input.IncludePackageCache, cancel);
+            var inventory = Collect(root, input.ResolvedCacheFolders ?? new List<string>(), input.EditorOs ?? "Windows", cancel);
             var list = new List<ProjectConflict>();
             list.AddRange(OldCopies(root, inventory, input.LicenseOfPackage));
-            list.AddRange(DuplicateGuids(root, inventory, list));
-            list.AddRange(DuplicateAssemblies(inventory));
+            list.AddRange(DuplicateGuids(root, inventory, list, cancel));
+            list.AddRange(DuplicateAssemblies(root, inventory));
             list.AddRange(EmbeddedAndManifest(root, inventory));
-            foreach (var conflict in list) conflict.Paths.Sort(StringComparer.OrdinalIgnoreCase);
+            foreach (var conflict in list)
+            {
+                cancel.ThrowIfCancellationRequested();
+                conflict.Paths.Sort(StringComparer.OrdinalIgnoreCase);
+                conflict.MovablePrints.Clear();
+                foreach (var path in conflict.Movable) conflict.MovablePrints.Add(Fingerprint(root, path));
+            }
             return list;
+        }
+
+        /// <summary>
+        /// What a path holds now: for a file its size and its .meta GUID, for a folder every entry inside (relative name, and the size
+        /// of a file or the GUID of a .meta). Two equal prints mean nothing was added, removed or replaced. "" for a missing path.
+        /// </summary>
+        public static string Fingerprint(string projectRoot, string relative)
+        {
+            var full = Path.Combine(Path.GetFullPath(projectRoot), relative.Replace('/', Path.DirectorySeparatorChar));
+            var sb = new StringBuilder();
+            try
+            {
+                if (File.Exists(full)) Describe(sb, full, Path.GetFileName(full));
+                else if (Directory.Exists(full))
+                {
+                    var entries = new List<string>(Directory.EnumerateFileSystemEntries(full, "*", SearchOption.AllDirectories));
+                    entries.Sort(StringComparer.Ordinal);
+                    foreach (var entry in entries) Describe(sb, entry, entry.Substring(full.Length));
+                }
+                else return "";
+                if (File.Exists(full + ".meta")) sb.Append("|self.meta:").Append(GuidOf(full + ".meta") ?? "?");
+            }
+            catch (Exception)
+            {
+                return "unreadable";
+            }
+            using (var sha = System.Security.Cryptography.SHA1.Create())
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()))).Replace("-", "");
+        }
+
+        private static void Describe(StringBuilder sb, string path, string name)
+        {
+            sb.Append('|').Append(name.Replace('\\', '/')).Append(':');
+            if (Directory.Exists(path)) sb.Append("dir");
+            else if (path.EndsWith(".meta", StringComparison.Ordinal)) sb.Append(GuidOf(path) ?? "?");
+            else sb.Append(new FileInfo(path).Length);
         }
 
         // ------------------------------------------------------------ inventory
 
-        private static Inventory Collect(string root, bool withCache, CancellationToken cancel)
+        private static Inventory Collect(string root, List<string> cacheFolders, string editorOs, CancellationToken cancel)
         {
-            var inventory = new Inventory();
+            var inventory = new Inventory { EditorOs = editorOs };
             Walk(root, Path.Combine(root, "Assets"), new Found(), true, inventory, cancel);
             var packages = Path.Combine(root, "Packages");
             if (Directory.Exists(packages))
@@ -112,15 +170,17 @@ namespace OnAirDeck.UnityManager
                     if (owner.PackageName.Length > 0) inventory.Packages.Add(owner);
                     Walk(root, folder, owner, true, inventory, cancel);
                 }
-            var cache = Path.Combine(root, "Library", "PackageCache");
-            if (withCache && Directory.Exists(cache))
-                foreach (var folder in Directory.GetDirectories(cache))
-                {
-                    var owner = PackageRoot(root, folder);
-                    if (owner.PackageName.Length > 0) inventory.Packages.Add(owner);
-                    // Cached packages are read only for their assembly names: Unity rewrites a GUID that clashes with one of them.
-                    Walk(root, folder, owner, false, inventory, cancel);
-                }
+            var cache = Path.GetFullPath(Path.Combine(root, "Library", "PackageCache"));
+            foreach (var resolved in cacheFolders)
+            {
+                var folder = Path.GetFullPath(resolved);
+                // Only packages Unity resolved from the cache; a local package elsewhere on the disk is not read.
+                if (!PathSafety.IsInside(cache, folder) || !Directory.Exists(folder)) continue;
+                var owner = PackageRoot(root, folder);
+                if (owner.PackageName.Length > 0) inventory.Packages.Add(owner);
+                // Cached packages are read only for their assembly names: Unity rewrites a GUID that clashes with one of them.
+                Walk(root, folder, owner, false, inventory, cancel);
+            }
             return inventory;
         }
 
@@ -177,7 +237,7 @@ namespace OnAirDeck.UnityManager
                         var assembly = AsmdefNameOf(file);
                         if (assembly != null) inventory.Assemblies.Add(new KeyValuePair<string, Found>(assembly, Copy(root, file, owner)));
                     }
-                    else if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && IsManagedAssembly(file) && EditorEnabled(ReadMeta(file)))
+                    else if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && IsManagedAssembly(file) && EditorEnabled(ReadMeta(file), inventory.EditorOs))
                         inventory.Assemblies.Add(new KeyValuePair<string, Found>(Path.GetFileNameWithoutExtension(file), Copy(root, file, owner)));
                 }
                 string[] folders;
@@ -243,7 +303,7 @@ namespace OnAirDeck.UnityManager
         /// gives hundreds of GUIDs, but one card). Copies already covered by an old-copy conflict are left to it. A copy under Assets/
         /// whose twin is in a package is movable; the whole Assets folder moves when every asset in it is such a copy.
         /// </summary>
-        private static List<ProjectConflict> DuplicateGuids(string root, Inventory inventory, List<ProjectConflict> oldCopies)
+        private static List<ProjectConflict> DuplicateGuids(string root, Inventory inventory, List<ProjectConflict> oldCopies, CancellationToken cancel)
         {
             var byGuid = new Dictionary<string, List<Found>>(StringComparer.Ordinal);
             foreach (var pair in inventory.Metas)
@@ -260,6 +320,7 @@ namespace OnAirDeck.UnityManager
             foreach (var pair in byGuid)
             {
                 if (pair.Value.Count < 2) continue;
+                cancel.ThrowIfCancellationRequested();
                 var homes = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
                 var inPackage = false;
                 var allCovered = true;
@@ -297,14 +358,17 @@ namespace OnAirDeck.UnityManager
             var strayPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var pair in inventory.Metas)
                 if (pair.Value.Container.Length == 0 && strayGuids.Contains(pair.Key)) strayPaths.Add(pair.Value.Path);
+            // Each folder's purity is worked out once: a copy of thousands of files would otherwise walk its tree once per file.
+            var purity = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (var group in groups.Values)
             {
                 foreach (var path in group.Paths)
                 {
+                    cancel.ThrowIfCancellationRequested();
                     if (!strayPaths.Contains(path)) continue;
                     // A copied folder moves whole only when everything in it is a copy; else its copied files move one by one.
-                    if (Directory.Exists(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar))) && !FolderIsPure(root, path, strayPaths)) continue;
-                    var target = HighestPure(root, path, strayPaths);
+                    if (Directory.Exists(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar))) && !FolderIsPure(root, path, strayPaths, purity)) continue;
+                    var target = HighestPure(root, path, strayPaths, purity);
                     if (!IsUnderAny(target, group.Movable)) group.Movable.Add(target);
                 }
                 group.Movable.RemoveAll(m => group.Movable.Exists(o => !ReferenceEquals(o, m) && o != m && m.StartsWith(o + "/", StringComparison.OrdinalIgnoreCase)));
@@ -313,7 +377,7 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>Assembly names that two asmdef files or Editor-enabled managed DLLs share. A DLL under Assets/ beside a package copy is movable.</summary>
-        private static List<ProjectConflict> DuplicateAssemblies(Inventory inventory)
+        private static List<ProjectConflict> DuplicateAssemblies(string root, Inventory inventory)
         {
             var byName = new Dictionary<string, List<Found>>(StringComparer.OrdinalIgnoreCase);
             foreach (var pair in inventory.Assemblies)
@@ -336,7 +400,9 @@ namespace OnAirDeck.UnityManager
                         conflict.Package = copy.PackageName;
                         conflict.Version = copy.PackageVersion;
                     }
-                    if (inPackage && copy.Container.Length == 0 && copy.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) conflict.Movable.Add(copy.Path);
+                    string guarded;
+                    if (inPackage && copy.Container.Length == 0 && copy.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && LegacyInstall.TryGuard(root, copy.Path, out guarded))
+                        conflict.Movable.Add(copy.Path);
                 }
                 list.Add(conflict);
             }
@@ -373,7 +439,7 @@ namespace OnAirDeck.UnityManager
                 var conflict = new ProjectConflict
                 {
                     Kind = ConflictKind.EmbeddedAndManifest, Subject = package.PackageName,
-                    Package = package.PackageName, Version = package.PackageVersion, ManifestValue = text,
+                    Package = package.PackageName, Version = package.PackageVersion, ManifestValue = text, EmbeddedFolder = package.Container,
                 };
                 conflict.Paths.Add(package.Container);
                 conflict.Paths.Add("Packages/manifest.json");
@@ -394,16 +460,25 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>The highest folder above <paramref name="path"/> (below Assets/) whose every asset is in <paramref name="stray"/>; the path itself when none.</summary>
-        private static string HighestPure(string root, string path, HashSet<string> stray)
+        private static string HighestPure(string root, string path, HashSet<string> stray, Dictionary<string, bool> purity)
         {
             var best = path;
             var parent = ParentOf(path);
-            while (parent.Contains("/") && stray.Contains(parent) && FolderIsPure(root, parent, stray))
+            while (parent.Contains("/") && stray.Contains(parent) && FolderIsPure(root, parent, stray, purity))
             {
                 best = parent;
                 parent = ParentOf(parent);
             }
             return best;
+        }
+
+        private static bool FolderIsPure(string root, string folder, HashSet<string> stray, Dictionary<string, bool> purity)
+        {
+            bool known;
+            if (purity.TryGetValue(folder, out known)) return known;
+            var result = FolderIsPure(root, folder, stray);
+            purity[folder] = result;
+            return result;
         }
 
         private static bool FolderIsPure(string root, string folder, HashSet<string> stray)
@@ -490,13 +565,24 @@ namespace OnAirDeck.UnityManager
         /// True when a plugin's .meta lets the Editor load it: an explicit Editor setting wins, else the "Any platform" setting, an
         /// "Exclude Editor" turns it off, and a missing or older .meta counts as enabled (Unity's default for a managed DLL).
         /// </summary>
-        internal static bool EditorEnabled(string metaText)
+        internal static bool EditorEnabled(string metaText, string editorOs = "Windows")
         {
             if (string.IsNullOrEmpty(metaText)) return true;
             var text = metaText.Replace("\r\n", "\n");
             if (ExcludeEditor.IsMatch(text)) return false;
             var editor = EditorPlatform.Match(text);
-            if (editor.Success) return editor.Groups[1].Value == "1";
+            if (editor.Success)
+            {
+                if (editor.Groups[1].Value != "1") return false;
+                // The Editor block's own settings, up to the next platform: an OS other than this Editor's, or no 64-bit CPU, is off here.
+                var end = text.IndexOf("- first:", editor.Index + editor.Length, StringComparison.Ordinal);
+                var settings = text.Substring(editor.Index + editor.Length, (end < 0 ? text.Length : end) - editor.Index - editor.Length);
+                var os = SettingOs.Match(settings);
+                if (os.Success && os.Groups[1].Value != "AnyOS" && !string.Equals(os.Groups[1].Value, editorOs, StringComparison.OrdinalIgnoreCase)) return false;
+                var cpu = SettingCpu.Match(settings);
+                if (cpu.Success && (cpu.Groups[1].Value == "None" || cpu.Groups[1].Value == "x86")) return false;
+                return true;
+            }
             var any = AnyPlatform.Match(text);
             if (any.Success) return any.Groups[1].Value == "1";
             return true;

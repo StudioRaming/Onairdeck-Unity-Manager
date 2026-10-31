@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using OnAirDeck.UnityManager.Theme;
 using UnityEditor;
 using UnityEngine;
+// UnityEditor also has an unrelated legacy PackageInfo type; name the Package Manager one explicitly.
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace OnAirDeck.UnityManager
 {
@@ -16,6 +18,17 @@ namespace OnAirDeck.UnityManager
     internal sealed partial class ManagerWindow
     {
         private const int ShownConflictPaths = 5;
+        private const string CheckCacheKey = "OnAirDeck.UnityManager.ProjectCheck";
+        /// <summary>A script reload reuses a check this young instead of reading the whole project again.</summary>
+        private const long CheckCacheSeconds = 600;
+
+        [Serializable]
+        private sealed class CheckCache
+        {
+            public long At;
+            public string Licenses = "";
+            public List<ProjectConflict> Items = new List<ProjectConflict>();
+        }
 
         [NonSerialized] private List<ProjectConflict> _conflicts = new List<ProjectConflict>();
         [NonSerialized] private List<PendingRestore> _checkMoves = new List<PendingRestore>();
@@ -35,7 +48,11 @@ namespace OnAirDeck.UnityManager
             if (_scanning) { _scanAgain = true; return; }
             _scanning = true;
             _scanError = null;
-            var input = new ConflictScanInput { ProjectRoot = PackageInstallService.ProjectRoot, LicenseOfPackage = LicenseOfPackage() };
+            var input = new ConflictScanInput
+            {
+                ProjectRoot = PackageInstallService.ProjectRoot, LicenseOfPackage = LicenseOfPackage(),
+                ResolvedCacheFolders = ResolvedCacheFolders(), EditorOs = EditorOs(),
+            };
             _scannedLicenses = LicenseKey(input.LicenseOfPackage);
             if (_scanCancel != null) _scanCancel.Dispose();
             _scanCancel = new CancellationTokenSource();
@@ -44,6 +61,7 @@ namespace OnAirDeck.UnityManager
             {
                 var found = await Task.Run(() => ProjectConflictScan.Run(input, cancel), cancel);
                 _conflicts = found;
+                SessionState.SetString(CheckCacheKey, JsonUtility.ToJson(new CheckCache { At = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), Licenses = _scannedLicenses, Items = found }));
                 _checkMoves = ProjectConflictFixes.PendingMoves(input.ProjectRoot);
                 _checkRemovals = ProjectConflictFixes.PendingRemovals(input.ProjectRoot);
             }
@@ -66,6 +84,57 @@ namespace OnAirDeck.UnityManager
             {
                 _scanAgain = false;
                 StartConflictScan();
+            }
+        }
+
+        /// <summary>On window open (also after a script reload): the last check of this editor session when it is young enough, else a new one.</summary>
+        private void StartOrReuseConflictScan()
+        {
+            try
+            {
+                var cache = JsonUtility.FromJson<CheckCache>(SessionState.GetString(CheckCacheKey, ""));
+                if (cache != null && cache.Items != null && DateTimeOffset.UtcNow.ToUnixTimeSeconds() - cache.At < CheckCacheSeconds)
+                {
+                    _conflicts = cache.Items;
+                    _scannedLicenses = cache.Licenses ?? "";
+                    var root = PackageInstallService.ProjectRoot;
+                    _checkMoves = ProjectConflictFixes.PendingMoves(root);
+                    _checkRemovals = ProjectConflictFixes.PendingRemovals(root);
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                // An unreadable cache is no cache.
+            }
+            StartConflictScan();
+        }
+
+        /// <summary>Library/PackageCache folders of the packages Unity resolved for this project (main thread).</summary>
+        private static List<string> ResolvedCacheFolders()
+        {
+            var folders = new List<string>();
+#if UNITY_2021_1_OR_NEWER
+            try
+            {
+                foreach (var info in PackageInfo.GetAllRegisteredPackages())
+                    if (info != null && !string.IsNullOrEmpty(info.resolvedPath)) folders.Add(info.resolvedPath);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not list the resolved packages: " + e.Message);
+            }
+#endif
+            return folders;
+        }
+
+        private static string EditorOs()
+        {
+            switch (Application.platform)
+            {
+                case RuntimePlatform.OSXEditor: return "OSX";
+                case RuntimePlatform.LinuxEditor: return "Linux";
+                default: return "Windows";
             }
         }
 
@@ -262,6 +331,10 @@ namespace OnAirDeck.UnityManager
                 ProjectConflictFixes.MoveToBackup(PackageInstallService.ProjectRoot, conflict, DateTime.Now);
                 SetMessage(ManagerText.CfMoved, MessageType.Info);
             }
+            catch (ConflictChangedException e)
+            {
+                SetMessage(e.Message, MessageType.Warning);
+            }
             catch (Exception e)
             {
                 SetMessage(e.Message, MessageType.Error);
@@ -279,9 +352,13 @@ namespace OnAirDeck.UnityManager
             if (!EditorUtility.DisplayDialog(ManagerText.CfTitle, ask, ManagerText.CfRemoveEntry, ManagerText.Cancel)) return;
             try
             {
-                ProjectConflictFixes.RemoveManifestEntry(PackageInstallService.ProjectRoot, conflict.Package, DateTime.Now);
+                ProjectConflictFixes.RemoveManifestEntry(PackageInstallService.ProjectRoot, conflict.Package, conflict.ManifestValue, conflict.EmbeddedFolder, DateTime.Now);
                 SetMessage(ManagerText.CfRemoved, MessageType.Info);
                 ResolvePackages();
+            }
+            catch (ConflictChangedException e)
+            {
+                SetMessage(e.Message, MessageType.Warning);
             }
             catch (Exception e)
             {

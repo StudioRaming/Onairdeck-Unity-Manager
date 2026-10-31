@@ -43,6 +43,22 @@ namespace OnAirDeck.UnityManager
             _wasActive = UnityEditorInternal.InternalEditorUtility.isApplicationActive;
             EditorApplication.update -= Tick;
             EditorApplication.update += Tick;
+            PackageImportQueue.Queued -= OnImportsQueued;
+            PackageImportQueue.Queued += OnImportsQueued;
+        }
+
+        /// <summary>
+        /// The install path of a running request queued .unitypackage files: they are written into the record before the import starts,
+        /// so a reload in the middle (a package with scripts) still knows what decides the result.
+        /// </summary>
+        private static void OnImportsQueued(IList<string> paths)
+        {
+            var claim = _running;
+            if (claim == null || paths == null || paths.Count == 0) return;
+            var all = new List<string>(claim.wait_imports ?? new string[0]);
+            foreach (var path in paths) if (!all.Contains(path)) all.Add(path);
+            claim.wait_imports = all.ToArray();
+            SaveClaim(claim);
         }
 
         /// <summary>The window tells when it is open, so the 60 s poll runs only then.</summary>
@@ -131,7 +147,7 @@ namespace OnAirDeck.UnityManager
                 var held = LoadClaim();
                 if (held != null)
                 {
-                    var outcome = ImportRequestLogic.Resume(held, Now(), InstalledVersion, PackageImportQueue.ResultOf);
+                    var outcome = ImportRequestLogic.Resume(held, Now(), InstalledVersion, PackageImportQueue.ResultOf, HandoffState);
                     if (outcome == null) DeleteClaim();
                     else if (outcome.Report == ImportReport.Waiting) _waiting = held;
                     else await FinishAsync(token, held, outcome);
@@ -260,7 +276,7 @@ namespace OnAirDeck.UnityManager
         {
             var claim = _waiting;
             if (claim == null) return true;
-            var outcome = ImportRequestLogic.Settle(claim, Now(), PackageImportQueue.ResultOf, InstalledVersion);
+            var outcome = ImportRequestLogic.Settle(claim, Now(), PackageImportQueue.ResultOf, InstalledVersion, HandoffState);
             if (outcome.Report == ImportReport.Waiting) return false;
             _waiting = null;
             await FinishAsync(token, claim, outcome);
@@ -281,7 +297,7 @@ namespace OnAirDeck.UnityManager
             var now = Now();
             if (now - _lastSettle < 2) return false;
             _lastSettle = now;
-            var outcome = ImportRequestLogic.Settle(claim, now, PackageImportQueue.ResultOf, InstalledVersion);
+            var outcome = ImportRequestLogic.Settle(claim, now, PackageImportQueue.ResultOf, InstalledVersion, HandoffState);
             if (outcome.Report == ImportReport.Waiting) return false;
             var session = SessionStore.Load();
             if (session == null || string.IsNullOrEmpty(session.token)) return false;
@@ -296,6 +312,25 @@ namespace OnAirDeck.UnityManager
             try { await FinishAsync(token, claim, outcome); }
             catch (Exception) { /* SessionExpired or offline: the record stays and the next poll posts it */ }
             finally { _busy = false; }
+        }
+
+        /// <summary>The legacy hand-off of a package as <see cref="ImportRequestLogic.Settle"/> reads it (read-only look).</summary>
+        private static string HandoffState(string package)
+        {
+            try
+            {
+                switch (LegacyHandoff.Status(PackageInstallService.ProjectRoot, package, DateTime.UtcNow, false, false).Kind)
+                {
+                    case HandoffKind.Done: return "done";
+                    case HandoffKind.Stopped: return "stopped";
+                    case HandoffKind.Pending: return "pending";
+                    default: return "";
+                }
+            }
+            catch (Exception)
+            {
+                return "";
+            }
         }
 
         private static string InstalledVersion(string package)
