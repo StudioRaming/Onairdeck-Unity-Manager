@@ -16,7 +16,6 @@ namespace OnAirDeck.UnityManager.EditModeTests
         [SetUp]
         public void SetUp()
         {
-            LogAssert.ignoreFailingMessages = true;
             ManagerErrorWatch.Drain();
             ClearCards();
         }
@@ -32,7 +31,9 @@ namespace OnAirDeck.UnityManager.EditModeTests
         [Test]
         public void AnExceptionOfTheManagerInTheConsole_OpensTheManagerCard_Redacted()
         {
-            var marker = Guid.NewGuid().ToString("N").Substring(0, 8);
+            // The framework resets this after SetUp; the exceptions logged here are the input.
+            LogAssert.ignoreFailingMessages = true;
+            var marker = Marker();
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             Debug.LogException(Catch(() => ThrowsInTheManager.Now("console " + marker + " at " + home + "\\cache.json")));
             ManagerErrorWatch.Drain();
@@ -50,7 +51,9 @@ namespace OnAirDeck.UnityManager.EditModeTests
         [Test]
         public void TheSameExceptionOnEveryRepaint_IsOneEntry()
         {
-            var e = Catch(() => ThrowsInTheManager.Now("repaint " + Guid.NewGuid().ToString("N")));
+            // The framework resets this after SetUp; the exceptions logged here are the input.
+            LogAssert.ignoreFailingMessages = true;
+            var e = Catch(() => ThrowsInTheManager.Now("repaint " + Marker()));
             for (var i = 0; i < 30; i++) Debug.LogException(e);
             ManagerErrorWatch.Drain();
             Assert.IsNotNull(InstallErrorReporter.Current);
@@ -60,7 +63,9 @@ namespace OnAirDeck.UnityManager.EditModeTests
         [Test]
         public void AnExceptionOfAProduct_DoesNotOpenTheManagerCard()
         {
-            Debug.LogException(Catch(() => SomeSeller.Product.ProductCode.Throw("product " + Guid.NewGuid().ToString("N"))));
+            // The framework resets this after SetUp; the exceptions logged here are the input.
+            LogAssert.ignoreFailingMessages = true;
+            Debug.LogException(Catch(() => SomeSeller.Product.ProductCode.Throw("product " + Marker())));
             ManagerErrorWatch.Drain();
             Assert.IsNull(InstallErrorReporter.Current);
         }
@@ -72,7 +77,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
             Assert.IsNull(ManagerErrorWatch.OfferCaught("Loading the product list", new ApiException("Loading failed (503).", 503, "", "")));
             Assert.IsNull(InstallErrorReporter.Current);
 
-            var report = ManagerErrorWatch.OfferCaught("Loading the product list", Catch(() => ThrowsInTheManager.Now("caught " + Guid.NewGuid().ToString("N"))));
+            var report = ManagerErrorWatch.OfferCaught("Loading the product list", Catch(() => ThrowsInTheManager.Now("caught " + Marker())));
             Assert.IsNotNull(report);
             Assert.IsNotNull(InstallErrorReporter.Current);
             StringAssert.StartsWith("Loading the product list: NullReferenceException", InstallErrorReporter.Current.Items[0].Text);
@@ -83,7 +88,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
         [Test]
         public void AFaultedTaskNobodyAwaited_OpensTheCard()
         {
-            var marker = "unobserved " + Guid.NewGuid().ToString("N");
+            var marker = "unobserved " + Marker();
             StartAndForget(marker);
             for (var i = 0; i < 5 && InstallErrorReporter.Current == null; i++)
             {
@@ -101,6 +106,18 @@ namespace OnAirDeck.UnityManager.EditModeTests
             var task = Task.Run(() => ThrowsInTheManager.Now(marker));
             // Wait without Wait(): a Wait that throws, or reading task.Exception, would observe the failure.
             while (!task.IsCompleted) System.Threading.Thread.Sleep(1);
+        }
+
+        /// <summary>
+        /// Ten random letters g..v: the signature drops digits and hex runs, so a hex marker would match the dismissed card of an
+        /// earlier run in the project's ledger and never show.
+        /// </summary>
+        private static string Marker()
+        {
+            var bytes = Guid.NewGuid().ToByteArray();
+            var chars = new char[10];
+            for (var i = 0; i < chars.Length; i++) chars[i] = (char)('g' + bytes[i] % 16);
+            return new string(chars);
         }
 
         private static void ClearCards()
