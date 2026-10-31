@@ -87,6 +87,8 @@ namespace OnAirDeck.UnityManager
             AtelierManagerApi.OpenWindow = Open;
             AtelierManagerApi.CloseWindows = CloseAll;
             AtelierManagerApi.SelectLicense = OpenFor;
+            AtelierManagerApi.RunImport = RunImportInWindow;
+            AtelierManagerApi.WindowBusy = AnyWindowBusy;
             SRLanguage.RegisterWindowType(typeof(ManagerWindow));
         }
 
@@ -128,6 +130,7 @@ namespace OnAirDeck.UnityManager
             PackageImportQueue.RecordSaved += RefreshInstalledState;
             SRLanguage.Changed += OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(true);
+            ImportRequestWatcher.SetWindowOpen(true);
             OnEnablePackages();
             HookHandoff();
             CheckForUpdate();
@@ -145,6 +148,7 @@ namespace OnAirDeck.UnityManager
             PackageImportQueue.RecordSaved -= RefreshInstalledState;
             SRLanguage.Changed -= OnLanguageChanged;
             PurchaseWatcher.SetWindowOpen(false);
+            ImportRequestWatcher.SetWindowOpen(false);
             // Closing the window (or a script reload) abandons in-progress work.
             CancelSignIn();
             CancelWork();
@@ -158,6 +162,7 @@ namespace OnAirDeck.UnityManager
             // A package folder can change outside the window (VCC, another editor, a rollback).
             RefreshInstalledState();
             PurchaseWatcher.NotifyWindowFocused();
+            ImportRequestWatcher.NotifyWindowFocused();
         }
 
         private void OnExternalChange()
