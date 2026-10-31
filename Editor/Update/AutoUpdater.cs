@@ -281,19 +281,28 @@ namespace OnAirDeck.UnityManager
                 return;
             }
             EditorApplication.update -= RollBackRetryTick;
-            RollBack();
+            RollBack(pending);   // the record just read: a second read could fail and end the retries
         }
 
         internal static void RollBack()
         {
-            var record = AutoUpdateLogic.Load(Root);
+            RollBack(AutoUpdateLogic.Load(Root));
+        }
+
+        private static void RollBack(SelfUpdateRecord record)
+        {
             if (record == null || Abandoned(record)) return;
             // A compile failure is acted on only by the version that started the update; an open rollback by any version.
             if (record.Phase == SelfUpdateRecord.PhaseApplying ? record.From != LoadedVersion : record.Phase != SelfUpdateRecord.PhaseRestoring) return;
             try
             {
                 record.Phase = SelfUpdateRecord.PhaseRestoring;
-                AutoUpdateLogic.Save(Root, record);
+                if (SaveWithRetry(record) != null)
+                {
+                    // Not one file moves before the duty is on disk; the file is held, so try again shortly.
+                    ScheduleRollBackRetry();
+                    return;
+                }
                 if (record.Route == "embedded")
                 {
                     try
