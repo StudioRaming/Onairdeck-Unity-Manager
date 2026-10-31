@@ -3,17 +3,20 @@ using System.IO;
 using System.Linq;
 using OnAirDeck.UnityManager;
 
-// The automatic self-update (owner decision 2026-10-31): when to ask, when to install, the note after the reload, and the rollback
-// of an embedded update whose code does not compile.
+// The self-update (owner decision 2026-10-31): when to ask, when to install, how a reload settles the record, the note, which compile
+// errors trigger the rollback, and the rollback of an embedded update.
 internal static class AutoUpdateChecks
 {
     public static void Run(Action<string, Action> check, string project)
     {
         check("auto update timing: asked on open unless asked within 10 minutes, once a day while open, at once when never asked or the clock went back", Timing);
-        check("auto update decision: installs only a newer release this install can take, never one that failed here, and waits while an install, import, compile or play mode runs", Decision);
+        check("auto update decision: only a release newer than the running code that this install can take; never one being installed, rolled back or failed here; waits while an install, import, compile or play mode runs", Decision);
+        check("auto update settle: the new version marks the update done; the old one marks it failed, or deferred when it was cut before any swap", Settle);
         check("auto update note: 'updated' once in the new version, 'rolled-back' in the old one, nothing while applying or after it was seen", Note);
-        check("auto update record: written and read back with every field; a missing or broken file reads as none", Record(project));
-        check("auto update rollback: the old contents come back from the backup and the failed ones are kept beside it; a missing or empty backup refuses before anything moves", Rollback(project));
+        check("auto update rollback trigger: only an error in a file inside a folder the update swapped (any assembly there)", ErrorScope(project));
+        check("auto update record: written and read back with every field and every swapped folder; a missing or broken file reads as none", Record(project));
+        check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update created is emptied, the failed files are kept; a missing or empty backup refuses before anything moves", Rollback(project));
+        check("auto update rollback: a move that fails mid-way puts the folder back as it was before the restore, and says so", RollbackUndo(project));
         check("auto update pref key: the project hash is the same in every run and ignores case", () =>
         {
             Equal(AutoUpdateLogic.StableHash("C:/Proj/A"), AutoUpdateLogic.StableHash("c:/proj/a"));
@@ -36,18 +39,61 @@ internal static class AutoUpdateChecks
     private static void Decision()
     {
         var safe = new AutoUpdateMoment();
-        Equal(AutoUpdateAction.Apply, AutoUpdateLogic.Decide(true, true, "0.1.5", "", safe));
-        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(false, true, "0.1.5", "", safe));
-        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, false, "0.1.5", "", safe));   // git working copy, local disk, no URL
-        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, true, "", "", safe));
-        Equal(AutoUpdateAction.SkipFailed, AutoUpdateLogic.Decide(true, true, "0.1.5", "0.1.5", safe));
-        Equal(AutoUpdateAction.Apply, AutoUpdateLogic.Decide(true, true, "0.1.6", "0.1.5", safe));   // a later release is tried again
+        Equal(AutoUpdateAction.Apply, AutoUpdateLogic.Decide(true, true, "0.1.5", "0.1.4", "", safe));
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(false, true, "0.1.5", "0.1.4", "", safe));
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, false, "0.1.5", "0.1.4", "", safe));   // git working copy, local disk, no URL
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, true, "", "0.1.4", "", safe));
+        // The server can never move the Manager back or sideways, whatever update_available says.
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, true, "0.1.4", "0.1.4", "", safe));
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, true, "0.1.3", "0.1.4", "", safe));
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(true, true, "0.1.5-preview.1", "0.1.5", "", safe));
+        Equal(AutoUpdateAction.Blocked, AutoUpdateLogic.Decide(true, true, "0.1.5", "0.1.4", "0.1.5", safe));
+        Equal(AutoUpdateAction.Apply, AutoUpdateLogic.Decide(true, true, "0.1.6", "0.1.4", "0.1.5", safe));   // a later release is tried again
         foreach (var busy in new[]
         {
             new AutoUpdateMoment { WindowBusy = true }, new AutoUpdateMoment { Compiling = true }, new AutoUpdateMoment { Playing = true },
             new AutoUpdateMoment { ImportsQueued = true }, new AutoUpdateMoment { ImportRequest = true },
         })
-            Equal(AutoUpdateAction.Wait, AutoUpdateLogic.Decide(true, true, "0.1.5", "", busy));
+        {
+            Equal(AutoUpdateAction.Wait, AutoUpdateLogic.Decide(true, true, "0.1.5", "0.1.4", "", busy));
+            Require(busy.Reason() != null);
+        }
+        Require(safe.Reason() == null);
+
+        // Blocked while it is being installed or rolled back, and after it failed; free again once done, deferred or shown.
+        var record = new SelfUpdateRecord { To = "0.1.5" };
+        foreach (var phase in new[] { SelfUpdateRecord.PhaseApplying, SelfUpdateRecord.PhaseRestoring, SelfUpdateRecord.PhaseRolledBack, SelfUpdateRecord.PhaseFailed })
+        {
+            record.Phase = phase;
+            Equal("0.1.5", AutoUpdateLogic.BlockedVersion(record));
+        }
+        foreach (var phase in new[] { SelfUpdateRecord.PhaseApplied, SelfUpdateRecord.PhaseDeferred, SelfUpdateRecord.PhaseShown })
+        {
+            record.Phase = phase;
+            Equal("", AutoUpdateLogic.BlockedVersion(record));
+        }
+        Equal("", AutoUpdateLogic.BlockedVersion(null));
+    }
+
+    private static void Settle()
+    {
+        var record = new SelfUpdateRecord { From = "0.1.4", To = "0.1.5", Route = "embedded", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.Settle(record, "0.1.5"));
+        Equal(SelfUpdateRecord.PhaseApplied, record.Phase);
+        Require(!AutoUpdateLogic.Settle(record, "0.1.5"));   // only an applying record settles
+
+        record = new SelfUpdateRecord { From = "0.1.4", To = "0.1.5", Route = "embedded", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.Settle(record, "0.1.4"));
+        Equal(SelfUpdateRecord.PhaseDeferred, record.Phase);   // no swap recorded: nothing changed, try again later
+
+        record = new SelfUpdateRecord { From = "0.1.4", To = "0.1.5", Route = "embedded", Phase = SelfUpdateRecord.PhaseApplying };
+        record.Swaps.Add(new SelfUpdateSwap { Target = "x", Backup = "y" });
+        Require(AutoUpdateLogic.Settle(record, "0.1.4"));
+        Equal(SelfUpdateRecord.PhaseFailed, record.Phase);
+
+        record = new SelfUpdateRecord { From = "0.1.4", To = "0.1.5", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.Settle(record, "0.1.4"));
+        Equal(SelfUpdateRecord.PhaseFailed, record.Phase);
     }
 
     private static void Note()
@@ -58,13 +104,30 @@ internal static class AutoUpdateChecks
         record.Phase = SelfUpdateRecord.PhaseRolledBack;
         Equal("rolled-back", AutoUpdateLogic.NoteFor(record, "0.1.4"));
         Equal(null, AutoUpdateLogic.NoteFor(record, "0.1.5"));
-        foreach (var phase in new[] { SelfUpdateRecord.PhaseApplying, SelfUpdateRecord.PhaseShown, SelfUpdateRecord.PhaseFailed })
+        foreach (var phase in new[] { SelfUpdateRecord.PhaseApplying, SelfUpdateRecord.PhaseShown, SelfUpdateRecord.PhaseFailed, SelfUpdateRecord.PhaseDeferred })
         {
             record.Phase = phase;
             Equal(null, AutoUpdateLogic.NoteFor(record, "0.1.5"));
             Equal(null, AutoUpdateLogic.NoteFor(record, "0.1.4"));
         }
         Equal(null, AutoUpdateLogic.NoteFor(null, "0.1.4"));
+    }
+
+    private static Action ErrorScope(string parent)
+    {
+        return () =>
+        {
+            var root = Path.Combine(parent, "autoupdate-scope");
+            var manager = Path.Combine(root, "Packages", "com.studioraming.manager");
+            var record = new SelfUpdateRecord { PackageFolder = manager };
+            record.Swaps.Add(new SelfUpdateSwap { Target = manager });
+            record.Swaps.Add(new SelfUpdateSwap { Target = Path.Combine(root, "Packages", "com.studioraming.helper") });
+            Require(AutoUpdateLogic.ErrorInUpdate(record, root, "Packages/com.studioraming.manager/Editor/NewThing/Broken.cs"));   // a new asmdef too
+            Require(AutoUpdateLogic.ErrorInUpdate(record, root, Path.Combine(root, "Packages", "com.studioraming.helper", "Runtime", "A.cs")));
+            Require(!AutoUpdateLogic.ErrorInUpdate(record, root, "Assets/Scripts/UserCode.cs"));
+            Require(!AutoUpdateLogic.ErrorInUpdate(record, root, "Packages/com.studioraming.manager-old/Editor/A.cs"));   // a sibling, not inside
+            Require(!AutoUpdateLogic.ErrorInUpdate(record, root, ""));
+        };
     }
 
     private static Action Record(string parent)
@@ -78,14 +141,19 @@ internal static class AutoUpdateChecks
             {
                 From = "0.1.4", To = "0.1.5", Route = "embedded", Phase = SelfUpdateRecord.PhaseApplying,
                 PackageFolder = Path.Combine(root, "Packages", "com.studioraming.manager"), Backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "b"),
-                OldPackageId = "com.studioraming.manager@https://example.invalid/m.git#0.1.4", Error = "", FirstRun = true,
+                ManifestPath = Path.Combine(root, "Packages", "vpm-manifest.json"), ManifestBackup = Path.Combine(root, "Library", "m.json"),
+                OldPackageId = "com.studioraming.manager@https://example.invalid/m.git#0.1.4", Error = "", FirstRun = true, Manual = true,
             };
+            record.Swaps.Add(new SelfUpdateSwap { Target = "t1", Backup = "b1" });
+            record.Swaps.Add(new SelfUpdateSwap { Target = "t2", Backup = "" });
             AutoUpdateLogic.Save(root, record);
             var back = AutoUpdateLogic.Load(root);
             Equal(record.From, back.From); Equal(record.To, back.To); Equal(record.Route, back.Route); Equal(record.Phase, back.Phase);
             Equal(record.PackageFolder, back.PackageFolder); Equal(record.Backup, back.Backup); Equal(record.OldPackageId, back.OldPackageId);
+            Equal(record.ManifestPath, back.ManifestPath); Equal(record.ManifestBackup, back.ManifestBackup);
+            Require(back.FirstRun && back.Manual);
+            Equal("t1|b1,t2|", string.Join(",", back.Swaps.Select(s => s.Target + "|" + s.Backup)));
             Require(back.Updated.Length > 0);
-            Require(back.FirstRun);
             record.FirstRun = false;
             AutoUpdateLogic.Save(root, record);
             Require(!AutoUpdateLogic.Load(root).FirstRun);
@@ -101,12 +169,19 @@ internal static class AutoUpdateChecks
             var root = Path.Combine(parent, "autoupdate-rb-" + Guid.NewGuid().ToString("N").Substring(0, 6));
             var folder = Path.Combine(root, "Packages", "com.studioraming.manager");
             var backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "com.studioraming.manager-0.1.4-20261031");
+            var helper = Path.Combine(root, "Packages", "com.studioraming.helper");   // a dependency the new release brought
             Directory.CreateDirectory(Path.Combine(folder, "Editor"));
             File.WriteAllText(Path.Combine(folder, "package.json"), "{\"version\":\"0.1.5\"}");
             File.WriteAllText(Path.Combine(folder, "Editor", "New.cs"), "broken");
             Directory.CreateDirectory(Path.Combine(backup, "Editor"));
             File.WriteAllText(Path.Combine(backup, "package.json"), "{\"version\":\"0.1.4\"}");
             File.WriteAllText(Path.Combine(backup, "Editor", "Old.cs"), "works");
+            Directory.CreateDirectory(helper);
+            File.WriteAllText(Path.Combine(helper, "package.json"), "{}");
+            var manifest = Path.Combine(root, "Packages", "vpm-manifest.json");
+            var manifestBackup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "vpm-manifest.json");
+            File.WriteAllText(manifest, "{\"new\":1}");
+            File.WriteAllText(manifestBackup, "{\"old\":1}");
 
             // Refusals first: nothing moves.
             try { AutoUpdateLogic.RestoreBackup(folder, Path.Combine(root, "missing")); throw new Exception("a missing backup did not refuse"); }
@@ -117,12 +192,42 @@ internal static class AutoUpdateChecks
             catch (PackageInstallException) { }
             Require(File.ReadAllText(Path.Combine(folder, "package.json")).Contains("0.1.5"));
 
-            AutoUpdateLogic.RestoreBackup(folder, backup);
+            var record = new SelfUpdateRecord { PackageFolder = folder, Backup = backup, ManifestPath = manifest, ManifestBackup = manifestBackup };
+            record.Swaps.Add(new SelfUpdateSwap { Target = helper, Backup = "" });
+            record.Swaps.Add(new SelfUpdateSwap { Target = folder, Backup = backup });
+            AutoUpdateLogic.RestoreAll(record);
             Require(File.ReadAllText(Path.Combine(folder, "package.json")).Contains("0.1.4"));
             Require(File.Exists(Path.Combine(folder, "Editor", "Old.cs")) && !File.Exists(Path.Combine(folder, "Editor", "New.cs")));
-            var failed = backup + "-failed";
-            Require(File.Exists(Path.Combine(failed, "Editor", "New.cs")));
+            Require(File.Exists(Path.Combine(backup + "-failed", "Editor", "New.cs")));
             Equal(0, Directory.GetFileSystemEntries(backup).Length);
+            Equal(0, Directory.GetFileSystemEntries(helper).Length);   // created by the update: emptied
+            Require(File.Exists(Path.Combine(helper + "-new-failed", "package.json")));
+            Equal("{\"old\":1}", File.ReadAllText(manifest));
+        };
+    }
+
+    private static Action RollbackUndo(string parent)
+    {
+        return () =>
+        {
+            var root = Path.Combine(parent, "autoupdate-undo-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            var folder = Path.Combine(root, "Packages", "com.studioraming.manager");
+            var backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "old");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "a-new.txt"), "new");
+            File.WriteAllText(Path.Combine(folder, "b-new.txt"), "new");
+            Directory.CreateDirectory(backup);
+            File.WriteAllText(Path.Combine(backup, "a-old.txt"), "old");
+            File.WriteAllText(Path.Combine(backup, "z-old.txt"), "old");
+            // A file of the backup is held open: the move of it fails after the new files went out.
+            using (new FileStream(Path.Combine(backup, "z-old.txt"), FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                try { AutoUpdateLogic.RestoreBackup(folder, backup); throw new Exception("a held file did not stop the restore"); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            Equal("a-new.txt,b-new.txt", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
+            Equal("a-old.txt,z-old.txt", string.Join(",", Directory.GetFiles(backup).Select(Path.GetFileName).OrderBy(n => n)));
         };
     }
 

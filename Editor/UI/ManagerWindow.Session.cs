@@ -224,6 +224,7 @@ namespace OnAirDeck.UnityManager
                 {
                     state = await UpdateService.CheckAsync();
                     if (state != null && state.Response != null) AutoUpdater.LastCheck = now;
+                    else _nextCheckAttempt = now + AutoUpdateLogic.RetrySeconds;   // offline or a server error: not again on every tick
                 }
                 else state = await UpdateService.CheckOncePerSessionAsync();
                 if (state != null && (state.Response != null || _update == null)) _update = state;
@@ -241,49 +242,28 @@ namespace OnAirDeck.UnityManager
             Repaint();
         }
 
-        private void ApplyUpdate()
+        /// <summary>
+        /// The Update button and the required-update screen: the same guarded path as the automatic update (one update at a time, the
+        /// record first, the rollback when the new code does not compile), and it may retry a release that failed here before.
+        /// </summary>
+        private async void ApplyUpdate()
         {
-            if (_update != null && _update.UseEmbedded)
-            {
-                ApplyEmbeddedUpdate();
-                return;
-            }
-            if (_update == null) return;
-            _applyingUpdate = UpdateService.Apply(_update);
-            if (_applyingUpdate == null) return;
-            SetMessage(ManagerText.SelfUpdating, MessageType.Info);
-            EditorApplication.update += PollApplyingUpdate;
-        }
-
-        private void PollApplyingUpdate()
-        {
-            if (_applyingUpdate == null || !_applyingUpdate.IsCompleted) return;
-            EditorApplication.update -= PollApplyingUpdate;
-            var request = _applyingUpdate;
-            _applyingUpdate = null;
-            if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
-                SetMessage(ManagerText.SelfUpdated.Replace("{v}", request.Result.version), MessageType.Info);
-            else
-                SetMessage(ManagerText.SelfUpdateFailed.Replace("{m}", request.Error != null ? request.Error.message : "?"), MessageType.Error);
-        }
-
-        private async void ApplyEmbeddedUpdate()
-        {
-            if (_update == null || !_update.UseEmbedded || Busy) return;
+            var state = _update;
+            if (state == null || !state.HasLatest || AutoUpdater.Running || Busy) return;
             _applyingSelfUpdate = true;
             SetMessage(ManagerText.SelfUpdating, MessageType.Info);
+            Repaint();
             try
             {
-                await PackageInstallService.SelfUpdateAsync(_update.DownloadUrl, _update.PackageName, _update.Response.latest.version,
-                    _update.PackageFolder, null, CancellationToken.None);
-                SessionState.EraseString(PackageInstallService.ReportKey);
-                SetMessage(ManagerText.SelfUpdated.Replace("{v}", _update.Response.latest.version), MessageType.Info);
+                var error = await AutoUpdater.ApplyAsync(state, false, true);
+                if (error == "deferred") SetMessage(ManagerText.AuWait, MessageType.Info);
+                else if (error != null) SetMessage(ManagerText.SelfUpdateFailed.Replace("{m}", error), MessageType.Error);
+                else SetMessage(ManagerText.SelfUpdated.Replace("{v}", state.Response.latest.version), MessageType.Info);
             }
             catch (Exception e)
             {
                 SetMessage(ManagerText.SelfUpdateFailed.Replace("{m}", e.Message), MessageType.Error);
                 _messageReport = ManagerErrorWatch.OfferCaught("Updating the Manager", e);
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Self-update failed: " + e.Message);
             }
             finally
             {

@@ -14,6 +14,7 @@ namespace OnAirDeck.UnityManager
         private const double AutoTickSeconds = 5;
         [NonSerialized] private double _autoNextTick;
         [NonSerialized] private bool _checkingUpdate;
+        [NonSerialized] private long _nextCheckAttempt;
         [NonSerialized] private SelfUpdateRecord _autoNote;
         [NonSerialized] private string _autoNoteKind;
         // No check ever ran in this project: the Manager was just installed (maybe from an old file), so it goes to the latest first.
@@ -36,7 +37,8 @@ namespace OnAirDeck.UnityManager
         {
             if (EditorApplication.timeSinceStartup < _autoNextTick) return;
             _autoNextTick = EditorApplication.timeSinceStartup + AutoTickSeconds;
-            if (!_checkingUpdate && AutoUpdateLogic.CheckDue(false, AutoUpdater.Now(), AutoUpdater.LastCheck))
+            var now = AutoUpdater.Now();
+            if (!_checkingUpdate && now >= _nextCheckAttempt && AutoUpdateLogic.CheckDue(false, now, AutoUpdater.LastCheck))
             {
                 CheckForUpdate(false);
                 return;
@@ -50,7 +52,7 @@ namespace OnAirDeck.UnityManager
             var state = _update;
             if (state == null || !state.HasLatest || AutoUpdater.Running) return;
             var action = AutoUpdateLogic.Decide(state.UpdateAvailable || state.MustUpdate, state.CanApply, state.Response.latest.version,
-                AutoUpdater.FailedVersion(), AutoUpdater.Moment(Busy));
+                AutoUpdater.LoadedVersion, AutoUpdater.BlockedVersion(), AutoUpdater.Moment(Busy));
             if (action != AutoUpdateAction.Apply) return;
             _applyingSelfUpdate = true;
             SetMessage(ManagerText.AuRunning.Replace("{v}", state.Response.latest.version), MessageType.Info);
@@ -58,7 +60,8 @@ namespace OnAirDeck.UnityManager
             try
             {
                 var error = await AutoUpdater.ApplyAsync(state, _firstRun);
-                if (error != null) SetMessage(ManagerText.AuFailed.Replace("{v}", state.Response.latest.version).Replace("{m}", error), MessageType.Warning);
+                if (error == "deferred") SetMessage(null, MessageType.None);   // the moment turned unsafe during the download: next tick
+                else if (error != null) SetMessage(ManagerText.AuFailed.Replace("{v}", state.Response.latest.version).Replace("{m}", error), MessageType.Warning);
             }
             catch (Exception e)
             {
@@ -80,6 +83,14 @@ namespace OnAirDeck.UnityManager
             if (_autoNoteKind == "updated")
                 return DrawBar(body, SRTone.Brand, (_autoNote.FirstRun ? ManagerText.AuFirst : ManagerText.AuDone).Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
             return DrawBar(body, SRTone.Warning, ManagerText.AuBack.Replace("{a}", _autoNote.From).Replace("{b}", _autoNote.To), close);
+        }
+
+        /// <summary>Installs, batches and hand-offs of any window, but not a self-update: what must not overlap the swap.</summary>
+        private static bool AnyWindowWorking()
+        {
+            foreach (var window in Resources.FindObjectsOfTypeAll<ManagerWindow>())
+                if (window != null && (window._workKey != null || (window._batch != null && window._batch.IsRunning) || window.HandoffWaiting)) return true;
+            return false;
         }
 
         private void CloseAutoUpdateNote()

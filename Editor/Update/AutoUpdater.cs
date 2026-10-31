@@ -9,54 +9,56 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager
 {
     /// <summary>
-    /// The automatic self-update (owner decision 2026-10-31). The window asks plugin-version when it opens and once a day while it
-    /// stays open (<see cref="AutoUpdateLogic.CheckDue"/>); a newer release is installed at a safe moment by the same routes as the
-    /// Update button (embedded: the release zip replaces the package folder in one transaction; git: Package Manager switches to the
-    /// release's git URL). The record written first (<see cref="SelfUpdateRecord"/>) lets the new version show "업데이트됨 a → b"
-    /// after the reload, and lets this (old) code, still loaded when the new code fails to compile, put the old version back.
+    /// The Manager's self-update (owner decision 2026-10-31: it updates itself), for the automatic install and the Update button alike.
+    /// One update at a time in the editor. The record is written before anything changes (<see cref="SelfUpdateRecord"/>): the new
+    /// version reads it to show "업데이트됨 a → b", and this code, which Unity keeps loaded when the new code fails to compile, reads it
+    /// to put the old version back.
     /// </summary>
     [InitializeOnLoad]
     internal static class AutoUpdater
     {
         private const string LastCheckKey = "OnAirDeck.UnityManager.AutoUpdate.LastCheck.";
-        private const string ManagerAssembly = "OnAirDeck.UnityManager.Editor";
-        private const string LicenseAssembly = "OnAirDeck.License";
+
+        /// <summary>
+        /// The version of the code that is loaded, read when this domain loaded. Package Manager's registration follows the folder
+        /// (after a swap it already says the new version while this old code still runs), so it never tells which code runs.
+        /// </summary>
+        public static readonly string LoadedVersion;
 
         /// <summary>EditMode tests replace the install step; null runs the real one.</summary>
         internal static Func<UpdateState, SelfUpdateRecord, Task> ApplySeam;
 
-        private static bool _running;
+        /// <summary>A window's own installs, batches and hand-offs (not its self-update), for the check right before the swap.</summary>
+        internal static Func<bool> WindowWorking;
+
+        private static int _running;
 
         static AutoUpdater()
         {
+            LoadedVersion = UpdateService.CurrentVersion;
             CompilationPipeline.assemblyCompilationFinished -= OnAssemblyCompiled;
             CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompiled;
             EditorApplication.delayCall += SettleAfterReload;
         }
 
-        public static bool Running { get { return _running; } }
+        /// <summary>An update (automatic or clicked) is running in this editor.</summary>
+        public static bool Running { get { return Volatile.Read(ref _running) != 0; } }
 
         private static string Root { get { return PackageInstallService.ProjectRoot; } }
 
-        /// <summary>
-        /// After a reload the record is settled: the new version running means the install is done; the old one running means the install
-        /// never took (the editor quit mid-way and the journal was rolled back, or the step was cut by a reload), so the release counts
-        /// as failed and the rollback watch, armed only while "applying", cannot fire later on an unrelated compile error.
-        /// </summary>
         private static void SettleAfterReload()
         {
             try
             {
                 var record = AutoUpdateLogic.Load(Root);
-                if (record == null || record.Phase != SelfUpdateRecord.PhaseApplying) return;
-                var current = UpdateService.CurrentVersion;
-                if (current == record.To) record.Phase = SelfUpdateRecord.PhaseApplied;
-                else
+                if (record == null) return;
+                if (record.Phase == SelfUpdateRecord.PhaseRestoring && record.From == LoadedVersion)
                 {
-                    record.Phase = SelfUpdateRecord.PhaseFailed;
-                    record.Error = "The install did not finish.";
+                    // A rollback was cut (the editor quit or reloaded mid-way): finish it.
+                    RollBack();
+                    return;
                 }
-                AutoUpdateLogic.Save(Root, record);
+                if (AutoUpdateLogic.Settle(record, LoadedVersion)) AutoUpdateLogic.Save(Root, record);
             }
             catch (Exception e)
             {
@@ -64,7 +66,7 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        // ------------------------------------------------------------ timing
+        // ------------------------------------------------------------ timing and state
 
         public static long Now() { return DateTimeOffset.UtcNow.ToUnixTimeSeconds(); }
 
@@ -76,18 +78,25 @@ namespace OnAirDeck.UnityManager
             set { EditorPrefs.SetString(LastCheckPref, value.ToString()); }
         }
 
-        /// <summary>The release this project failed to take automatically (only a click installs it again), or "".</summary>
-        public static string FailedVersion()
+        /// <summary>The release no automatic install may take now (being installed or rolled back, or failed here), or "".</summary>
+        public static string BlockedVersion()
         {
-            var record = AutoUpdateLogic.Load(Root);
-            return record != null && (record.Phase == SelfUpdateRecord.PhaseRolledBack || record.Phase == SelfUpdateRecord.PhaseFailed) ? record.To : "";
+            return AutoUpdateLogic.BlockedVersion(AutoUpdateLogic.Load(Root));
         }
 
+        /// <summary>The moment as an automatic update sees it: <paramref name="windowBusy"/> and any update already running count as busy.</summary>
         public static AutoUpdateMoment Moment(bool windowBusy)
+        {
+            var moment = EditorMoment(windowBusy);
+            moment.WindowBusy = moment.WindowBusy || Running;
+            return moment;
+        }
+
+        private static AutoUpdateMoment EditorMoment(bool windowBusy)
         {
             return new AutoUpdateMoment
             {
-                WindowBusy = windowBusy || _running,
+                WindowBusy = windowBusy,
                 Compiling = EditorApplication.isCompiling || EditorApplication.isUpdating,
                 Playing = EditorApplication.isPlayingOrWillChangePlaymode,
                 ImportsQueued = PackageImportQueue.PendingCount > 0,
@@ -95,22 +104,31 @@ namespace OnAirDeck.UnityManager
             };
         }
 
+        /// <summary>Why right now, before the swap, is not safe (everything but this update itself), or null.</summary>
+        private static string UnsafeNow()
+        {
+            var working = WindowWorking;
+            return EditorMoment(working != null && working()).Reason();
+        }
+
         // ------------------------------------------------------------ install
 
         /// <summary>
-        /// Installs <paramref name="state"/>'s release without a click. Writes the record first; a failure before the swap (download,
-        /// checks) undoes itself in the install transaction and marks the release failed, so it is not tried again automatically.
-        /// Returns null when it started (the reload follows), or the error text.
+        /// Installs <paramref name="state"/>'s release. Returns null when it is in (a reload follows), "deferred" when the moment turned
+        /// unsafe before anything changed (tried again later), or the error text. Refuses a release that is not newer than the running
+        /// code, and a second update while one runs. A failure before the swap undoes itself in the install transaction and marks the
+        /// release failed, so only a click tries it again.
         /// </summary>
-        public static async Task<string> ApplyAsync(UpdateState state, bool firstRun = false)
+        public static async Task<string> ApplyAsync(UpdateState state, bool firstRun = false, bool manual = false)
         {
-            if (_running || state == null || !state.CanApply || !state.HasLatest) return "not available";
-            _running = true;
+            if (state == null || !state.CanApply || !state.HasLatest) return "This install cannot take the release by itself.";
+            var to = state.Response.latest.version;
+            if (!AutoUpdateLogic.IsNewer(to, LoadedVersion)) return "The release (" + to + ") is not newer than the running version (" + LoadedVersion + ").";
+            if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return "Another update is running.";
             var record = new SelfUpdateRecord
             {
-                From = state.CurrentVersion, To = state.Response.latest.version, Route = state.UseEmbedded ? "embedded" : "git",
-                Phase = SelfUpdateRecord.PhaseApplying, PackageFolder = state.PackageFolder ?? "", OldPackageId = state.PackageId ?? "",
-                FirstRun = firstRun,
+                From = LoadedVersion, To = to, Route = state.UseEmbedded ? "embedded" : "git", Phase = SelfUpdateRecord.PhaseApplying,
+                PackageFolder = state.PackageFolder ?? "", OldPackageId = state.PackageId ?? "", FirstRun = firstRun, Manual = manual,
             };
             try
             {
@@ -119,13 +137,19 @@ namespace OnAirDeck.UnityManager
                 if (seam != null) await seam(state, record);
                 else if (state.UseEmbedded)
                 {
-                    var report = await PackageInstallService.SelfUpdateAsync(state.DownloadUrl, state.PackageName, record.To, state.PackageFolder, null, CancellationToken.None);
-                    foreach (var entry in report.Installed)
-                        if (entry.Name == state.PackageName) record.Backup = entry.Backup;
-                    AutoUpdateLogic.Save(Root, record);
+                    await PackageInstallService.SelfUpdateAsync(state.DownloadUrl, state.PackageName, to, state.PackageFolder, null, CancellationToken.None,
+                        state.Response.latest.sha256, UnsafeNow,
+                        report =>
+                        {
+                            // Before Package Manager and the asset database hear of it: a refresh may compile at once.
+                            AutoUpdateLogic.TakeSwaps(record, report, state.PackageName, Root);
+                            AutoUpdateLogic.Save(Root, record);
+                        });
                 }
                 else
                 {
+                    var reason = UnsafeNow();
+                    if (reason != null) throw new SelfUpdateDeferredException(reason);
                     var add = UpdateService.Apply(state);
                     if (add == null) throw new PackageInstallException("This install cannot switch to the release's git URL.");
                     while (!add.IsCompleted) await Task.Delay(200);
@@ -133,68 +157,104 @@ namespace OnAirDeck.UnityManager
                 }
                 return null;
             }
+            catch (SelfUpdateDeferredException e)
+            {
+                record.Phase = SelfUpdateRecord.PhaseDeferred;
+                record.Error = e.Message;
+                try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
+                return "deferred";
+            }
             catch (Exception e)
             {
                 record.Phase = SelfUpdateRecord.PhaseFailed;
                 record.Error = e.Message;
                 try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Automatic update to " + record.To + " failed: " + e.Message);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update to " + to + " failed: " + e.Message);
                 return e.Message;
             }
             finally
             {
-                _running = false;
+                Interlocked.Exchange(ref _running, 0);
             }
         }
 
         // ------------------------------------------------------------ rollback
 
         /// <summary>
-        /// Runs in the version that started the update: when the new Manager code does not compile, Unity keeps this code loaded, and it
-        /// puts the old version back (embedded: from the transaction's backup; git: the old package id).
+        /// Runs in the version that started the update: a compile error in a file inside a folder the update swapped (any assembly there)
+        /// means the new code cannot load; Unity keeps this code loaded, and it puts the old version back.
         /// </summary>
         private static void OnAssemblyCompiled(string assemblyPath, CompilerMessage[] messages)
         {
-            var name = System.IO.Path.GetFileNameWithoutExtension(assemblyPath ?? "");
-            if (name != ManagerAssembly && name != LicenseAssembly) return;
-            var failed = false;
-            foreach (var message in messages ?? new CompilerMessage[0]) if (message.type == CompilerMessageType.Error) { failed = true; break; }
-            if (!failed) return;
+            if (messages == null || messages.Length == 0) return;
             var record = AutoUpdateLogic.Load(Root);
-            if (record == null || record.Phase != SelfUpdateRecord.PhaseApplying || record.From != UpdateService.CurrentVersion) return;
-            // After the compile ends: no file moves while Unity still reads the sources.
-            EditorApplication.delayCall += () => RollBack(record);
+            if (record == null || record.Phase != SelfUpdateRecord.PhaseApplying || record.From != LoadedVersion) return;
+            foreach (var message in messages)
+            {
+                if (message.type != CompilerMessageType.Error || !AutoUpdateLogic.ErrorInUpdate(record, Root, message.file)) continue;
+                // After the compile ends: no file moves while Unity still reads the sources. The record is read again then.
+                EditorApplication.delayCall -= RollBack;
+                EditorApplication.delayCall += RollBack;
+                return;
+            }
         }
 
-        internal static void RollBack(SelfUpdateRecord record)
+        internal static void RollBack()
         {
+            var record = AutoUpdateLogic.Load(Root);
+            if (record == null || (record.Phase != SelfUpdateRecord.PhaseApplying && record.Phase != SelfUpdateRecord.PhaseRestoring) || record.From != LoadedVersion) return;
             try
             {
-                if (record.Route == "embedded") AutoUpdateLogic.RestoreBackup(record.PackageFolder, record.Backup);
-                else if (record.OldPackageId.Length > 0) Client.Add(record.OldPackageId);
-                else throw new PackageInstallException("There is no earlier package id to go back to.");
-                record.Phase = SelfUpdateRecord.PhaseRolledBack;
-                record.Error = "The new version did not compile in this Unity.";
+                record.Phase = SelfUpdateRecord.PhaseRestoring;
                 AutoUpdateLogic.Save(Root, record);
-                AssetDatabase.Refresh();
+                if (record.Route == "embedded")
+                {
+                    AutoUpdateLogic.RestoreAll(record);
+                    Finish(record, null);
+                    AssetDatabase.Refresh();
+                }
+                else if (record.OldPackageId.Length > 0)
+                {
+                    var add = Client.Add(record.OldPackageId);
+                    EditorApplication.CallbackFunction poll = null;
+                    poll = () =>
+                    {
+                        if (!add.IsCompleted) return;
+                        EditorApplication.update -= poll;
+                        Finish(record, add.Status == StatusCode.Success ? null : (add.Error != null ? add.Error.message : "Package Manager refused it."));
+                    };
+                    EditorApplication.update += poll;
+                }
+                else throw new PackageInstallException("There is no earlier package id to go back to.");
             }
             catch (Exception e)
             {
-                record.Phase = SelfUpdateRecord.PhaseFailed;
-                record.Error = "Rollback failed: " + e.Message;
-                try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
-                Debug.LogError(OnAirDeckConfig.LogPrefix + "The automatic update to " + record.To + " did not compile and the previous version could not be put back: " + e.Message);
+                Finish(record, e.Message);
             }
+        }
+
+        private static void Finish(SelfUpdateRecord record, string error)
+        {
+            record.Phase = error == null ? SelfUpdateRecord.PhaseRolledBack : SelfUpdateRecord.PhaseFailed;
+            record.Error = error == null ? "The new version did not compile in this Unity." : "Rollback failed: " + error;
+            try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
+            if (error != null)
+                Debug.LogError(OnAirDeckConfig.LogPrefix + "The update to " + record.To + " did not compile and the previous version could not be put back: " + error);
         }
 
         // ------------------------------------------------------------ the note
 
-        /// <summary>"updated" or "rolled-back" when the window has a note to show once, else null.</summary>
+        /// <summary>The record with a note to show once ("updated" or "rolled-back" in <paramref name="kind"/>), else null.</summary>
         public static SelfUpdateRecord PendingNote(out string kind)
         {
-            kind = null;
             var record = AutoUpdateLogic.Load(Root);
-            kind = AutoUpdateLogic.NoteFor(record, UpdateService.CurrentVersion);
+            // The window may open before the delayed settle ran. Only the new version may settle here: the old one opening a window
+            // while its update still runs must not call that update failed.
+            if (record != null && record.Phase == SelfUpdateRecord.PhaseApplying && record.To == LoadedVersion && AutoUpdateLogic.Settle(record, LoadedVersion))
+            {
+                try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
+            }
+            kind = AutoUpdateLogic.NoteFor(record, LoadedVersion);
             return kind != null ? record : null;
         }
 

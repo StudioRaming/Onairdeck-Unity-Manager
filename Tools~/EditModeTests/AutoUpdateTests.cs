@@ -47,7 +47,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
 
         private string Newer()
         {
-            var parts = UpdateService.CurrentVersion.Split('.');
+            var parts = AutoUpdater.LoadedVersion.Split('.');
             return parts[0] + "." + parts[1] + "." + (int.Parse(parts[2].Split('-')[0]) + 1);
         }
 
@@ -66,7 +66,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
             // The Manager under test is the host's link to a git checkout: it must stay as it is, by a click or automatically.
             Assert.IsFalse(state.CanApply);
             StringAssert.Contains("git working copy", state.ApplyBlockedReason);
-            Assert.AreEqual(AutoUpdateAction.None, AutoUpdateLogic.Decide(state.UpdateAvailable, state.CanApply, newer, "", new AutoUpdateMoment()));
+            Assert.AreEqual(AutoUpdateAction.None, AutoUpdateLogic.Decide(state.UpdateAvailable, state.CanApply, newer, AutoUpdater.LoadedVersion, "", new AutoUpdateMoment()));
         }
 
         [UnityTest]
@@ -86,24 +86,28 @@ namespace OnAirDeck.UnityManager.EditModeTests
             Assert.IsNull(apply.Result);
             Assert.IsNotNull(seen);
             Assert.AreEqual(SelfUpdateRecord.PhaseApplying, seen.Phase);
-            Assert.AreEqual(UpdateService.CurrentVersion, seen.From);
+            Assert.AreEqual(AutoUpdater.LoadedVersion, seen.From);
             Assert.AreEqual(newer, seen.To);
             Assert.AreEqual("embedded", seen.Route);
-            Assert.AreEqual("", AutoUpdater.FailedVersion());
+            Assert.AreEqual(newer, AutoUpdater.BlockedVersion(), "an update in progress blocks another automatic one");
 
             AutoUpdater.ApplySeam = (s, record) => { throw new PackageInstallException("download failed"); };
             var failing = AutoUpdater.ApplyAsync(state);
             yield return Await(failing, 30);
             StringAssert.Contains("download failed", failing.Result);
-            Assert.AreEqual(newer, AutoUpdater.FailedVersion());
-            Assert.AreEqual(AutoUpdateAction.SkipFailed, AutoUpdateLogic.Decide(true, true, newer, AutoUpdater.FailedVersion(), new AutoUpdateMoment()));
+            Assert.AreEqual(newer, AutoUpdater.BlockedVersion());
+            Assert.AreEqual(AutoUpdateAction.Blocked, AutoUpdateLogic.Decide(true, true, newer, AutoUpdater.LoadedVersion, AutoUpdater.BlockedVersion(), new AutoUpdateMoment()));
+            // An older or equal release is refused whatever the server says.
+            var same = AutoUpdater.ApplyAsync(Embedded(AutoUpdater.LoadedVersion));
+            yield return Await(same, 30);
+            StringAssert.Contains("not newer", same.Result);
         }
 
         [Test]
         public void TheNewVersion_ShowsTheNoteOnce()
         {
             var root = PackageInstallService.ProjectRoot;
-            var current = UpdateService.CurrentVersion;
+            var current = AutoUpdater.LoadedVersion;
             AutoUpdateLogic.Save(root, new SelfUpdateRecord { From = "0.0.9", To = current, Route = "embedded", Phase = SelfUpdateRecord.PhaseApplied });
             string kind;
             var note = AutoUpdater.PendingNote(out kind);
@@ -119,7 +123,7 @@ namespace OnAirDeck.UnityManager.EditModeTests
         {
             return new UpdateState
             {
-                CurrentVersion = UpdateService.CurrentVersion, CanApply = true, UseEmbedded = true, PackageName = "com.studioraming.manager",
+                CurrentVersion = AutoUpdater.LoadedVersion, CanApply = true, UseEmbedded = true, PackageName = "com.studioraming.manager",
                 PackageFolder = "unused-by-the-seam", DownloadUrl = "https://example.invalid/m.zip",
                 Response = new VersionResponse { latest = new ReleaseInfo { version = version }, update_available = true },
             };

@@ -15,35 +15,56 @@ namespace OnAirDeck.UnityManager
         Apply,
         /// <summary>A newer release waits for a safe moment (an install, import, compile or play mode is running).</summary>
         Wait,
-        /// <summary>This release failed here before: only the Update button installs it.</summary>
-        SkipFailed
+        /// <summary>This release failed here, or its install is still settling: only the Update button installs it (a failed one).</summary>
+        Blocked
     }
 
     /// <summary>What the editor is doing now; any of it makes this a bad moment to replace the Manager.</summary>
     internal struct AutoUpdateMoment
     {
-        public bool WindowBusy;       // an install, batch, self-update or hand-off of the window
+        public bool WindowBusy;       // an install, batch, self-update or hand-off of a window, or another self-update
         public bool Compiling;        // EditorApplication.isCompiling or isUpdating
         public bool Playing;          // play mode, or entering it
         public bool ImportsQueued;    // PackageImportQueue has .unitypackage imports to run
         public bool ImportRequest;    // the one-button import holds a request
 
         public bool IsSafe { get { return !WindowBusy && !Compiling && !Playing && !ImportsQueued && !ImportRequest; } }
+
+        /// <summary>Why this is not a safe moment, or null.</summary>
+        public string Reason()
+        {
+            if (Playing) return "Play mode is running.";
+            if (Compiling) return "Scripts are compiling.";
+            if (WindowBusy) return "Another install is running.";
+            if (ImportsQueued || ImportRequest) return "An import is running.";
+            return null;
+        }
+    }
+
+    /// <summary>One folder an update swapped and where its previous contents went (the install transaction's backup).</summary>
+    internal sealed class SelfUpdateSwap
+    {
+        public string Target = "";
+        public string Backup = "";
     }
 
     /// <summary>
-    /// The automatic self-update (owner decision 2026-10-31: the Managers update themselves). This record, written before an
-    /// automatic install starts, lives in Library/OnAirDeck/self-update.json: the version that runs after the next script reload
-    /// reads it to show "업데이트됨 a → b", and the version still loaded when the new code fails to compile reads it to put the old
-    /// folder back. No UnityEngine here.
+    /// The self-update record (owner decision 2026-10-31: the Managers update themselves). Written before any update starts, by a click
+    /// or automatically, to Library/OnAirDeck/self-update.json: the version that runs after the next script reload reads it to show
+    /// "업데이트됨 a → b"; the version still loaded when the new code fails to compile reads it to put every swapped folder (and
+    /// vpm-manifest.json) back. No UnityEngine here.
     /// </summary>
     internal sealed class SelfUpdateRecord
     {
         public const string PhaseApplying = "applying";
         public const string PhaseApplied = "applied";
+        /// <summary>The rollback is moving files; a load that finds this phase finishes it.</summary>
+        public const string PhaseRestoring = "restoring";
         public const string PhaseRolledBack = "rolled-back";
         /// <summary>Failed before the swap, or a rolled-back release whose note was seen: only a click installs it again.</summary>
         public const string PhaseFailed = "failed";
+        /// <summary>Stopped before anything changed (the moment turned unsafe): tried again later.</summary>
+        public const string PhaseDeferred = "deferred";
         public const string PhaseShown = "shown";
 
         public string From = "";
@@ -52,14 +73,21 @@ namespace OnAirDeck.UnityManager
         public string Route = "";
         public string Phase = "";
         public string PackageFolder = "";
-        /// <summary>Embedded: where the old folder's contents went (the install transaction's backup).</summary>
+        /// <summary>Embedded: the Manager folder's backup (also in <see cref="Swaps"/>).</summary>
         public string Backup = "";
+        /// <summary>Embedded: every folder the transaction swapped (the Manager and any dependency it brought), in order.</summary>
+        public readonly List<SelfUpdateSwap> Swaps = new List<SelfUpdateSwap>();
+        /// <summary>Embedded: vpm-manifest.json and its copy from before the update, when the transaction changed it.</summary>
+        public string ManifestPath = "";
+        public string ManifestBackup = "";
         /// <summary>Git: the package id to add back (name@url#tag) when the new version does not compile.</summary>
         public string OldPackageId = "";
         public string Error = "";
         public string Updated = "";
         /// <summary>The first check of this project found the release (an old .unitypackage or a pinned git URL was installed): "최신 버전으로 업데이트했어요".</summary>
         public bool FirstRun;
+        /// <summary>A click started it (the Update button or the required-update screen).</summary>
+        public bool Manual;
     }
 
     internal static class AutoUpdateLogic
@@ -69,6 +97,8 @@ namespace OnAirDeck.UnityManager
         public const long OpenRecheckSeconds = 10 * 60;
         /// <summary>While a window stays open, the server is asked again after this long.</summary>
         public const long DailySeconds = 24 * 60 * 60;
+        /// <summary>A failed check (offline, server error) is tried again after this long, not on every tick.</summary>
+        public const long RetrySeconds = 10 * 60;
 
         /// <summary>True when the window should ask plugin-version now: on open unless asked within 10 minutes, else once a day.</summary>
         public static bool CheckDue(bool onOpen, long now, long lastCheck)
@@ -77,24 +107,95 @@ namespace OnAirDeck.UnityManager
             return now - lastCheck >= (onOpen ? OpenRecheckSeconds : DailySeconds);
         }
 
-        /// <summary>
-        /// What to do with the last answer. A release that failed here before is installed again only by a click (a broken build must
-        /// not loop); a required update (must_update) is the same rule, the blocking screen offers the click.
-        /// </summary>
-        public static AutoUpdateAction Decide(bool updateAvailable, bool canApply, string latestVersion, string failedVersion, AutoUpdateMoment moment)
+        /// <summary>The release in the answer is newer than the code that runs (a server answer can never move the Manager back).</summary>
+        public static bool IsNewer(string latest, string running)
         {
-            if (!updateAvailable || !canApply || string.IsNullOrEmpty(latestVersion)) return AutoUpdateAction.None;
-            if (!string.IsNullOrEmpty(failedVersion) && failedVersion == latestVersion) return AutoUpdateAction.SkipFailed;
+            return !string.IsNullOrEmpty(latest) && PackageVersion.Compare(latest, running ?? "") > 0;
+        }
+
+        /// <summary>
+        /// What to do with the last answer. <paramref name="blockedVersion"/> is a release whose install is still settling or failed here
+        /// (<see cref="BlockedVersion"/>): never installed again by itself, so a broken build cannot loop. A required update follows the
+        /// same rule; the blocking screen offers the click.
+        /// </summary>
+        public static AutoUpdateAction Decide(bool updateAvailable, bool canApply, string latestVersion, string runningVersion, string blockedVersion, AutoUpdateMoment moment)
+        {
+            if (!updateAvailable || !canApply || !IsNewer(latestVersion, runningVersion)) return AutoUpdateAction.None;
+            if (!string.IsNullOrEmpty(blockedVersion) && blockedVersion == latestVersion) return AutoUpdateAction.Blocked;
             return moment.IsSafe ? AutoUpdateAction.Apply : AutoUpdateAction.Wait;
         }
 
-        /// <summary>The note the new version shows once after the reload; null when there is none to show for <paramref name="current"/>.</summary>
-        public static string NoteFor(SelfUpdateRecord record, string current)
+        /// <summary>The release no automatic install may take now: one being installed or rolled back, or one that failed. "" when none.</summary>
+        public static string BlockedVersion(SelfUpdateRecord record)
+        {
+            if (record == null) return "";
+            switch (record.Phase)
+            {
+                case SelfUpdateRecord.PhaseApplying:
+                case SelfUpdateRecord.PhaseRestoring:
+                case SelfUpdateRecord.PhaseRolledBack:
+                case SelfUpdateRecord.PhaseFailed:
+                    return record.To;
+                default:
+                    return "";
+            }
+        }
+
+        /// <summary>
+        /// Settles a record after a script reload, given the version of the code that now runs: the new version means the update is in.
+        /// The old one means it never took: cut before the swap (an embedded update with no swap recorded) it is tried again later; cut
+        /// after it (the journal rolled it back, or the git route), it counts as failed. Returns true when it changed.
+        /// </summary>
+        public static bool Settle(SelfUpdateRecord record, string running)
+        {
+            if (record == null || record.Phase != SelfUpdateRecord.PhaseApplying) return false;
+            if (running == record.To) record.Phase = SelfUpdateRecord.PhaseApplied;
+            else if (record.Route == "embedded" && record.Swaps.Count == 0)
+            {
+                record.Phase = SelfUpdateRecord.PhaseDeferred;
+                record.Error = "Cut before anything changed.";
+            }
+            else
+            {
+                record.Phase = SelfUpdateRecord.PhaseFailed;
+                record.Error = "The install did not finish.";
+            }
+            return true;
+        }
+
+        /// <summary>The note the running version shows once; null when there is none for <paramref name="running"/>.</summary>
+        public static string NoteFor(SelfUpdateRecord record, string running)
         {
             if (record == null) return null;
-            if (record.Phase == SelfUpdateRecord.PhaseApplied && record.To == current) return "updated";
-            if (record.Phase == SelfUpdateRecord.PhaseRolledBack && record.From == current) return "rolled-back";
+            if (record.Phase == SelfUpdateRecord.PhaseApplied && record.To == running) return "updated";
+            if (record.Phase == SelfUpdateRecord.PhaseRolledBack && record.From == running) return "rolled-back";
             return null;
+        }
+
+        /// <summary>
+        /// True when a compile error belongs to the update: its file is inside one of the folders the update swapped (any assembly there,
+        /// also one the new release added). <paramref name="file"/> is the compiler's path, project-relative or absolute.
+        /// </summary>
+        public static bool ErrorInUpdate(SelfUpdateRecord record, string projectRoot, string file)
+        {
+            if (record == null || string.IsNullOrEmpty(file)) return false;
+            var full = Normalize(Path.IsPathRooted(file) ? file : Path.Combine(projectRoot, file));
+            var folders = new List<string>();
+            foreach (var swap in record.Swaps) folders.Add(swap.Target);
+            if (record.PackageFolder.Length > 0) folders.Add(record.PackageFolder);
+            foreach (var folder in folders)
+            {
+                if (string.IsNullOrEmpty(folder)) continue;
+                var root = Normalize(Path.IsPathRooted(folder) ? folder : Path.Combine(projectRoot, folder)).TrimEnd('/') + "/";
+                if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static string Normalize(string path)
+        {
+            try { return Path.GetFullPath(path).Replace('\\', '/'); }
+            catch (Exception) { return path.Replace('\\', '/'); }
         }
 
         /// <summary>FNV-1a of the lower-cased text, as 8 hex digits: the same in every run (string.GetHashCode is not guaranteed to be).</summary>
@@ -123,7 +224,7 @@ namespace OnAirDeck.UnityManager
                 if (!File.Exists(path)) return null;
                 var root = MiniJson.ParseObject(File.ReadAllText(path, Encoding.UTF8));
                 if (root == null) return null;
-                return new SelfUpdateRecord
+                var record = new SelfUpdateRecord
                 {
                     From = MiniJson.GetString(root, "from") ?? "",
                     To = MiniJson.GetString(root, "to") ?? "",
@@ -131,11 +232,22 @@ namespace OnAirDeck.UnityManager
                     Phase = MiniJson.GetString(root, "phase") ?? "",
                     PackageFolder = MiniJson.GetString(root, "packageFolder") ?? "",
                     Backup = MiniJson.GetString(root, "backup") ?? "",
+                    ManifestPath = MiniJson.GetString(root, "manifestPath") ?? "",
+                    ManifestBackup = MiniJson.GetString(root, "manifestBackup") ?? "",
                     OldPackageId = MiniJson.GetString(root, "oldPackageId") ?? "",
                     Error = MiniJson.GetString(root, "error") ?? "",
                     Updated = MiniJson.GetString(root, "updated") ?? "",
                     FirstRun = MiniJson.GetString(root, "firstRun") == "1",
+                    Manual = MiniJson.GetString(root, "manual") == "1",
                 };
+                object swaps;
+                if (root.TryGetValue("swaps", out swaps) && swaps is List<object>)
+                    foreach (var item in (List<object>)swaps)
+                    {
+                        var swap = item as Dictionary<string, object>;
+                        if (swap != null) record.Swaps.Add(new SelfUpdateSwap { Target = MiniJson.GetString(swap, "target") ?? "", Backup = MiniJson.GetString(swap, "backup") ?? "" });
+                    }
+                return record;
             }
             catch (Exception)
             {
@@ -146,42 +258,104 @@ namespace OnAirDeck.UnityManager
         public static void Save(string projectRoot, SelfUpdateRecord record)
         {
             var root = new Dictionary<string, object>();
-            root["format"] = 1L;
+            root["format"] = 2L;
             root["from"] = record.From;
             root["to"] = record.To;
             root["route"] = record.Route;
             root["phase"] = record.Phase;
             root["packageFolder"] = record.PackageFolder;
             root["backup"] = record.Backup;
+            var swaps = new List<object>();
+            foreach (var swap in record.Swaps)
+                swaps.Add(new Dictionary<string, object> { { "target", swap.Target }, { "backup", swap.Backup } });
+            root["swaps"] = swaps;
+            root["manifestPath"] = record.ManifestPath;
+            root["manifestBackup"] = record.ManifestBackup;
             root["oldPackageId"] = record.OldPackageId;
             root["error"] = record.Error;
             root["firstRun"] = record.FirstRun ? "1" : "";
+            root["manual"] = record.Manual ? "1" : "";
             record.Updated = DateTime.Now.ToString("o", CultureInfo.InvariantCulture);
             root["updated"] = record.Updated;
             AtomicFile.Write(RecordPath(projectRoot), JsonWriter.Write(root, "\n"));
         }
 
+        /// <summary>Takes the swapped folders and the vpm-manifest.json copy from the install transaction's report into the record.</summary>
+        public static void TakeSwaps(SelfUpdateRecord record, InstallReport report, string packageName, string projectRoot)
+        {
+            record.Swaps.Clear();
+            foreach (var entry in report.Installed)
+            {
+                record.Swaps.Add(new SelfUpdateSwap { Target = entry.Target, Backup = entry.Backup });
+                if (entry.Name == packageName) record.Backup = entry.Backup;
+            }
+            if (report.ManifestUpdated && report.ManifestBackup.Length > 0)
+            {
+                record.ManifestBackup = report.ManifestBackup;
+                record.ManifestPath = Path.Combine(projectRoot, "Packages", "vpm-manifest.json");
+            }
+        }
+
         // ------------------------------------------------------------ rollback of an embedded update
 
         /// <summary>
-        /// Puts the old Manager back after an embedded update whose code does not compile: the new contents of
-        /// <paramref name="packageFolder"/> go to "&lt;backup&gt;-failed" and the old ones come back from <paramref name="backup"/>. The
-        /// folder itself stays (Unity keeps watching an embedded package folder; see PackageTransaction). Throws when the backup is
-        /// missing or empty, before anything moves.
+        /// Puts every folder the update swapped back, last swap first, then vpm-manifest.json. Each folder: its new contents go to
+        /// "&lt;backup&gt;-failed" and the old ones come back from the backup; a folder the update created (no backup) is emptied into
+        /// "-failed". A folder whose restore fails mid-way is put back the way it was before the restore started, and the error goes up.
+        /// </summary>
+        public static void RestoreAll(SelfUpdateRecord record)
+        {
+            var swaps = new List<SelfUpdateSwap>(record.Swaps);
+            if (swaps.Count == 0 && record.PackageFolder.Length > 0) swaps.Add(new SelfUpdateSwap { Target = record.PackageFolder, Backup = record.Backup });
+            if (swaps.Count == 0) throw new PackageInstallException("There is nothing recorded to put back.");
+            for (var i = swaps.Count - 1; i >= 0; i--) RestoreBackup(swaps[i].Target, swaps[i].Backup);
+            if (record.ManifestBackup.Length > 0 && File.Exists(record.ManifestBackup) && record.ManifestPath.Length > 0)
+                AtomicFile.Write(record.ManifestPath, File.ReadAllText(record.ManifestBackup, Encoding.UTF8));
+        }
+
+        /// <summary>
+        /// One folder back from its backup. Throws before anything moves when the folder is gone or a backup is named but missing or
+        /// empty; a move that fails puts back what this call already moved, then rethrows.
         /// </summary>
         public static void RestoreBackup(string packageFolder, string backup)
         {
-            if (string.IsNullOrEmpty(backup) || !Directory.Exists(backup) || Directory.GetFileSystemEntries(backup).Length == 0)
-                throw new PackageInstallException("The backup of the previous Manager is gone; it cannot be put back.");
             if (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))
                 throw new PackageInstallException("Cannot find the folder the Manager is installed in.");
-            var failed = backup.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "-failed";
-            for (var n = 2; Directory.Exists(failed); n++) failed = backup.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "-failed-" + n.ToString(CultureInfo.InvariantCulture);
+            var created = string.IsNullOrEmpty(backup);
+            if (!created && (!Directory.Exists(backup) || Directory.GetFileSystemEntries(backup).Length == 0))
+                throw new PackageInstallException("The backup of the previous Manager is gone; it cannot be put back.");
+            var baseName = created ? packageFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + "-new"
+                                   : backup.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var failed = baseName + "-failed";
+            for (var n = 2; Directory.Exists(failed); n++) failed = baseName + "-failed-" + n.ToString(CultureInfo.InvariantCulture);
             Directory.CreateDirectory(failed);
-            foreach (var child in Directory.GetFileSystemEntries(packageFolder))
-                PackageTransaction.MoveEntry(child, Path.Combine(failed, Path.GetFileName(child)));
-            foreach (var child in Directory.GetFileSystemEntries(backup))
-                PackageTransaction.MoveEntry(child, Path.Combine(packageFolder, Path.GetFileName(child)));
+
+            var done = new List<KeyValuePair<string, string>>();   // from, to (in the order moved)
+            try
+            {
+                foreach (var child in Directory.GetFileSystemEntries(packageFolder))
+                {
+                    var to = Path.Combine(failed, Path.GetFileName(child));
+                    PackageTransaction.MoveEntry(child, to);
+                    done.Add(new KeyValuePair<string, string>(child, to));
+                }
+                if (!created)
+                    foreach (var child in Directory.GetFileSystemEntries(backup))
+                    {
+                        var to = Path.Combine(packageFolder, Path.GetFileName(child));
+                        PackageTransaction.MoveEntry(child, to);
+                        done.Add(new KeyValuePair<string, string>(child, to));
+                    }
+            }
+            catch (Exception)
+            {
+                for (var i = done.Count - 1; i >= 0; i--)
+                {
+                    try { PackageTransaction.MoveEntry(done[i].Value, done[i].Key); }
+                    catch (Exception) { }
+                }
+                throw;
+            }
         }
     }
 }

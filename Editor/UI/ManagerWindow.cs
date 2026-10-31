@@ -64,7 +64,6 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private string _pendingLicenseId;
 
         [NonSerialized] private UpdateState _update;
-        [NonSerialized] private UnityEditor.PackageManager.Requests.AddRequest _applyingUpdate;
 
         private string _message;
         private MessageType _messageType = MessageType.None;
@@ -89,6 +88,7 @@ namespace OnAirDeck.UnityManager
             AtelierManagerApi.SelectLicense = OpenFor;
             AtelierManagerApi.RunImport = RunImportInWindow;
             AtelierManagerApi.WindowBusy = AnyWindowBusy;
+            AutoUpdater.WindowWorking = AnyWindowWorking;
             SRLanguage.RegisterWindowType(typeof(ManagerWindow));
         }
 
@@ -155,7 +155,6 @@ namespace OnAirDeck.UnityManager
             CancelSignIn();
             CancelWork();
             StopConflictScan();
-            EditorApplication.update -= PollApplyingUpdate;
             EditorApplication.update -= SignInTick;
             OnDisableAutoUpdate();
             UnhookHandoff();
