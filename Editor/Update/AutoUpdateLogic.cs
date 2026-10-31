@@ -242,7 +242,18 @@ namespace OnAirDeck.UnityManager
         /// <summary>True when a record file exists but cannot be read or parsed: nothing may start over it.</summary>
         public static bool Unreadable(string projectRoot)
         {
-            return File.Exists(RecordPath(projectRoot)) && Load(projectRoot) == null;
+            SelfUpdateRecord record;
+            return !TryLoad(projectRoot, out record);
+        }
+
+        /// <summary>
+        /// One read of the record: false when a record file is there but cannot be read or parsed (held by another process, broken), true
+        /// with the record, or with null when there is none. A caller that decides from it decides from this one read.
+        /// </summary>
+        public static bool TryLoad(string projectRoot, out SelfUpdateRecord record)
+        {
+            record = Load(projectRoot);
+            return record != null || !File.Exists(RecordPath(projectRoot));
         }
 
         public static SelfUpdateRecord Load(string projectRoot)
@@ -366,7 +377,9 @@ namespace OnAirDeck.UnityManager
         {
             var created = string.IsNullOrEmpty(backup);
             // Resumed after every new file left: only the rest of the backup comes in (the old files already back stay where they are).
-            if (swap != null && swap.FailedDir.Length > 0 && Directory.Exists(swap.FailedDir))
+            // A "-failed" folder that is empty again means a failed restore moved the new files back and could not clear the mark: the
+            // folder is as it was before that restore, so the whole restore runs again.
+            if (swap != null && swap.FailedDir.Length > 0 && Directory.Exists(swap.FailedDir) && Directory.GetFileSystemEntries(swap.FailedDir).Length > 0)
             {
                 if (!created)
                 {

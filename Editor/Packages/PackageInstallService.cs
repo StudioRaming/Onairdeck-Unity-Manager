@@ -106,8 +106,9 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         /// <param name="refuseBeforeSwap">Asked after the download and checks, right before anything on disk changes; a reason stops the
         /// update there (<see cref="SelfUpdateDeferredException"/>), so a moment that turned unsafe during the download is not used.</param>
-        /// <param name="afterTransaction">Gets the transaction's report (every folder swapped and its backup) before Package Manager and the
-        /// asset database are told: a refresh may compile, and a rollback must already know where the old files went.</param>
+        /// <param name="afterTransaction">Gets the transaction's report (every folder swapped and its backup) before the install journal is
+        /// marked complete and before Package Manager and the asset database are told: a refresh may compile, and a rollback must already
+        /// know where the old files went. A throw there undoes the install through the journal.</param>
         public static async Task<InstallReport> SelfUpdateAsync(
             string downloadUrl, string packageName, string version, string packageFolder, Action<string, float> onProgress, CancellationToken cancel,
             string sha256 = null, Func<string> refuseBeforeSwap = null, Action<InstallReport> afterTransaction = null)
@@ -229,8 +230,7 @@ namespace OnAirDeck.UnityManager
         {
             cancel.ThrowIfCancellationRequested();
             Report(onProgress, "Installing…", 0.8f);
-            var report = PackageTransaction.Execute(root, items, DateTime.Now);
-            if (afterTransaction != null) afterTransaction(report);
+            var report = PackageTransaction.Execute(root, items, DateTime.Now, afterTransaction);
             // A reload follows Refresh, so the window's own code may never see this result: leave it where the next load can show it.
             SessionState.SetString(ReportKey, report.Describe());
             if (watchLicenses != null)

@@ -18,13 +18,22 @@ internal static class AutoUpdateChecks
         check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update added leaves Packages/, the failed files are kept, a resumed rollback skips folders already back; nothing recorded or a missing or empty backup refuses before anything moves", Rollback(project));
         check("auto update rollback: a move that fails mid-way puts the folder back as it was before the restore, and says so", RollbackUndo(project));
         check("auto update rollback: cut after the new files left a folder and some old ones came back, a resume read from disk brings only the rest of the backup", ResumeFromDisk(project));
+        check("auto update rollback: a mark whose \"-failed\" folder is empty again (the new files went back, the mark could not be cleared) runs the whole restore again", ResumeAfterUndoneStage(project));
         check("auto update record: a record that is there but cannot be read counts as unreadable (nothing may start over it), a missing one does not", () =>
         {
             var root = Path.Combine(project, "autoupdate-unreadable");
             Directory.CreateDirectory(Path.Combine(root, "Library", "OnAirDeck"));
             Require(!AutoUpdateLogic.Unreadable(root));
+            SelfUpdateRecord read;
+            Require(AutoUpdateLogic.TryLoad(root, out read) && read == null);   // no record: readable, nothing in it
             File.WriteAllText(AutoUpdateLogic.RecordPath(root), "{ broken");
             Require(AutoUpdateLogic.Unreadable(root));
+            Require(!AutoUpdateLogic.TryLoad(root, out read));
+            // Held by another process (the second read of the old code could pass here): still not readable.
+            File.WriteAllText(AutoUpdateLogic.RecordPath(root), "{\"phase\":\"restoring\"}");
+            using (new FileStream(AutoUpdateLogic.RecordPath(root), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Require(!AutoUpdateLogic.TryLoad(root, out read));
+            Require(AutoUpdateLogic.TryLoad(root, out read) && AutoUpdateLogic.InFlight(read));
             AutoUpdateLogic.Save(root, new SelfUpdateRecord { Phase = SelfUpdateRecord.PhaseShown });
             Require(!AutoUpdateLogic.Unreadable(root));
         });
@@ -292,6 +301,29 @@ internal static class AutoUpdateChecks
             Equal("a-old.cs,z-old.cs", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
             Equal("new.cs", string.Join(",", Directory.GetFiles(failed).Select(Path.GetFileName)));
             Require(AutoUpdateLogic.Load(root).Swaps[0].Restored);
+        };
+    }
+
+    private static Action ResumeAfterUndoneStage(string parent)
+    {
+        return () =>
+        {
+            var root = Path.Combine(parent, "autoupdate-undone-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            var folder = Path.Combine(root, "Packages", "com.studioraming.manager");
+            var backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "com.studioraming.manager-0.1.4");
+            var failed = backup + "-failed";
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(backup);
+            Directory.CreateDirectory(failed);
+            // The state after a failed restore moved everything back: new files in the folder, the full backup, an empty "-failed".
+            File.WriteAllText(Path.Combine(folder, "package.json"), "new");
+            File.WriteAllText(Path.Combine(backup, "package.json"), "old");
+            var record = new SelfUpdateRecord { Route = "embedded", Phase = SelfUpdateRecord.PhaseRestoring, PackageFolder = folder, Backup = backup };
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.manager", Target = folder, Backup = backup, FailedDir = failed });
+            AutoUpdateLogic.RestoreAll(record, Path.Combine(root, "Library", "OnAirDeck", "Backup"), null);
+            Equal("old", File.ReadAllText(Path.Combine(folder, "package.json")));
+            Equal("new", File.ReadAllText(Path.Combine(backup + "-failed-2", "package.json")));
+            Equal(backup + "-failed-2", record.Swaps[0].FailedDir);
         };
     }
 

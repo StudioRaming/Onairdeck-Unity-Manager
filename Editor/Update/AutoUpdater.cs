@@ -52,9 +52,10 @@ namespace OnAirDeck.UnityManager
             {
                 var record = AutoUpdateLogic.Load(Root);
                 if (record == null) return;
-                if (record.Phase == SelfUpdateRecord.PhaseRestoring && record.From == LoadedVersion)
+                if (record.Phase == SelfUpdateRecord.PhaseRestoring)
                 {
-                    // A rollback was cut (the editor quit or reloaded mid-way): finish it.
+                    // A rollback was cut or could not finish (the editor quit or reloaded mid-way, a file was held): finish it, also
+                    // when the new version is the one that loaded (an error in another swapped package, or the Manager not back yet).
                     RollBack();
                     return;
                 }
@@ -127,7 +128,8 @@ namespace OnAirDeck.UnityManager
             if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return "Another update is running.";
             // An update that is still settling (its reload has not happened) or being undone keeps the record and the backup: nothing,
             // not even a click, may start another one over it.
-            if (AutoUpdateLogic.Unreadable(Root) || AutoUpdateLogic.InFlight(AutoUpdateLogic.Load(Root)))
+            SelfUpdateRecord earlier;
+            if (!AutoUpdateLogic.TryLoad(Root, out earlier) || AutoUpdateLogic.InFlight(earlier))
             {
                 Interlocked.Exchange(ref _running, 0);
                 return "An earlier update is still settling; it finishes when Unity reloads the scripts.";
@@ -150,7 +152,8 @@ namespace OnAirDeck.UnityManager
                         report =>
                         {
                             // Before Package Manager and the asset database hear of it: a refresh may compile at once. Without this
-                            // record no rollback could find the backups, so a record that cannot be written undoes the swap at once.
+                            // record no rollback could find the backups, so a record that cannot be written throws: the install journal,
+                            // not yet complete, then undoes the swap (and recovery on the next load does, if that is cut).
                             AutoUpdateLogic.TakeSwaps(record, report, state.PackageName, Root);
                             Exception saveError = null;
                             for (var attempt = 0; attempt < 5; attempt++)
@@ -159,20 +162,7 @@ namespace OnAirDeck.UnityManager
                                 catch (Exception e) { saveError = e; Thread.Sleep(100); }
                             }
                             if (saveError != null)
-                            {
-                                try
-                                {
-                                    AutoUpdateLogic.RestoreAll(record, PackageTransaction.BackupRoot(Root), null);
-                                }
-                                catch (Exception restoreError)
-                                {
-                                    // The swap is in and could not be undone: the duty to put it back stays ("restoring").
-                                    record.Phase = SelfUpdateRecord.PhaseRestoring;
-                                    record.Error = "Could not record the update (" + saveError.Message + ") nor undo it (" + restoreError.Message + ").";
-                                    throw new PackageInstallException(record.Error);
-                                }
-                                throw new PackageInstallException("The update could not be recorded, so it was undone: " + saveError.Message);
-                            }
+                                throw new PackageInstallException("The update could not be recorded, so it is undone: " + saveError.Message);
                         });
                 }
                 else
@@ -235,7 +225,9 @@ namespace OnAirDeck.UnityManager
         internal static void RollBack()
         {
             var record = AutoUpdateLogic.Load(Root);
-            if (record == null || (record.Phase != SelfUpdateRecord.PhaseApplying && record.Phase != SelfUpdateRecord.PhaseRestoring) || record.From != LoadedVersion) return;
+            if (record == null) return;
+            // A compile failure is acted on only by the version that started the update; an open rollback by any version.
+            if (record.Phase == SelfUpdateRecord.PhaseApplying ? record.From != LoadedVersion : record.Phase != SelfUpdateRecord.PhaseRestoring) return;
             try
             {
                 record.Phase = SelfUpdateRecord.PhaseRestoring;

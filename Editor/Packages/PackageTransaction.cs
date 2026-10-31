@@ -130,7 +130,10 @@ namespace OnAirDeck.UnityManager
 
         // ---------- install ----------
 
-        public static InstallReport Execute(string projectRoot, IList<InstallItem> items, DateTime now)
+        /// <param name="beforeComplete">Called with the report after every folder and the manifest are in, before the journal says
+        /// "complete": a throw there undoes the whole install like any other failure (and a cut leaves it to recovery), so the caller's own
+        /// record of the swap is either written or the swap is gone.</param>
+        public static InstallReport Execute(string projectRoot, IList<InstallItem> items, DateTime now, Action<InstallReport> beforeComplete = null)
         {
             if (items == null || items.Count == 0) throw new PackageInstallException("Nothing to install.");
             projectRoot = Path.GetFullPath(projectRoot);
@@ -254,6 +257,7 @@ namespace OnAirDeck.UnityManager
                     Fault("after-manifest");
                 }
 
+                if (beforeComplete != null) beforeComplete(report);
                 journal.State = StateComplete;
                 journal.Write(projectRoot, now, "journal-write:complete");
                 TryDeleteStage(projectRoot, stageFolder);
