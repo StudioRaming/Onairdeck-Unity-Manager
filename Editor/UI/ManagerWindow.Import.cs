@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -92,7 +93,19 @@ namespace OnAirDeck.UnityManager
                             SetMessage(ManagerText.ImpReadFail.Replace("{p}", unread), MessageType.Error);
                             return ImportOutcome.Failed("install_failed");
                         }
-                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, current, name => InstalledPackages.Read(root, name));
+                        // The same for a package they depend on: a folder that is here but cannot be read may hold the pin.
+                        string unreadDependency = null;
+                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, current, name =>
+                        {
+                            var manifest = InstalledPackages.Read(root, name);
+                            if (manifest == null && unreadDependency == null && Directory.Exists(InstalledPackages.FolderOf(root, name))) unreadDependency = name;
+                            return manifest;
+                        });
+                        if (unreadDependency != null)
+                        {
+                            SetMessage(ManagerText.ImpReadFail.Replace("{p}", unreadDependency), MessageType.Error);
+                            return ImportOutcome.Failed("install_failed");
+                        }
                         if (pins.Count > 0)
                         {
                             if (pins.Count == 1 && now == pins[0]) continue;   // the add-on found or brought it
