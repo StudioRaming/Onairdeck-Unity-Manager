@@ -39,6 +39,27 @@ namespace OnAirDeck.UnityManager
         public const string StateRestored = "restored";
         public const string StateKept = "kept";
 
+        /// <summary>
+        /// Checks the project again and returns the same conflict as it is now. Throws <see cref="ConflictChangedException"/> when it is
+        /// gone or no longer the one that was shown (another partner, other paths to move, other contents, another manifest value):
+        /// a result shown minutes ago, or kept across a script reload, never decides what a fix touches. Worker thread safe.
+        /// </summary>
+        public static ProjectConflict Recheck(ConflictScanInput input, ProjectConflict shown, System.Threading.CancellationToken cancel)
+        {
+            foreach (var now in ProjectConflictScan.Run(input, cancel))
+            {
+                if (now.Key != shown.Key) continue;
+                if (now.ManifestValue != shown.ManifestValue || now.EmbeddedFolder != shown.EmbeddedFolder) break;
+                if (now.Movable.Count != shown.Movable.Count || now.MovablePrints.Count != shown.MovablePrints.Count) break;
+                var same = true;
+                for (var i = 0; i < now.Movable.Count && same; i++)
+                    same = now.Movable[i] == shown.Movable[i] && now.MovablePrints[i] == shown.MovablePrints[i];
+                if (!same) break;
+                return now;
+            }
+            throw new ConflictChangedException(shown.Movable.Count > 0 ? shown.Movable[0] : shown.Paths.Count > 0 ? shown.Paths[0] : shown.Subject);
+        }
+
         // ------------------------------------------------------------ move to backup
 
         /// <summary>

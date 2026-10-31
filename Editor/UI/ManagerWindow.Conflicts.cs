@@ -48,11 +48,7 @@ namespace OnAirDeck.UnityManager
             if (_scanning) { _scanAgain = true; return; }
             _scanning = true;
             _scanError = null;
-            var input = new ConflictScanInput
-            {
-                ProjectRoot = PackageInstallService.ProjectRoot, LicenseOfPackage = LicenseOfPackage(),
-                ResolvedCacheFolders = ResolvedCacheFolders(), EditorOs = EditorOs(),
-            };
+            var input = ScanInput();
             _scannedLicenses = LicenseKey(input.LicenseOfPackage);
             if (_scanCancel != null) _scanCancel.Dispose();
             _scanCancel = new CancellationTokenSource();
@@ -84,6 +80,49 @@ namespace OnAirDeck.UnityManager
             {
                 _scanAgain = false;
                 StartConflictScan();
+            }
+        }
+
+        /// <summary>What the check reads, taken on the main thread (the Package Manager and the Editor's platform are Unity calls).</summary>
+        private ConflictScanInput ScanInput()
+        {
+            return new ConflictScanInput
+            {
+                ProjectRoot = PackageInstallService.ProjectRoot, LicenseOfPackage = LicenseOfPackage(),
+                ResolvedCacheFolders = ResolvedCacheFolders(), EditorOs = EditorOs(),
+            };
+        }
+
+        /// <summary>
+        /// The conflict as the project is now (<see cref="ProjectConflictFixes.Recheck"/> on a worker thread), or null after telling the
+        /// person it changed. The buttons are off meanwhile; the result shown before is dropped from the cache either way.
+        /// </summary>
+        private async Task<ProjectConflict> RecheckForFix(ProjectConflict shown)
+        {
+            SessionState.EraseString(CheckCacheKey);
+            if (_scanning) return null;
+            _scanning = true;
+            Repaint();
+            var input = ScanInput();
+            try
+            {
+                return await Task.Run(() => ProjectConflictFixes.Recheck(input, shown, CancellationToken.None));
+            }
+            catch (ConflictChangedException e)
+            {
+                SetMessage(e.Message, MessageType.Warning);
+                return null;
+            }
+            catch (Exception e)
+            {
+                SetMessage(e.Message, MessageType.Error);
+                _messageReport = ManagerErrorWatch.OfferCaught("Checking the project before a fix", e);
+                return null;
+            }
+            finally
+            {
+                _scanning = false;
+                Repaint();
             }
         }
 
@@ -322,10 +361,12 @@ namespace OnAirDeck.UnityManager
 
         // ------------------------------------------------------------ the fixes
 
-        private void MoveConflict(ProjectConflict conflict)
+        private async void MoveConflict(ProjectConflict shown)
         {
             if (Busy) return;
-            if (!EditorUtility.DisplayDialog(ManagerText.CfTitle, ManagerText.CfMoveAsk.Replace("{list}", PathList(conflict.Movable)), ManagerText.CfMove, ManagerText.Cancel)) return;
+            if (!EditorUtility.DisplayDialog(ManagerText.CfTitle, ManagerText.CfMoveAsk.Replace("{list}", PathList(shown.Movable)), ManagerText.CfMove, ManagerText.Cancel)) return;
+            var conflict = await RecheckForFix(shown);
+            if (conflict == null) { StartConflictScan(); return; }
             try
             {
                 ProjectConflictFixes.MoveToBackup(PackageInstallService.ProjectRoot, conflict, DateTime.Now);
@@ -345,11 +386,13 @@ namespace OnAirDeck.UnityManager
             StartConflictScan();
         }
 
-        private void RemoveManifestEntry(ProjectConflict conflict)
+        private async void RemoveManifestEntry(ProjectConflict shown)
         {
             if (Busy) return;
-            var ask = ManagerText.CfRemoveAsk.Replace("{p}", conflict.Package).Replace("{v}", conflict.ManifestValue);
+            var ask = ManagerText.CfRemoveAsk.Replace("{p}", shown.Package).Replace("{v}", shown.ManifestValue);
             if (!EditorUtility.DisplayDialog(ManagerText.CfTitle, ask, ManagerText.CfRemoveEntry, ManagerText.Cancel)) return;
+            var conflict = await RecheckForFix(shown);
+            if (conflict == null) { StartConflictScan(); return; }
             try
             {
                 ProjectConflictFixes.RemoveManifestEntry(PackageInstallService.ProjectRoot, conflict.Package, conflict.ManifestValue, conflict.EmbeddedFolder, DateTime.Now);
@@ -371,6 +414,7 @@ namespace OnAirDeck.UnityManager
         private void UndoMove(PendingRestore move)
         {
             if (Busy) return;
+            SessionState.EraseString(CheckCacheKey);
             var result = LegacyMove.RestoreFromManifest(move.ManifestPath, PackageInstallService.ProjectRoot);
             SetMessage(result.Ok ? ManagerText.CfRestored : result.Message, result.Ok ? MessageType.Info : MessageType.Warning);
             AssetDatabase.Refresh();

@@ -109,21 +109,34 @@ namespace OnAirDeck.UnityManager
             list.AddRange(DuplicateGuids(root, inventory, list, cancel));
             list.AddRange(DuplicateAssemblies(root, inventory));
             list.AddRange(EmbeddedAndManifest(root, inventory));
+            var prints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var conflict in list)
             {
                 cancel.ThrowIfCancellationRequested();
                 conflict.Paths.Sort(StringComparer.OrdinalIgnoreCase);
                 conflict.MovablePrints.Clear();
-                foreach (var path in conflict.Movable) conflict.MovablePrints.Add(Fingerprint(root, path));
+                foreach (var path in conflict.Movable)
+                {
+                    string print;
+                    if (!prints.TryGetValue(path, out print)) prints[path] = print = Fingerprint(root, path, cancel);
+                    conflict.MovablePrints.Add(print);
+                }
             }
             return list;
         }
 
         /// <summary>
-        /// What a path holds now: for a file its size and its .meta GUID, for a folder every entry inside (relative name, and the size
-        /// of a file or the GUID of a .meta). Two equal prints mean nothing was added, removed or replaced. "" for a missing path.
+        /// What a path holds now: for a file its size, write time and .meta GUID, for a folder every entry inside (relative name, and
+        /// the size and write time of a file or the GUID of a .meta). Two equal prints mean nothing was added, removed, replaced or
+        /// edited. "" for a missing path.
         /// </summary>
         public static string Fingerprint(string projectRoot, string relative)
+        {
+            return Fingerprint(projectRoot, relative, CancellationToken.None);
+        }
+
+        /// <summary>As above; "" also when the path cannot be read (a fix then refuses).</summary>
+        public static string Fingerprint(string projectRoot, string relative, CancellationToken cancel)
         {
             var full = Path.Combine(Path.GetFullPath(projectRoot), relative.Replace('/', Path.DirectorySeparatorChar));
             var sb = new StringBuilder();
@@ -134,14 +147,22 @@ namespace OnAirDeck.UnityManager
                 {
                     var entries = new List<string>(Directory.EnumerateFileSystemEntries(full, "*", SearchOption.AllDirectories));
                     entries.Sort(StringComparer.Ordinal);
-                    foreach (var entry in entries) Describe(sb, entry, entry.Substring(full.Length));
+                    foreach (var entry in entries)
+                    {
+                        cancel.ThrowIfCancellationRequested();
+                        Describe(sb, entry, entry.Substring(full.Length));
+                    }
                 }
                 else return "";
                 if (File.Exists(full + ".meta")) sb.Append("|self.meta:").Append(GuidOf(full + ".meta") ?? "?");
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception)
             {
-                return "unreadable";
+                return "";
             }
             using (var sha = System.Security.Cryptography.SHA1.Create())
                 return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()))).Replace("-", "");
@@ -152,7 +173,12 @@ namespace OnAirDeck.UnityManager
             sb.Append('|').Append(name.Replace('\\', '/')).Append(':');
             if (Directory.Exists(path)) sb.Append("dir");
             else if (path.EndsWith(".meta", StringComparison.Ordinal)) sb.Append(GuidOf(path) ?? "?");
-            else sb.Append(new FileInfo(path).Length);
+            else
+            {
+                // Size and last write: an edit that keeps the size still changes the write time.
+                var info = new FileInfo(path);
+                sb.Append(info.Length).Append('@').Append(info.LastWriteTimeUtc.Ticks);
+            }
         }
 
         // ------------------------------------------------------------ inventory

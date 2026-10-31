@@ -19,6 +19,7 @@ internal static class ConflictChecks
         check("project check: move to backup, undo and keep (the backup stays, the undo offer goes)", MoveUndoKeep(project));
         check("project check: plugin meta Editor setting (explicit Editor, Any, Exclude Editor, missing meta, the Editor's OS and CPU)", EditorSetting);
         check("project check: a cached package Unity did not resolve is no conflict partner; a resolved one is", CachedPackages(project));
+        check("project check: an edit that keeps a file's size still stops a move; a fix runs on a fresh check that refuses a vanished partner", EditsAndRecheck(project));
         check("project check: a fix re-checks what it touches (a user file added to a checked folder, a changed manifest entry or a gone embedded package refuse and change nothing)", StaleFixes(project));
     }
 
@@ -293,6 +294,44 @@ internal static class ConflictChecks
             Equal("Assets/Plugins/Tool.dll", string.Join(",", found[0].Movable));
             // A resolved path outside the cache (a local package elsewhere) is not read.
             Equal(0, Scan(root, null, new List<string> { Path.Combine(parent, "elsewhere") }).Count(c => c.Kind == ConflictKind.DuplicateAssembly));
+        };
+    }
+
+    private static Action EditsAndRecheck(string parent)
+    {
+        return () =>
+        {
+            var root = NewProject(parent, "recheck");
+            Package(root, "com.seller.tool", "com.seller.tool", "1.0.0");
+            string g1 = Guid32(), gf = Guid32();
+            Folder(root, "Packages/com.seller.tool/Runtime", gf);
+            Asset(root, "Packages/com.seller.tool/Runtime/A.mat", g1, "color: 0");
+            Folder(root, "Assets/Copy", gf);
+            Asset(root, "Assets/Copy/A.mat", g1, "color: 0");
+            var input = new ConflictScanInput { ProjectRoot = root };
+
+            var shown = Scan(root).Single(c => c.Kind == ConflictKind.DuplicateGuid);
+            // Unchanged: the fresh check is the same conflict.
+            Equal(shown.MovablePrints[0], ProjectConflictFixes.Recheck(input, shown, CancellationToken.None).MovablePrints[0]);
+
+            // The user edits the copy without changing its size.
+            var file = Path.Combine(root, "Assets", "Copy", "A.mat");
+            File.WriteAllText(file, "color: 1");
+            File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(1));
+            try { ProjectConflictFixes.MoveToBackup(root, shown, DateTime.Now); throw new Exception("an edited copy was moved"); }
+            catch (ConflictChangedException) { }
+            Equal("color: 1", File.ReadAllText(file));
+            try { ProjectConflictFixes.Recheck(input, shown, CancellationToken.None); throw new Exception("the recheck missed the edit"); }
+            catch (ConflictChangedException) { }
+
+            // The package side goes away: the Assets copy is the only one left and must not move.
+            shown = Scan(root).Single(c => c.Kind == ConflictKind.DuplicateGuid);
+            Directory.Delete(Path.Combine(root, "Packages", "com.seller.tool"), true);
+            try { ProjectConflictFixes.Recheck(input, shown, CancellationToken.None); throw new Exception("a conflict without its partner was confirmed"); }
+            catch (ConflictChangedException) { }
+            Require(File.Exists(file));
+            // An unreadable or missing path has no print, so it is never moved.
+            Equal("", ProjectConflictScan.Fingerprint(root, "Assets/Nothing"));
         };
     }
 

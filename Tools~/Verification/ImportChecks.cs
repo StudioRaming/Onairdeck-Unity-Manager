@@ -182,6 +182,17 @@ internal static class ImportChecks
         Equal(ImportReport.Waiting, ImportRequestLogic.Resume(running, t, installed, result).Report);
         running.wait_imports = new string[0];
         Equal("interrupted", ImportRequestLogic.Resume(running, t, installed, result).Code);
+
+        // A package install that handed off: an imported installer is not the end; the hand-off and the version are.
+        var handedOff = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseRunning, claimed_at = t - 10, package_name = "com.seller.tool", package_version = "2.0.0", wait_imports = new[] { "a" } };
+        Equal(ImportReport.Waiting, ImportRequestLogic.Resume(handedOff, t, installed, result, p => "pending").Report);
+        Equal("install_failed", ImportRequestLogic.Resume(handedOff, t, installed, result, p => "stopped").Code);
+        Equal(ImportReport.Done, ImportRequestLogic.Resume(handedOff, t, installed, result, p => "done").Report);
+        // No hand-off: a plain package install, the version decides at once.
+        var plain = new ImportClaim { request_id = "r", claim_id = "c", phase = ImportRequestLogic.PhaseRunning, claimed_at = t - 10, package_name = "com.seller.tool", package_version = "2.0.0" };
+        Equal(ImportReport.Done, ImportRequestLogic.Resume(plain, t, installed, result, p => "").Report);
+        plain.package_version = "3.0.0";
+        Equal("interrupted", ImportRequestLogic.Resume(plain, t, installed, result, p => "").Code);
     }
 
     private static void Errors()

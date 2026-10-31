@@ -87,23 +87,25 @@ namespace OnAirDeck.UnityManager
                 DeviceLimitNotice.Report(e, item.name, async () => (object)await DownloadItemAsync(sessionToken, item, onProgress, cancel, interactiveImport, true), "download:" + item.name);
                 throw;
             }
-            var summary = await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport,
-                product: item.name, version: VersionOf(item), productId: ProductIdOf(item));
-
-            // Signed license next to the product. A failure here must not undo a finished
-            // download; the window refreshes missing licenses the next time it opens.
-            // A device-limit refusal is already in DeviceLimitNotice (IssueAsync reports it; its retry only issues the license).
-            try
-            {
-                await LicenseService.IssueAsync(sessionToken, item, userInitiated);
-                summary.LicenseWritten = true;
-            }
-            catch (Exception e)
-            {
-                summary.LicenseRefused = e is DeviceLimitException || e is ManagerUpdateRequiredException;
-                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Downloaded, but the license file could not be written: " + e.Message);
-            }
-            return summary;
+            // Signed license next to the product, written before any .unitypackage import starts: an import with scripts reloads
+            // the domain, and the code after it would never run. A failure here must not undo a finished download; the window
+            // refreshes missing licenses the next time it opens. A device-limit refusal is already in DeviceLimitNotice (IssueAsync
+            // reports it; its retry only issues the license).
+            return await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport,
+                product: item.name, version: VersionOf(item), productId: ProductIdOf(item),
+                beforeImports: async summary =>
+                {
+                    try
+                    {
+                        await LicenseService.IssueAsync(sessionToken, item, userInitiated);
+                        summary.LicenseWritten = true;
+                    }
+                    catch (Exception e)
+                    {
+                        summary.LicenseRefused = e is DeviceLimitException || e is ManagerUpdateRequiredException;
+                        Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Downloaded, but the license file could not be written: " + e.Message);
+                    }
+                });
         }
 
         /// <summary>
@@ -114,8 +116,10 @@ namespace OnAirDeck.UnityManager
         /// the last .unitypackage import otherwise (see <see cref="PendingImportRecords"/>). <paramref name="product"/>,
         /// <paramref name="version"/> and <paramref name="productId"/> name the import for <see cref="InstallErrorWatch"/>.
         /// </summary>
+        /// <param name="beforeImports">Runs once the loose files and zips are in place and before the first .unitypackage is queued
+        /// (the license step: an import may reload the domain). It must not throw.</param>
         internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport,
-            InstallRecord record = null, string product = null, string version = null, string productId = null)
+            InstallRecord record = null, string product = null, string version = null, string productId = null, Func<DownloadSummary, Task> beforeImports = null)
         {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
@@ -178,6 +182,7 @@ namespace OnAirDeck.UnityManager
                     Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Nothing of this version was placed, so the installed version is not recorded.");
                     record = null;
                 }
+                if (beforeImports != null) await beforeImports(summary);
                 if (packages.Count > 0)
                 {
                     summary.PackagesQueued = packages.Count;

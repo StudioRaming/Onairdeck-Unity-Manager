@@ -236,8 +236,18 @@ namespace OnAirDeck.UnityManager
                 case PhaseWaiting:
                     return Settle(claim, now, importResult, installedVersion, handoffState);
                 case PhaseRunning:
-                    // Imports were queued before the reload ended the install path: they decide.
-                    if (claim.wait_imports != null && claim.wait_imports.Length > 0) return Settle(claim, now, importResult, installedVersion, handoffState);
+                    // A package install: imports queued meanwhile are a hand-off installer's, so its status and the version decide.
+                    if (!string.IsNullOrEmpty(claim.package_name) && !string.IsNullOrEmpty(claim.package_version))
+                    {
+                        var state = handoffState != null ? handoffState(claim.package_name) ?? "" : "";
+                        if (state.Length > 0)
+                        {
+                            claim.wait_package = true;
+                            return Settle(claim, now, importResult, installedVersion, handoffState);
+                        }
+                    }
+                    // Imports were queued before the reload ended the install path (its license step ran before them): they decide.
+                    else if (claim.wait_imports != null && claim.wait_imports.Length > 0) return Settle(claim, now, importResult, installedVersion, handoffState);
                     if (!string.IsNullOrEmpty(claim.package_name) && !string.IsNullOrEmpty(claim.package_version) && installedVersion != null
                         && string.Equals(installedVersion(claim.package_name) ?? "", claim.package_version, StringComparison.OrdinalIgnoreCase))
                         return ImportOutcome.Done();
