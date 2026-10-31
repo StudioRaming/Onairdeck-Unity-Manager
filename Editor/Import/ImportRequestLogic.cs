@@ -201,15 +201,16 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The exact version of <paramref name="package"/> that a package installed earlier in the run (<paramref name="installed"/>, as
-        /// its package.json now reads) needs, directly or through the packages it depends on (followed also behind a range, read with
-        /// <paramref name="read"/>, the project's package.json of a name); null when nothing installed in the run pins it. The import
-        /// then installs that version, not the package's own newest, which would break the pin. The name alone decides nothing
-        /// (com.vendor.tool.extra may not depend on com.vendor.tool).
+        /// Every exact version of <paramref name="package"/> that a package installed earlier in the run (<paramref name="installed"/>,
+        /// as its package.json now reads) needs, directly or through the packages it depends on (followed also behind a range, read with
+        /// <paramref name="read"/>, the project's package.json of a name); empty when nothing installed in the run pins it. One version:
+        /// the import installs exactly that one, never the package's own newest, which would break the pin. Two or more: the pins
+        /// conflict and the import must stop. The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
         /// </summary>
-        public static string PinnedVersion(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
+        public static List<string> PinnedVersions(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
         {
-            if (string.IsNullOrEmpty(package)) return null;
+            var pins = new List<string>();
+            if (string.IsNullOrEmpty(package)) return pins;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var queue = new Queue<PackageManifest>();
             foreach (var manifest in installed) if (manifest != null && seen.Add(manifest.Name ?? "")) queue.Enqueue(manifest);
@@ -217,7 +218,7 @@ namespace OnAirDeck.UnityManager
             {
                 var manifest = queue.Dequeue();
                 foreach (var dependency in manifest.VpmDependencies)
-                    if (dependency.Key == package) return dependency.Value;
+                    if (dependency.Key == package && !pins.Contains(dependency.Value)) pins.Add(dependency.Value);
                 foreach (var name in manifest.VpmDependencyNames)
                 {
                     if (read == null || !seen.Add(name)) continue;
@@ -225,7 +226,7 @@ namespace OnAirDeck.UnityManager
                     if (next != null) queue.Enqueue(next);
                 }
             }
-            return null;
+            return pins;
         }
 
         /// <summary>The confirm's answer: Import goes on (null), Cancel is declined, Not this project gives the request back.</summary>

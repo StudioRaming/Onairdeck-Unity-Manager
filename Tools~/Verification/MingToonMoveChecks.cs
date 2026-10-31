@@ -20,7 +20,7 @@ internal static class MingToonMoveChecks
         check("vcc move: undo puts the entries back at the folder's current version (no downgrade by the resolver); a package listed again refuses and changes nothing; keep ends the offer", UndoAndKeep(project));
         check("vcc move: nothing listed changes nothing; a file that is not JSON refuses", Refusals);
         check("license rows: the free and the commercial Core license are one row (the commercial one, its zips taken from the unlimited license when it has a device limit, each label's installer from whichever license has one); the folded license's keys stay on the row; a device-limited or other-package license keeps its own row", MergeRows);
-        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a package gets the exact version one installed before needs, also through shared packages and behind a range, never by its name alone", Order);
+        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a package gets the exact version one installed before needs, also through shared packages and behind a range, never by its name alone; conflicting pins are all reported", Order);
     }
 
     // ------------------------------------------------------------ G5
@@ -247,19 +247,26 @@ internal static class MingToonMoveChecks
         // looks like an add-on decides nothing.
         var urp = Manifest(Urp, "0.1.16", Core, "0.1.16");
         var extra = Manifest(Core + ".extra", "1.0.0");
-        Equal("0.1.16", ImportRequestLogic.PinnedVersion(Core, new[] { urp }));
-        Equal(null, ImportRequestLogic.PinnedVersion(Core, new[] { extra, null }));
-        Equal(null, ImportRequestLogic.PinnedVersion(Urp, new[] { urp }));
+        Equal("0.1.16", Pins(Core, new[] { urp }));
+        Equal("", Pins(Core, new[] { extra, null }));
+        Equal("", Pins(Urp, new[] { urp }));
         // Through a shared package the add-on depends on (already here, so the install skipped it), with a cycle that ends the walk.
         var addon = Manifest("com.seller.addon", "1.0.0", "com.seller.shared", "2.0.0");
         var shared = Manifest("com.seller.shared", "2.0.0", Core, "0.1.15", "com.seller.addon", "1.0.0");
         Func<string, PackageManifest> read = name => name == "com.seller.shared" ? shared : name == "com.seller.addon" ? addon : null;
-        Equal("0.1.15", ImportRequestLogic.PinnedVersion(Core, new[] { addon }, read));
-        Equal(null, ImportRequestLogic.PinnedVersion(Core, new[] { addon }));
+        Equal("0.1.15", Pins(Core, new[] { addon }, read));
+        Equal("", Pins(Core, new[] { addon }));
         // Behind a range: the range is followed, only the exact pin counts.
         var ranged = PackageZip.ParseManifest("{\"name\":\"com.seller.ranged\",\"version\":\"1.0.0\",\"vpmDependencies\":{\"com.seller.shared\":\"^2.0.0\"}}", false);
         Equal(0, ranged.VpmDependencies.Count);
-        Equal("0.1.15", ImportRequestLogic.PinnedVersion(Core, new[] { ranged }, read));
+        Equal("0.1.15", Pins(Core, new[] { ranged }, read));
+        // Two packages of the run pin different versions: both are reported, so the import stops instead of breaking one.
+        Equal("0.1.16,0.1.15", Pins(Core, new[] { urp, addon }, read));
+    }
+
+    private static string Pins(string package, IEnumerable<PackageManifest> installed, Func<string, PackageManifest> read = null)
+    {
+        return string.Join(",", ImportRequestLogic.PinnedVersions(package, installed, read));
     }
 
     private static PackageManifest Manifest(string name, string version, params string[] pins)

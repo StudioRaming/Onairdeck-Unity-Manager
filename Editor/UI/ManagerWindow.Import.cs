@@ -81,13 +81,20 @@ namespace OnAirDeck.UnityManager
                     if (entry.PackageName.Length > 0)
                     {
                         var now = InstalledPackages.InstalledVersion(root, entry.PackageName);
-                        // A package installed before needs an exact version of this one: that version, never this one's newest.
-                        var pinned = ImportRequestLogic.PinnedVersion(entry.PackageName, installed, name => InstalledPackages.Read(root, name));
-                        if (pinned != null)
+                        // A package installed before needs an exact version of this one: that version, never this one's newest. Pins that
+                        // disagree, or a pinned version this license does not offer, end the run: installing anything else breaks a pin.
+                        var pins = ImportRequestLogic.PinnedVersions(entry.PackageName, installed, name => InstalledPackages.Read(root, name));
+                        if (pins.Count > 0)
                         {
-                            if (now == pinned) continue;   // the add-on found or brought it
-                            var row = entry.Versions.Find(r => r.License != null && r.License.IsPackage && r.License.package_version == pinned);
-                            pinnedRow = row != null ? row.License : null;
+                            if (pins.Count == 1 && now == pins[0]) continue;   // the add-on found or brought it
+                            var row = pins.Count == 1 ? entry.Versions.Find(r => r.License != null && r.License.IsPackage
+                                && r.License.package_name == entry.PackageName && r.License.package_version == pins[0]) : null;
+                            if (row == null)
+                            {
+                                SetMessage(ManagerText.ImpPinFail.Replace("{p}", entry.PackageName).Replace("{v}", string.Join(", ", pins.ToArray())), MessageType.Error);
+                                return ImportOutcome.Failed("install_failed");
+                            }
+                            pinnedRow = row.License;
                         }
                         else if (now != before[entry.PackageName]) continue;   // it came with a step before
                     }
