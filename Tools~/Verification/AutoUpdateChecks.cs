@@ -17,6 +17,17 @@ internal static class AutoUpdateChecks
         check("auto update record: written and read back with every field and every swapped folder; a missing or broken file reads as none", Record(project));
         check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update added leaves Packages/, the failed files are kept, a resumed rollback skips folders already back; nothing recorded or a missing or empty backup refuses before anything moves", Rollback(project));
         check("auto update rollback: a move that fails mid-way puts the folder back as it was before the restore, and says so", RollbackUndo(project));
+        check("auto update rollback: cut after the new files left a folder and some old ones came back, a resume read from disk brings only the rest of the backup", ResumeFromDisk(project));
+        check("auto update record: a record that is there but cannot be read counts as unreadable (nothing may start over it), a missing one does not", () =>
+        {
+            var root = Path.Combine(project, "autoupdate-unreadable");
+            Directory.CreateDirectory(Path.Combine(root, "Library", "OnAirDeck"));
+            Require(!AutoUpdateLogic.Unreadable(root));
+            File.WriteAllText(AutoUpdateLogic.RecordPath(root), "{ broken");
+            Require(AutoUpdateLogic.Unreadable(root));
+            AutoUpdateLogic.Save(root, new SelfUpdateRecord { Phase = SelfUpdateRecord.PhaseShown });
+            Require(!AutoUpdateLogic.Unreadable(root));
+        });
         check("auto update pref key: the project hash is the same in every run and ignores case", () =>
         {
             Equal(AutoUpdateLogic.StableHash("C:/Proj/A"), AutoUpdateLogic.StableHash("c:/proj/a"));
@@ -217,11 +228,11 @@ internal static class AutoUpdateChecks
             record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.helper", Target = helper, Backup = "" });
             var saves = 0;
             AutoUpdateLogic.RestoreAll(record, failedRoot, () => saves++);
-            Equal(2, saves);
+            Equal(4, saves);   // two per folder: once the new files left it (FailedDir), once it is back (Restored)
             Require(record.Swaps.All(s => s.Restored));
             // Resumed after a cut: every folder already back is skipped (its backup is empty now and would refuse).
             AutoUpdateLogic.RestoreAll(record, failedRoot, () => saves++);
-            Equal(2, saves);
+            Equal(4, saves);
             Require(File.ReadAllText(Path.Combine(folder, "package.json")).Contains("0.1.4"));
             Require(File.Exists(Path.Combine(folder, "Editor", "Old.cs")) && !File.Exists(Path.Combine(folder, "Editor", "New.cs")));
             Require(File.Exists(Path.Combine(backup + "-failed", "Editor", "New.cs")));
@@ -254,6 +265,33 @@ internal static class AutoUpdateChecks
             }
             Equal("a-new.txt,b-new.txt", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
             Equal("a-old.txt,z-old.txt", string.Join(",", Directory.GetFiles(backup).Select(Path.GetFileName).OrderBy(n => n)));
+        };
+    }
+
+    private static Action ResumeFromDisk(string parent)
+    {
+        return () =>
+        {
+            var root = Path.Combine(parent, "autoupdate-resume-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            var folder = Path.Combine(root, "Packages", "com.studioraming.manager");
+            var backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "com.studioraming.manager-0.1.4");
+            var failed = backup + "-failed";
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(backup);
+            Directory.CreateDirectory(failed);
+            // The state the cut left: every new file in "-failed", a-old already back, z-old still in the backup.
+            File.WriteAllText(Path.Combine(failed, "new.cs"), "new");
+            File.WriteAllText(Path.Combine(folder, "a-old.cs"), "old");
+            File.WriteAllText(Path.Combine(backup, "z-old.cs"), "old");
+            var record = new SelfUpdateRecord { Route = "embedded", Phase = SelfUpdateRecord.PhaseRestoring, PackageFolder = folder, Backup = backup };
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.manager", Target = folder, Backup = backup, FailedDir = failed });
+            AutoUpdateLogic.Save(root, record);
+            var loaded = AutoUpdateLogic.Load(root);   // as the next editor load reads it
+            Equal(failed, loaded.Swaps[0].FailedDir);
+            AutoUpdateLogic.RestoreAll(loaded, Path.Combine(root, "Library", "OnAirDeck", "Backup"), () => AutoUpdateLogic.Save(root, loaded));
+            Equal("a-old.cs,z-old.cs", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
+            Equal("new.cs", string.Join(",", Directory.GetFiles(failed).Select(Path.GetFileName)));
+            Require(AutoUpdateLogic.Load(root).Swaps[0].Restored);
         };
     }
 

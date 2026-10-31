@@ -49,6 +49,9 @@ namespace OnAirDeck.UnityManager
         public string Backup = "";
         /// <summary>The rollback has put this folder back (saved after each folder, so a cut rollback resumes after it).</summary>
         public bool Restored;
+        /// <summary>Set (and saved) once every new file left the folder for this place: a cut restore then only brings the rest of the
+        /// backup in, never moves the old files that already came back.</summary>
+        public string FailedDir = "";
     }
 
     /// <summary>
@@ -236,6 +239,12 @@ namespace OnAirDeck.UnityManager
             return Path.Combine(projectRoot, "Library", "OnAirDeck", RecordName);
         }
 
+        /// <summary>True when a record file exists but cannot be read or parsed: nothing may start over it.</summary>
+        public static bool Unreadable(string projectRoot)
+        {
+            return File.Exists(RecordPath(projectRoot)) && Load(projectRoot) == null;
+        }
+
         public static SelfUpdateRecord Load(string projectRoot)
         {
             try
@@ -270,6 +279,7 @@ namespace OnAirDeck.UnityManager
                         {
                             Name = MiniJson.GetString(swap, "name") ?? "", Target = MiniJson.GetString(swap, "target") ?? "",
                             Backup = MiniJson.GetString(swap, "backup") ?? "", Restored = MiniJson.GetString(swap, "restored") == "1",
+                            FailedDir = MiniJson.GetString(swap, "failedDir") ?? "",
                         });
                     }
                 return record;
@@ -292,7 +302,7 @@ namespace OnAirDeck.UnityManager
             root["backup"] = record.Backup;
             var swaps = new List<object>();
             foreach (var swap in record.Swaps)
-                swaps.Add(new Dictionary<string, object> { { "name", swap.Name }, { "target", swap.Target }, { "backup", swap.Backup }, { "restored", swap.Restored ? "1" : "" } });
+                swaps.Add(new Dictionary<string, object> { { "name", swap.Name }, { "target", swap.Target }, { "backup", swap.Backup }, { "restored", swap.Restored ? "1" : "" }, { "failedDir", swap.FailedDir } });
             root["swaps"] = swaps;
             root["manifestPath"] = record.ManifestPath;
             root["manifestBackup"] = record.ManifestBackup;
@@ -340,7 +350,7 @@ namespace OnAirDeck.UnityManager
             {
                 var swap = record.Swaps[i];
                 if (swap.Restored) continue;
-                RestoreBackup(swap.Target, swap.Backup, failedRoot);
+                RestoreBackup(swap.Target, swap.Backup, failedRoot, swap, saveProgress);
                 swap.Restored = true;
                 if (saveProgress != null) saveProgress();
             }
@@ -352,9 +362,30 @@ namespace OnAirDeck.UnityManager
         /// One folder back from its backup. Throws before anything moves when the folder is gone or a backup is named but missing or
         /// empty; a move that fails puts back what this call already moved, then rethrows.
         /// </summary>
-        public static void RestoreBackup(string packageFolder, string backup, string failedRoot)
+        public static void RestoreBackup(string packageFolder, string backup, string failedRoot, SelfUpdateSwap swap = null, Action saveProgress = null)
         {
             var created = string.IsNullOrEmpty(backup);
+            // Resumed after every new file left: only the rest of the backup comes in (the old files already back stay where they are).
+            if (swap != null && swap.FailedDir.Length > 0 && Directory.Exists(swap.FailedDir))
+            {
+                if (!created)
+                {
+                    if (!Directory.Exists(packageFolder)) Directory.CreateDirectory(packageFolder);
+                    if (Directory.Exists(backup))
+                        foreach (var child in Directory.GetFileSystemEntries(backup))
+                        {
+                            var to = Path.Combine(packageFolder, Path.GetFileName(child));
+                            if (File.Exists(to) || Directory.Exists(to)) throw new PackageInstallException("Both the backup and the folder hold " + Path.GetFileName(child) + "; the rollback stops.");
+                            PackageTransaction.MoveEntry(child, to);
+                        }
+                }
+                else if (Directory.Exists(packageFolder))
+                {
+                    try { Directory.Delete(packageFolder); }
+                    catch (IOException) { }
+                }
+                return;
+            }
             // A folder the update created that is already gone needs nothing.
             if (created && (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))) return;
             if (string.IsNullOrEmpty(packageFolder) || !Directory.Exists(packageFolder))
@@ -378,6 +409,11 @@ namespace OnAirDeck.UnityManager
                     PackageTransaction.MoveEntry(child, to);
                     done.Add(new KeyValuePair<string, string>(child, to));
                 }
+                if (swap != null)
+                {
+                    swap.FailedDir = failed;
+                    if (saveProgress != null) saveProgress();
+                }
                 if (!created)
                     foreach (var child in Directory.GetFileSystemEntries(backup))
                     {
@@ -392,6 +428,11 @@ namespace OnAirDeck.UnityManager
                 {
                     try { PackageTransaction.MoveEntry(done[i].Value, done[i].Key); }
                     catch (Exception) { }
+                }
+                if (swap != null)
+                {
+                    swap.FailedDir = "";
+                    try { if (saveProgress != null) saveProgress(); } catch (Exception) { }
                 }
                 throw;
             }

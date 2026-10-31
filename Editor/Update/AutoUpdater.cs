@@ -127,7 +127,7 @@ namespace OnAirDeck.UnityManager
             if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return "Another update is running.";
             // An update that is still settling (its reload has not happened) or being undone keeps the record and the backup: nothing,
             // not even a click, may start another one over it.
-            if (AutoUpdateLogic.InFlight(AutoUpdateLogic.Load(Root)))
+            if (AutoUpdateLogic.Unreadable(Root) || AutoUpdateLogic.InFlight(AutoUpdateLogic.Load(Root)))
             {
                 Interlocked.Exchange(ref _running, 0);
                 return "An earlier update is still settling; it finishes when Unity reloads the scripts.";
@@ -160,7 +160,17 @@ namespace OnAirDeck.UnityManager
                             }
                             if (saveError != null)
                             {
-                                AutoUpdateLogic.RestoreAll(record, PackageTransaction.BackupRoot(Root), null);
+                                try
+                                {
+                                    AutoUpdateLogic.RestoreAll(record, PackageTransaction.BackupRoot(Root), null);
+                                }
+                                catch (Exception restoreError)
+                                {
+                                    // The swap is in and could not be undone: the duty to put it back stays ("restoring").
+                                    record.Phase = SelfUpdateRecord.PhaseRestoring;
+                                    record.Error = "Could not record the update (" + saveError.Message + ") nor undo it (" + restoreError.Message + ").";
+                                    throw new PackageInstallException(record.Error);
+                                }
                                 throw new PackageInstallException("The update could not be recorded, so it was undone: " + saveError.Message);
                             }
                         });
@@ -185,8 +195,12 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                record.Phase = SelfUpdateRecord.PhaseFailed;
-                record.Error = e.Message;
+                // A rollback duty that is still open is never turned into a plain failure: the next load finishes it.
+                if (record.Phase != SelfUpdateRecord.PhaseRestoring)
+                {
+                    record.Phase = SelfUpdateRecord.PhaseFailed;
+                    record.Error = e.Message;
+                }
                 try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update to " + to + " failed: " + e.Message);
                 return e.Message;
