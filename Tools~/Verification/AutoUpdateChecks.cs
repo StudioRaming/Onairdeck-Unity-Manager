@@ -17,6 +17,7 @@ internal static class AutoUpdateChecks
         check("auto update record: written and read back with every field and every swapped folder; a missing or broken file reads as none", Record(project));
         check("auto update rollback: every swapped folder comes back (last first) with vpm-manifest.json, a folder the update added leaves Packages/, the failed files are kept, a resumed rollback skips folders already back; nothing recorded or a missing or empty backup refuses before anything moves", Rollback(project));
         check("auto update rollback: a move that fails mid-way puts the folder back as it was before the restore, and says so", RollbackUndo(project));
+        check("auto update rollback: with a saved mark, a held old file stops the second stage without moving anything back out; the next try brings the rest", ForwardOnlySecondStage(project));
         check("auto update rollback: cut after the new files left a folder and some old ones came back, a resume read from disk brings only the rest of the backup", ResumeFromDisk(project));
         check("auto update rollback: a mark whose \"-failed\" folder is empty again (the new files went back, the mark could not be cleared) runs the whole restore again", ResumeAfterUndoneStage(project));
         check("auto update record: a record that is there but cannot be read counts as unreadable (nothing may start over it), a missing one does not", () =>
@@ -274,6 +275,40 @@ internal static class AutoUpdateChecks
             }
             Equal("a-new.txt,b-new.txt", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
             Equal("a-old.txt,z-old.txt", string.Join(",", Directory.GetFiles(backup).Select(Path.GetFileName).OrderBy(n => n)));
+        };
+    }
+
+    private static Action ForwardOnlySecondStage(string parent)
+    {
+        return () =>
+        {
+            var root = Path.Combine(parent, "autoupdate-forward-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            var folder = Path.Combine(root, "Packages", "com.studioraming.manager");
+            var backup = Path.Combine(root, "Library", "OnAirDeck", "Backup", "com.studioraming.manager-0.1.4");
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(backup);
+            File.WriteAllText(Path.Combine(folder, "new.cs"), "new");
+            File.WriteAllText(Path.Combine(backup, "a-old.cs"), "old");
+            File.WriteAllText(Path.Combine(backup, "z-old.cs"), "old");
+            var record = new SelfUpdateRecord { Route = "embedded", Phase = SelfUpdateRecord.PhaseRestoring, PackageFolder = folder, Backup = backup };
+            record.Swaps.Add(new SelfUpdateSwap { Name = "com.studioraming.manager", Target = folder, Backup = backup });
+            var failedRoot = Path.Combine(root, "Library", "OnAirDeck", "Backup");
+            using (new FileStream(Path.Combine(backup, "z-old.cs"), FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                try { AutoUpdateLogic.RestoreAll(record, failedRoot, () => AutoUpdateLogic.Save(root, record)); throw new Exception("a held file did not stop the restore"); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            // Half back, nothing moved out again, and the mark is on disk.
+            Equal("a-old.cs", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName)));
+            Equal("z-old.cs", string.Join(",", Directory.GetFiles(backup).Select(Path.GetFileName)));
+            var loaded = AutoUpdateLogic.Load(root);
+            Equal(backup + "-failed", loaded.Swaps[0].FailedDir);
+            Require(!loaded.Swaps[0].Restored);
+            AutoUpdateLogic.RestoreAll(loaded, failedRoot, () => AutoUpdateLogic.Save(root, loaded));
+            Equal("a-old.cs,z-old.cs", string.Join(",", Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n)));
+            Equal("new.cs", string.Join(",", Directory.GetFiles(backup + "-failed").Select(Path.GetFileName)));
+            Require(AutoUpdateLogic.Load(root).Swaps[0].Restored);
         };
     }
 

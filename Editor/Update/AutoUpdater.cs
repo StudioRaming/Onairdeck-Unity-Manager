@@ -140,6 +140,7 @@ namespace OnAirDeck.UnityManager
                 PackageFolder = state.PackageFolder ?? "", OldPackageId = state.PackageId ?? "", FirstRun = firstRun, Manual = manual,
                 PackageName = !string.IsNullOrEmpty(state.PackageName) ? state.PackageName : NameOf(state.PackageId),
             };
+            var inTransaction = false;   // the swap ran; whether it stayed is the install journal's to say
             try
             {
                 AutoUpdateLogic.Save(Root, record);
@@ -154,13 +155,9 @@ namespace OnAirDeck.UnityManager
                             // Before Package Manager and the asset database hear of it: a refresh may compile at once. Without this
                             // record no rollback could find the backups, so a record that cannot be written throws: the install journal,
                             // not yet complete, then undoes the swap (and recovery on the next load does, if that is cut).
+                            inTransaction = true;
                             AutoUpdateLogic.TakeSwaps(record, report, state.PackageName, Root);
-                            Exception saveError = null;
-                            for (var attempt = 0; attempt < 5; attempt++)
-                            {
-                                try { AutoUpdateLogic.Save(Root, record); saveError = null; break; }
-                                catch (Exception e) { saveError = e; Thread.Sleep(100); }
-                            }
+                            var saveError = SaveWithRetry(record);
                             if (saveError != null)
                                 throw new PackageInstallException("The update could not be recorded, so it is undone: " + saveError.Message);
                         });
@@ -185,13 +182,21 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception e)
             {
-                // A rollback duty that is still open is never turned into a plain failure: the next load finishes it.
-                if (record.Phase != SelfUpdateRecord.PhaseRestoring)
+                if (inTransaction && PackageTransaction.LastInstallComplete(Root))
                 {
-                    record.Phase = SelfUpdateRecord.PhaseFailed;
-                    record.Error = e.Message;
+                    // A step after the commit failed: the new files are in, so the record stays "applying" (as saved in the
+                    // transaction) and a compile error still rolls them back.
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The update to " + to + " is in, but a later step failed: " + e.Message);
+                    return e.Message;
                 }
-                try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
+                // Nothing was swapped, or the install journal undid the swap (or will, on the next load).
+                record.Phase = SelfUpdateRecord.PhaseFailed;
+                record.Error = e.Message;
+                if (SaveWithRetry(record) != null && inTransaction)
+                {
+                    // A record still listing the undone swap as "applying" could drive a rollback over files that are already back.
+                    try { System.IO.File.Delete(AutoUpdateLogic.RecordPath(Root)); } catch (Exception) { }
+                }
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Update to " + to + " failed: " + e.Message);
                 return e.Message;
             }
@@ -211,7 +216,9 @@ namespace OnAirDeck.UnityManager
         {
             if (messages == null || messages.Length == 0) return;
             var record = AutoUpdateLogic.Load(Root);
-            if (record == null || record.Phase != SelfUpdateRecord.PhaseApplying || record.From != LoadedVersion) return;
+            if (record == null) return;
+            // A compile failure of the update is acted on by the version that started it; an open rollback by any version.
+            if (record.Phase == SelfUpdateRecord.PhaseApplying ? record.From != LoadedVersion : record.Phase != SelfUpdateRecord.PhaseRestoring) return;
             foreach (var message in messages)
             {
                 if (message.type != CompilerMessageType.Error || !AutoUpdateLogic.ErrorInUpdate(record, Root, message.file)) continue;
@@ -220,6 +227,36 @@ namespace OnAirDeck.UnityManager
                 EditorApplication.delayCall += RollBack;
                 return;
             }
+        }
+
+        private const double RollBackRetrySeconds = 10;
+        private const int RollBackRetryLimit = 30;   // about five minutes; after that the next compile or load tries again
+        private static double _rollBackRetryAt;
+        private static int _rollBackRetries;
+
+        /// <summary>
+        /// A rollback that failed (a file held by another process) is tried again in a few seconds: a compile failure keeps this code
+        /// loaded without a reload, so nothing else would call it until the editor restarts.
+        /// </summary>
+        private static void ScheduleRollBackRetry()
+        {
+            if (_rollBackRetries >= RollBackRetryLimit) return;
+            _rollBackRetries++;
+            _rollBackRetryAt = EditorApplication.timeSinceStartup + RollBackRetrySeconds;
+            EditorApplication.update -= RollBackRetryTick;
+            EditorApplication.update += RollBackRetryTick;
+        }
+
+        private static void RollBackRetryTick()
+        {
+            if (EditorApplication.timeSinceStartup < _rollBackRetryAt) return;
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            {
+                _rollBackRetryAt = EditorApplication.timeSinceStartup + 2;   // no file moves while Unity reads the sources
+                return;
+            }
+            EditorApplication.update -= RollBackRetryTick;
+            RollBack();
         }
 
         internal static void RollBack()
@@ -243,9 +280,11 @@ namespace OnAirDeck.UnityManager
                         // The folder that failed is as it was before; the record stays "restoring" and the next load tries again.
                         record.Error = "Rollback interrupted: " + e.Message;
                         try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
-                        Debug.LogError(OnAirDeckConfig.LogPrefix + "Putting the previous Manager back was interrupted (it is tried again on the next load): " + e.Message);
+                        Debug.LogError(OnAirDeckConfig.LogPrefix + "Putting the previous Manager back was interrupted (it is tried again shortly and on the next load): " + e.Message);
+                        ScheduleRollBackRetry();
                         return;
                     }
+                    _rollBackRetries = 0;
                     Finish(record, null);
                     AssetDatabase.Refresh();
                 }
@@ -267,6 +306,18 @@ namespace OnAirDeck.UnityManager
             {
                 Finish(record, e.Message);
             }
+        }
+
+        /// <summary>Saves the record, trying again for about half a second while another process holds the file; the last error or null.</summary>
+        private static Exception SaveWithRetry(SelfUpdateRecord record)
+        {
+            Exception error = null;
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                try { AutoUpdateLogic.Save(Root, record); return null; }
+                catch (Exception e) { error = e; Thread.Sleep(100); }
+            }
+            return error;
         }
 
         /// <summary>The package name of a Package Manager id (name@source).</summary>

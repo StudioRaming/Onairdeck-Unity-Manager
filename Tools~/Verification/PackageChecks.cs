@@ -233,7 +233,9 @@ internal static class PackageChecks
     {
         var project = NewProject(true);
         var items = StandardItems(project);
+        Require(!PackageTransaction.LastInstallComplete(project));   // no journal yet
         var report = PackageTransaction.Execute(project, items, Now);
+        Require(PackageTransaction.LastInstallComplete(project));
 
         Equal(2, report.Installed.Count);
         Equal("0.1.16", InstalledPackages.InstalledVersion(project, Core));
@@ -270,6 +272,7 @@ internal static class PackageChecks
         Require(seen != null && seen.Installed.Count == 2);   // it saw the whole swap, backups included
         Equal(before, Snapshot(project));
         Equal("rolledback", JournalState(project));
+        Require(!PackageTransaction.LastInstallComplete(project));   // the self-update reads this: the swap is not in
         // Cut inside the callback (the editor quits): the journal is not complete, so the next load puts everything back.
         project = NewManifestProject();
         before = Snapshot(project);

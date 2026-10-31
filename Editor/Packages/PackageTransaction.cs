@@ -113,6 +113,17 @@ namespace OnAirDeck.UnityManager
         /// <summary>How long a folder move keeps retrying while a file inside it is held open (see MoveFolder).</summary>
         internal static int MoveRetryBudgetMs = 5000;
 
+        /// <summary>True when the last install's journal says it completed: its swap is in. False with no journal or an unreadable one.</summary>
+        public static bool LastInstallComplete(string projectRoot)
+        {
+            projectRoot = Path.GetFullPath(projectRoot);
+            var path = JournalPath(projectRoot);
+            if (!File.Exists(path)) return false;
+            try { return Journal.Read(projectRoot, path).State == StateComplete; }
+            catch (PackageInstallException) { return false; }
+            catch (IOException) { return false; }
+        }
+
         public static string JournalPath(string projectRoot)
         {
             return Path.Combine(projectRoot, "Library", "OnAirDeck", "install-journal.json");

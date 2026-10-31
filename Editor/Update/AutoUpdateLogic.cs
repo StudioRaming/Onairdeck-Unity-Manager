@@ -371,7 +371,8 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// One folder back from its backup. Throws before anything moves when the folder is gone or a backup is named but missing or
-        /// empty; a move that fails puts back what this call already moved, then rethrows.
+        /// empty. A move of the new files out that fails puts them back, then rethrows. With a <paramref name="swap"/>, the old files
+        /// come in only after its mark is saved, and a failure there leaves the rest to the next try; without one, it is undone too.
         /// </summary>
         public static void RestoreBackup(string packageFolder, string backup, string failedRoot, SelfUpdateSwap swap = null, Action saveProgress = null)
         {
@@ -427,7 +428,8 @@ namespace OnAirDeck.UnityManager
                     swap.FailedDir = failed;
                     if (saveProgress != null) saveProgress();
                 }
-                if (!created)
+                // Without a mark nothing could finish a half-done second stage later, so it is undone with the first.
+                if (!created && swap == null)
                     foreach (var child in Directory.GetFileSystemEntries(backup))
                     {
                         var to = Path.Combine(packageFolder, Path.GetFileName(child));
@@ -437,18 +439,20 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception)
             {
+                // Only moves of this call go back; the mark was not saved (or the save is what failed), so it is dropped.
                 for (var i = done.Count - 1; i >= 0; i--)
                 {
                     try { PackageTransaction.MoveEntry(done[i].Value, done[i].Key); }
                     catch (Exception) { }
                 }
-                if (swap != null)
-                {
-                    swap.FailedDir = "";
-                    try { if (saveProgress != null) saveProgress(); } catch (Exception) { }
-                }
+                if (swap != null) swap.FailedDir = "";
                 throw;
             }
+            // With the mark saved, the old files only come in: a move that fails leaves the folder half back and the mark in place,
+            // and the next try (the resume branch above) brings the rest. Nothing already back is moved out again.
+            if (!created && swap != null)
+                foreach (var child in Directory.GetFileSystemEntries(backup))
+                    PackageTransaction.MoveEntry(child, Path.Combine(packageFolder, Path.GetFileName(child)));
             // A package the update added leaves Packages/ entirely: an empty folder there would still be a folder Unity looks at.
             if (created)
             {
