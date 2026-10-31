@@ -200,12 +200,18 @@ namespace OnAirDeck.UnityManager
             return order;
         }
 
-        /// <summary>True when one of <paramref name="installed"/> is an add-on of <paramref name="package"/> ("&lt;package&gt;.&lt;suffix&gt;").</summary>
-        public static bool ExtendsAny(string package, IEnumerable<string> installed)
+        /// <summary>
+        /// True when a package installed earlier in the run (<paramref name="installed"/>, as its package.json now reads) names
+        /// <paramref name="package"/> in its vpmDependencies: that install found or brought the version it pins, and the package's own
+        /// newest would break the pin. The name alone decides nothing (com.vendor.tool.extra may not depend on com.vendor.tool).
+        /// </summary>
+        public static bool PinnedByAny(string package, IEnumerable<PackageManifest> installed)
         {
             if (string.IsNullOrEmpty(package)) return false;
-            foreach (var name in installed)
-                if (!string.IsNullOrEmpty(name) && name.Length > package.Length + 1 && name.StartsWith(package + ".", StringComparison.Ordinal)) return true;
+            foreach (var manifest in installed)
+                if (manifest != null)
+                    foreach (var dependency in manifest.VpmDependenciesRaw)
+                        if (dependency.Key == package) return true;
             return false;
         }
 

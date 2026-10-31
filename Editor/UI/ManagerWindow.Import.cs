@@ -70,7 +70,7 @@ namespace OnAirDeck.UnityManager
             foreach (var entry in entries)
                 if (entry.PackageName.Length > 0) before[entry.PackageName] = InstalledPackages.InstalledVersion(root, entry.PackageName);
             ImportOutcome last = null;
-            var installed = new List<string>();
+            var installed = new List<PackageManifest>();
             EditorApplication.LockReloadAssemblies();
             try
             {
@@ -78,12 +78,12 @@ namespace OnAirDeck.UnityManager
                 {
                     var entry = entries[index];
                     // An add-on installed before brought the exact version it needs (or found it already here): its newest would break the pin.
-                    if (entry.PackageName.Length > 0 && (ImportRequestLogic.ExtendsAny(entry.PackageName, installed)
+                    if (entry.PackageName.Length > 0 && (ImportRequestLogic.PinnedByAny(entry.PackageName, installed)
                         || InstalledPackages.InstalledVersion(root, entry.PackageName) != before[entry.PackageName])) continue;
                     _selectedKey = entry.Key;
                     var outcome = await InstallLicenseEntry(entry, willInstall);
                     if (outcome.Report != ImportReport.Done) return outcome;
-                    if (entry.PackageName.Length > 0) installed.Add(entry.PackageName);
+                    if (entry.PackageName.Length > 0) installed.Add(InstalledPackages.Read(root, entry.PackageName));
                     last = outcome;
                 }
             }

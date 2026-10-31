@@ -19,8 +19,8 @@ internal static class MingToonMoveChecks
         check("vcc move: both entries of core and add-on leave dependencies and locked; every other entry, unknown keys, CRLF and the final newline stay; the file is backed up first", Move(project));
         check("vcc move: undo puts the entries back at the folder's current version (no downgrade by the resolver); a package listed again refuses and changes nothing; keep ends the offer", UndoAndKeep(project));
         check("vcc move: nothing listed changes nothing; a file that is not JSON refuses", Refusals);
-        check("license rows: the free and the commercial Core license are one row (the commercial one, its versions taken from the unlimited license when it has a device limit, installers paired by label); the folded license's keys stay on the row; a device-limited or other-package license keeps its own row", MergeRows);
-        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a core is skipped after its add-on", Order);
+        check("license rows: the free and the commercial Core license are one row (the commercial one, its zips taken from the unlimited license when it has a device limit, each label's installer from whichever license has one); the folded license's keys stay on the row; a device-limited or other-package license keeps its own row", MergeRows);
+        check("import order: an add-on (<core>.<suffix>) installs before its core, file-only licenses last, otherwise the given order; a package is skipped after one that pins it, never by its name alone", Order);
     }
 
     // ------------------------------------------------------------ G5
@@ -207,8 +207,9 @@ internal static class MingToonMoveChecks
         var row = rows.Single(r => r.license_id == "4740448e");
         Require(!ReferenceEquals(row, commercial));             // a copy: the account's own list (license files) stays as it was
         Equal(2, commercial.versions.Length);
-        // The commercial license has a device limit: a version both offer comes from the free one, so a full seat count does not stop it.
-        Equal("f16,f16i,f15", string.Join(",", row.versions.Select(v => v.version_id)));
+        // The commercial license has a device limit: a zip both offer comes from the free one, so a full seat count does not stop it;
+        // the free 0.1.15 has no installer, so the commercial one's stays for the legacy case.
+        Equal("f16,f16i,f15,c15i", string.Join(",", row.versions.Select(v => v.version_id)));
         Equal("free-core", also["4740448e"].Single());
         Require(rows.Contains(other));
 
@@ -242,10 +243,14 @@ internal static class MingToonMoveChecks
         Equal("1,0,3,2", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, Urp, "", "com.studioraming.mlc" })));
         Equal("0,1", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core, "com.studioraming.mingtoonx" })));
         Equal("0", string.Join(",", ImportRequestLogic.InstallOrder(new[] { Core })));
-        // The core's own step is skipped once an add-on of it was installed in the run (it found or brought the version it pins).
-        Require(ImportRequestLogic.ExtendsAny(Core, new[] { Urp }));
-        Require(!ImportRequestLogic.ExtendsAny(Core, new[] { "com.studioraming.mingtoonx", Core }));
-        Require(!ImportRequestLogic.ExtendsAny(Urp, new[] { Core }));
+        // A package's own step is skipped once a package installed earlier in the run names it in vpmDependencies (it found or
+        // brought the version it pins); a name that only looks like an add-on decides nothing.
+        var urp = new PackageManifest { Name = Urp, Version = "0.1.16" };
+        urp.VpmDependenciesRaw.Add(new KeyValuePair<string, string>(Core, "0.1.16"));
+        var extra = new PackageManifest { Name = Core + ".extra", Version = "1.0.0" };
+        Require(ImportRequestLogic.PinnedByAny(Core, new[] { urp }));
+        Require(!ImportRequestLogic.PinnedByAny(Core, new[] { extra, null }));
+        Require(!ImportRequestLogic.PinnedByAny(Urp, new[] { urp }));
     }
 
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }

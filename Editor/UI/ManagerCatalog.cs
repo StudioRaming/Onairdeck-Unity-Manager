@@ -133,7 +133,8 @@ namespace OnAirDeck.UnityManager
         /// Licenses of the account that carry the same package are one row (MingToon: the free Core license and the commercial one,
         /// owner decision 2026-10-31). The row is the stronger license (more rights, then more package versions, then the lower id),
         /// with one entry per version label from all of them (a package version and its installer file share the label, so they come
-        /// together); a label both offer comes from the row's license, or from the other one when the row's license has a device limit. Downloading either version works, since the account holds both licenses; the
+        /// together); for a label both offer, the zip and the installer each come from the row's license, or from the other one first
+        /// when the row's license has a device limit, and each from whichever license has it. Downloading either version works, since the account holds both licenses; the
         /// license files are planned from the account's real list, so every held license still gets its own file. A license with a
         /// device limit keeps its own row, so its devices stay manageable. <paramref name="merged"/> gets row id to the ids folded in.
         /// </summary>
@@ -171,19 +172,21 @@ namespace OnAirDeck.UnityManager
                 // A version both licenses offer is downloaded through one without a device limit when the row's own license has one:
                 // a full seat count must not stop an install the other license allows.
                 if (primary.max_devices > 0) members.Add(primary); else members.Insert(0, primary);
-                var versions = new List<LicenseVersionEntry>();
-                var labels = new HashSet<string>(StringComparer.Ordinal);
+                // Per label, the package zip comes from the first license in that order that has one, and the other files of the label
+                // (the legacy installer) from the first that has them, so a lone zip never hides the other license's installer.
+                var zipFrom = new Dictionary<string, LicenseEntry>(StringComparer.Ordinal);
+                var filesFrom = new Dictionary<string, LicenseEntry>(StringComparer.Ordinal);
                 foreach (var member in members)
-                {
-                    var added = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var v in member.versions ?? new LicenseVersionEntry[0])
                     {
-                        if (v == null || labels.Contains(v.version_label ?? "")) continue;
-                        versions.Add(v);
-                        added.Add(v.version_label ?? "");
+                        if (v == null) continue;
+                        var from = v.IsPackage ? zipFrom : filesFrom;
+                        if (!from.ContainsKey(v.version_label ?? "")) from[v.version_label ?? ""] = member;
                     }
-                    labels.UnionWith(added);
-                }
+                var versions = new List<LicenseVersionEntry>();
+                foreach (var member in members)
+                    foreach (var v in member.versions ?? new LicenseVersionEntry[0])
+                        if (v != null && (v.IsPackage ? zipFrom : filesFrom)[v.version_label ?? ""] == member) versions.Add(v);
                 replaced[primary] = primary.WithVersions(versions.ToArray());
                 merged[primary.license_id] = ids;
             }
