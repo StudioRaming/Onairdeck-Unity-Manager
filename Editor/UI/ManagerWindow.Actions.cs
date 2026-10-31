@@ -322,6 +322,8 @@ namespace OnAirDeck.UnityManager
             try
             {
                 await LicenseService.IssueSellerLicenseAsync(token, _licenses, entry.LicenseId, true);
+                // A merged row (same package in two licenses) stands for each of them; every one gets its file again.
+                foreach (var other in entry.AlsoLicenseIds) await LicenseService.IssueSellerLicenseAsync(token, _licenses, other, true);
                 SetMessage(ManagerText.LicenseReissued, MessageType.Info);
             }
             catch (SessionExpiredException e)

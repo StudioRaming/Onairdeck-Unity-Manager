@@ -36,6 +36,7 @@
     <Compile Include="ManagerErrorChecks.cs" />
     <Compile Include="ImportChecks.cs" />
     <Compile Include="ConflictChecks.cs" />
+    <Compile Include="MingToonMoveChecks.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflicts.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflictFixes.cs" />
     <Compile Include="../../Editor/Import/ImportRequestLogic.cs" />
@@ -78,5 +79,6 @@
     <Compile Include="../../Editor/Packages/PackageZip.cs" />
     <Compile Include="../../Editor/Packages/VpmListing.cs" />
     <Compile Include="../../Editor/Packages/VpmManifestUpdater.cs" />
+    <Compile Include="../../Editor/Packages/VpmMigration.cs" />
   </ItemGroup>
 </Project>

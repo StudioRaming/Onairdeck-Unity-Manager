@@ -336,6 +336,7 @@ namespace OnAirDeck.UnityManager
             _installRecords = InstallRecords.Load(root);
             _mismatches = FindMismatches(root);
             _pendingRestores = LegacyMove.PendingRestores();
+            RefreshVccState(root);
             MarkDirty();
         }
 

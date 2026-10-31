@@ -42,6 +42,16 @@ namespace OnAirDeck.UnityManager
         };
 
         /// <summary>
+        /// Packages that only the Manager updates (owner decision 2026-10-31: no more MingToon updates through VCC). A VCC install of
+        /// one of them is offered a move to the Manager (VpmMigration), which takes its vpm-manifest.json entries out.
+        /// </summary>
+        public static readonly string[] ManagerOnlyVpmPackages =
+        {
+            "com.studioraming.mingtoon",
+            "com.studioraming.mingtoon.urp"
+        };
+
+        /// <summary>
         /// Products whose old Assets install the Manager never moves or deletes: the product's own installer does it. The Manager
         /// imports that installer (a file of the same license version whose name ends with <see cref="LegacyInstallerSpec.InstallerSuffix"/>,
         /// today MingToon-&lt;ver&gt;-update.unitypackage). The installer only cleans up; the Manager installs the package zip itself

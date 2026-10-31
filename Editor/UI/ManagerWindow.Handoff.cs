@@ -155,6 +155,7 @@ namespace OnAirDeck.UnityManager
         {
             if (!entry.IsLicense) return;
             var refusal = LicenseRenewalStatus.For(entry.LicenseId);
+            foreach (var other in entry.AlsoLicenseIds) if (refusal == null) refusal = LicenseRenewalStatus.For(other);
             if (refusal == null) return;
             var lang = ManagerText.Language;
             if (refusal.Code == "device_released")

@@ -177,6 +177,29 @@ namespace OnAirDeck.UnityManager
             return request != null && request.purchase != null && !string.IsNullOrEmpty(request.purchase.item_id);
         }
 
+        /// <summary>
+        /// The order to install the licenses one import grants (indexes into <paramref name="packages"/>, one package name per license, ""
+        /// for a license with only files). An add-on, named "&lt;other&gt;.&lt;suffix&gt;" after a package of the same import, goes before
+        /// that package: it brings the exact version of it that it pins, and the package's own step is then skipped. File-only licenses
+        /// go last (their .unitypackage import ends the run). Otherwise the given order.
+        /// </summary>
+        public static List<int> InstallOrder(IList<string> packages)
+        {
+            var order = new List<int>();
+            for (var i = 0; i < packages.Count; i++) order.Add(i);
+            Func<int, int> depth = i =>
+            {
+                var name = packages[i] ?? "";
+                if (name.Length == 0) return -1;
+                var n = 0;
+                foreach (var other in packages)
+                    if (!string.IsNullOrEmpty(other) && name.Length > other.Length + 1 && name.StartsWith(other + ".", StringComparison.Ordinal)) n++;
+                return n;
+            };
+            order.Sort((a, b) => { var d = depth(b).CompareTo(depth(a)); return d != 0 ? d : a.CompareTo(b); });
+            return order;
+        }
+
         /// <summary>The confirm's answer: Import goes on (null), Cancel is declined, Not this project gives the request back.</summary>
         public static ImportOutcome FromChoice(int choice)
         {
