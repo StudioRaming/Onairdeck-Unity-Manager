@@ -21,7 +21,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private CancellationTokenSource _workCancel;
         [NonSerialized] private readonly Dictionary<string, string> _doneFolder = new Dictionary<string, string>();
         [NonSerialized] private readonly Dictionary<string, string> _depProblem = new Dictionary<string, string>();
-        [NonSerialized] private readonly HashSet<string> _cleanupRequired = new HashSet<string>();
+        /// <summary>Entry key to why its old install is in the way (the exception's text, written for the user).</summary>
+        [NonSerialized] private readonly Dictionary<string, string> _cleanupRequired = new Dictionary<string, string>();
 
         private bool Busy
         {
@@ -94,6 +95,7 @@ namespace OnAirDeck.UnityManager
         private void PrimaryAction(CatalogEntry entry)
         {
             if (entry.Kind == FavoriteKind.Purchase) DoDownload(entry);
+            else if (InstallAddonCoreFirst(entry)) { }
             else
             {
                 var version = OfferedPackage(entry);
@@ -174,15 +176,21 @@ namespace OnAirDeck.UnityManager
             var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
             var message = text.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
             if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
+            // MingToon from VCC or the BOOTH installer: one question, then its vpm-manifest entries go (undone if the install fails).
+            VpmMove vccMove;
+            if (!SwitchFromVcc(new[] { version.package_name }, out vccMove)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);
             _cleanupRequired.Remove(entry.Key);
             _depProblem.Remove(entry.Key);
             var token = _session.token;
+            var installed = false;
             try
             {
                 if (willInstall != null) willInstall(version.package_name, version.package_version);
                 var report = await PackageInstallService.InstallAsync(token, version, OnWorkProgress, _workCancel.Token, _licenses, true, LegacyInstallDialog.Confirm);
+                installed = true;
+                _lastFailure.Remove(entry.Key);
                 SessionState.EraseString(PackageInstallService.ReportKey);
                 _focusPackage = "";
                 SessionState.EraseString(FocusKey);
@@ -200,16 +208,19 @@ namespace OnAirDeck.UnityManager
                 SetMessage(ManagerText.Cancelled, MessageType.None);
                 return ImportOutcome.Failed("cancelled");
             }
-            catch (LegacyCleanupRequiredException)
+            catch (LegacyCleanupRequiredException e)
             {
-                // Not an error: the item waits for a click that accepts the clean-up.
-                _cleanupRequired.Add(entry.Key);
+                // Not an error report, but never silent: the reason (which folder, which files, what to do) shows on the row and in the bar.
+                _cleanupRequired[entry.Key] = e.Message;
+                SetMessage(e.Message, MessageType.Warning);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Install of " + version.package_name + " " + version.package_version + " stopped: " + e.Message);
                 return ImportOutcome.Failed("cleanup_required");
             }
             catch (DependencyUnavailableException e)
             {
                 if (e.Kind == DependencyErrorKind.GetOnAtelierFirst) _depProblem[entry.Key] = e.PackageName ?? "";
                 else FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
+                RememberFailure(entry.Key, e);
                 return ImportOutcome.Failed("dependency_missing");
             }
             catch (SessionExpiredException e)
@@ -220,11 +231,13 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
+                RememberFailure(entry.Key, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Package install failed: " + e.Message);
                 return ImportOutcome.Failed(IsNoticeRefusal(e) ? "device_limit" : "install_failed");
             }
             finally
             {
+                if (!installed) UndoSwitch(vccMove);
                 EndWork();
                 RefreshInstalledState();
             }

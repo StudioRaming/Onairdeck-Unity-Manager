@@ -311,7 +311,40 @@ namespace OnAirDeck.UnityManager
                     sb.Append("\n    ").Append(path);
                 }
             }
+            var git = false;
+            var listed = false;
+            foreach (var item in blocked)
+            {
+                foreach (var path in item.Unmatched) if (path.EndsWith("/.git", StringComparison.Ordinal)) git = true;
+                foreach (var path in item.Unmatched) if (path != item.Path && !path.EndsWith("/.git", StringComparison.Ordinal)) listed = true;
+            }
+            sb.Append('\n').Append(BlockedNext(language, git, listed));
             return sb.ToString();
+        }
+
+        /// <summary>What to do about a blocked old install: a git checkout is the developer's own; listed files are the user's and stay theirs.</summary>
+        public static string BlockedNext(int language, bool git, bool listed)
+        {
+            if (git)
+                switch (language)
+                {
+                    case 0: return "이 폴더는 개발용 git 작업 폴더라 아틀리에 매니저가 옮기지 않아요. 직접 프로젝트 밖으로 옮긴 뒤 다시 설치해 주세요.";
+                    case 2: return "このフォルダは開発用の git 作業フォルダのため、アトリエマネージャーは移動しません。プロジェクトの外へ移してから再度インストールしてください。";
+                    default: return "This folder is a git working copy, so the Atelier Manager does not move it. Move it out of the project yourself, then install again.";
+                }
+            if (listed)
+                switch (language)
+                {
+                    case 0: return "위 파일은 직접 만들었거나 고친 파일이라 그대로 두었어요. 필요하면 폴더 밖(예: Assets/MingToonPresets)으로 옮긴 뒤 다시 설치해 주세요.";
+                    case 2: return "上のファイルはご自身で作成・変更したファイルのため、そのままにしました。必要ならフォルダの外（例: Assets/MingToonPresets）へ移してから再度インストールしてください。";
+                    default: return "The files above were made or changed by you, so they were left alone. Move them out of the folder (for example to Assets/MingToonPresets), then install again.";
+                }
+            switch (language)
+            {
+                case 0: return "이 폴더가 예전 설치 그대로인지 확인할 목록이 없어요. 폴더를 직접 백업한 뒤 지우고 다시 설치해 주세요.";
+                case 2: return "このフォルダが以前のインストールのままか確認する一覧がありません。フォルダを自分でバックアップして削除してから、再度インストールしてください。";
+                default: return "There is no list to check this folder against. Back the folder up yourself, delete it, then install again.";
+            }
         }
 
         public static string StillColliding(int language)

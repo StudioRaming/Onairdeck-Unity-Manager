@@ -128,7 +128,7 @@ namespace OnAirDeck.UnityManager
                 {
                     var rect = new Rect(0f, y, view.width, ManagerLayout.ListRowHeight);
                     var visible = rect.yMax >= _listScroll.y && rect.y <= _listScroll.y + r.height;
-                    DrawListRow(rect, line.Entry, index, visible, r);
+                    DrawListRow(rect, line.Entry, index, visible, r, line.Child);
                     y += ManagerLayout.ListRowHeight;
                     index++;
                 }
@@ -157,7 +157,7 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        private void DrawListRow(Rect r, CatalogEntry entry, int index, bool visible, Rect viewport)
+        private void DrawListRow(Rect r, CatalogEntry entry, int index, bool visible, Rect viewport, bool child = false)
         {
             var e = Event.current;
             var selected = entry.Key == _selectedKey || (string.IsNullOrEmpty(_selectedKey) && !IsNarrow(position.width) && _visible.Count > 0 && _visible[0] == entry);
@@ -166,6 +166,13 @@ namespace OnAirDeck.UnityManager
 
             var x = r.x + SRMetrics.Space6;
             var centerY = r.y + r.height * 0.5f;
+            // An add-on under its core (MingToon Core > URP add-on, MLC): indented, with a short guide line.
+            if (child)
+            {
+                if (e.type == EventType.Repaint) SRTheme.Fill(new Rect(x + 4f, r.y, 1f, r.height * 0.5f), SRTheme.P.LineSubtle);
+                if (e.type == EventType.Repaint) SRTheme.Fill(new Rect(x + 4f, centerY, 8f, 1f), SRTheme.P.LineSubtle);
+                x += ManagerLayout.ChildIndent;
+            }
 
             // checkbox (only for what a batch can handle)
             var batchable = CanBatch(entry);

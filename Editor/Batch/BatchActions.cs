@@ -50,7 +50,13 @@ namespace OnAirDeck.UnityManager
             var combined = new LegacyPlan();
             foreach (var version in versions)
             {
-                var probes = PackageInstallService.ProbesFor(root, new List<InstallItem> { new InstallItem { Name = version.package_name, Version = version.package_version } }, version, licenses);
+                var probeItems = new List<InstallItem> { new InstallItem { Name = version.package_name, Version = version.package_version } };
+                // An add-on brings its core (the URP add-on pins it), so the core's old Assets folder is asked about here too: otherwise
+                // it turns up only after the download, is not in the approved set and the item ends as "declined".
+                var core = CoreAddons.CoreOf(version.package_name, "");
+                if (core.Length > 0) probeItems.Insert(0, new InstallItem { Name = core, Version = "" });
+                var probes = PackageInstallService.ProbesFor(root, probeItems, version, licenses);
+                foreach (var probe in probes) if (probe.Name == core) probe.Display = CoreAddons.CoreName(core);
                 var plan = LegacyInstall.DetectKnown(root, probes);
                 if (plan.IsEmpty) continue;
                 flagged[version] = plan;

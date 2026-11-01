@@ -313,8 +313,8 @@ namespace OnAirDeck.UnityManager
                 if (ManagerCatalog.Matches(entry, _search, (FilterMode)_filter, seller, _favorites.Contains(entry.Key))) visible.Add(entry);
             ManagerCatalog.Sort(visible, (SortMode)_sort);
             _visible = visible;
-            _lines = ManagerCatalog.Group(visible, (SortMode)_sort, entry => _favorites.Contains(entry.Key), _collapsed,
-                ManagerText.FavGroup, ManagerText.AllGroup, ManagerText.OtherSeller);
+            _lines = CoreAddons.Nest(ManagerCatalog.Group(visible, (SortMode)_sort, entry => _favorites.Contains(entry.Key), _collapsed,
+                ManagerText.FavGroup, ManagerText.AllGroup, ManagerText.OtherSeller));
         }
 
         private void MarkDirty()

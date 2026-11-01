@@ -109,11 +109,26 @@ namespace OnAirDeck.UnityManager
             DrawHandoffCard(entry);
             DrawRenewalCard(entry);
 
-            if (_cleanupRequired.Contains(entry.Key))
+            string cleanup;
+            string failed;
+            if (_cleanupRequired.TryGetValue(entry.Key, out cleanup))
             {
+                // The reason itself (which folder, which files, what to do); the button tries again once the user has acted on it.
                 var version = OfferedPackage(entry);
-                if (SRGui.HelpBox(ManagerText.CleanupNeeded, SRTone.Warning, ManagerText.BInst) && version != null && !Busy)
+                var text = string.IsNullOrEmpty(cleanup) ? ManagerText.CleanupNeeded : cleanup;
+                if (SRGui.HelpBox(text, SRTone.Warning, ManagerText.TryAgain) && version != null && !Busy)
                     Defer(() => DoInstall(entry, version));
+                GUILayout.Space(SRMetrics.Space6);
+            }
+            else if (_lastFailure.TryGetValue(entry.Key, out failed))
+            {
+                if (SRGui.HelpBox(ManagerText.LastFailed.Replace("{r}", failed), SRTone.Warning, ManagerText.TryAgain) && !Busy)
+                    Defer(() => PrimaryAction(entry));
+                GUILayout.Space(SRMetrics.Space6);
+            }
+            if (AddonStateOf(entry) != AddonState.Ready)
+            {
+                SRGui.HelpBox(ManagerText.CoreNeededHint.Replace("{c}", CoreAddons.CoreName(CoreAddons.CoreOf(entry))), SRTone.Info);
                 GUILayout.Space(SRMetrics.Space6);
             }
 
@@ -234,6 +249,7 @@ namespace OnAirDeck.UnityManager
                 }
             }
 
+            primary = AddonLabel(entry, primary);
             if (primary != null)
             {
                 using (new GUIEnabledScope(!busy))
@@ -254,6 +270,7 @@ namespace OnAirDeck.UnityManager
                     case EntryState.Unknown: fileLabel = ManagerText.BInstLatest; break;
                     case EntryState.Latest: fileLabel = ManagerText.BAgain; fileKind = SRButtonKind.Secondary; break;
                 }
+                fileLabel = AddonLabel(entry, fileLabel);
                 using (new GUIEnabledScope(!busy))
                 {
                     if (SRGui.Button(new GUIContent(fileLabel, tip), fileKind, SRButtonSize.Large, GUILayout.ExpandWidth(false)))

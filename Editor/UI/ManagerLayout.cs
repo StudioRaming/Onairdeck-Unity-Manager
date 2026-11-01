@@ -15,6 +15,8 @@ namespace OnAirDeck.UnityManager
 
         public const float ListRowHeight = 39f;
         public const float ListThumb = 30f;
+        /// <summary>How far an add-on row sits in under its core row.</summary>
+        public const float ChildIndent = 16f;
         public const float GroupRowHeight = 22f;
         public const float Checkbox = 14f;
         public const float Star = 14f;

@@ -452,7 +452,8 @@ namespace OnAirDeck.UnityManager
         internal static Action<string> FaultHook;
 
         /// <summary>Product installers that validate and detach their own old install. The first that Handles an item owns it.</summary>
-        internal static readonly List<ILegacyHandler> Handlers = new List<ILegacyHandler> { new InstallerHandoffHandler() };
+        // A folder that lists its own files is moved by the Manager (undoable); otherwise the product installer takes over (hand-off).
+        internal static readonly List<ILegacyHandler> Handlers = new List<ILegacyHandler> { new ReleaseManifestHandler(), new InstallerHandoffHandler() };
 
         // ---------- detection ----------
 

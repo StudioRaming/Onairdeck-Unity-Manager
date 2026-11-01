@@ -42,6 +42,33 @@ namespace OnAirDeck.UnityManager
         };
 
         /// <summary>
+        /// The old Assets folder of <see cref="LegacyAssetFolders"/> lists what it shipped: a folder in it (folder-relative) whose
+        /// *Manifest.json files hold "files": [{"path", "sha256"}] with project-relative paths (MingToon 0.1.7 and older, BOOTH .unitypackage).
+        /// When every file in the folder is one of them, unchanged, the Manager moves the folder to its backup itself
+        /// (<see cref="ReleaseManifestHandler"/>), so the install works without the product's own installer file.
+        /// </summary>
+        public static readonly Dictionary<string, string> LegacyReleaseManifestFolders = new Dictionary<string, string>
+        {
+            { "com.studioraming.mingtoon", "Release" }
+        };
+
+        /// <summary>
+        /// Add-ons that need MingToon Core but do not say so in a package.json (owner rule 2026-11-01): license id to the core package.
+        /// A package add-on that declares its core in vpmDependencies (the URP add-on pins it exactly) is found from that instead, and so is
+        /// any package named "&lt;core&gt;.&lt;suffix&gt;". Ming Light Controller ships as a .unitypackage with empty vpmDependencies.
+        /// </summary>
+        public static readonly Dictionary<string, string> CoreAddonLicenses = new Dictionary<string, string>
+        {
+            { "73f4e203-ffd0-4e88-9b78-dc116fd74057", "com.studioraming.mingtoon" }   // Ming Light Controller
+        };
+
+        /// <summary>Packages that other products are add-ons of: the display name used in "install X first".</summary>
+        public static readonly Dictionary<string, string> CorePackages = new Dictionary<string, string>
+        {
+            { "com.studioraming.mingtoon", "MingToon Core" }
+        };
+
+        /// <summary>
         /// Packages that only the Manager updates (owner decision 2026-10-31: no more MingToon updates through VCC). A VCC install of
         /// one of them is offered a move to the Manager (VpmMigration), which takes its vpm-manifest.json entries out.
         /// </summary>
