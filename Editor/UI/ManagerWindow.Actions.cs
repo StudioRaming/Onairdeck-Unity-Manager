@@ -256,7 +256,35 @@ namespace OnAirDeck.UnityManager
         /// <param name="confirmed">The import confirm already asked: no second dialog.</param>
         private async Task<ImportOutcome> DoInstallFileAsync(CatalogEntry entry, LicenseVersionEntry version, bool confirmed)
         {
-            if (_session == null || Busy || version == null || entry.License == null) return ImportOutcome.Release();
+            if (_session == null || version == null || entry.License == null) return ImportOutcome.Release();
+            if (Busy)
+            {
+                // Never a silent skip: the click (or the web import) says why nothing started.
+                SetMessage(ManagerText.BusyNotStarted.Replace("{n}", entry.Name), MessageType.Warning);
+                return ImportOutcome.Release();
+            }
+            // Every way in (the row, a version in the history, the one-button import) waits for the core: an add-on without it does not
+            // compile. The core goes first when this account has it, else the reason shows and nothing is downloaded.
+            var core = CoreAddons.CoreOf(entry);
+            if (core.Length > 0 && !CoreInstalled(core))
+            {
+                var coreName = CoreAddons.CoreName(core);
+                var coreEntry = CoreEntry(core);
+                if (coreEntry == null)
+                {
+                    var missing = ManagerText.CoreMissing.Replace("{a}", entry.Name).Replace("{c}", coreName);
+                    _lastFailure[entry.Key] = missing;
+                    SetMessage(missing, MessageType.Warning);
+                    return ImportOutcome.Failed("dependency_missing");
+                }
+                if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+                    ManagerText.BInst, ManagerText.Cancel))
+                {
+                    SetMessage(ManagerText.Declined, MessageType.None);
+                    return ImportOutcome.Declined();
+                }
+                return await InstallCoreThenAddonAsync(entry, coreEntry, version);
+            }
             var label = string.IsNullOrEmpty(version.version_label) ? version.file_name : version.version_label;
             var title = ManagerText.DlgInT.Replace("{n}", entry.Name).Replace("{v}", label);
             // A .unitypackage or loose files overwrite in place; nothing is backed up either way.
@@ -270,6 +298,9 @@ namespace OnAirDeck.UnityManager
             try
             {
                 var summary = await LicenseVersionInstall.InstallAsync(token, entry.License, version, _licenses, OnWorkProgress, _workCancel.Token, false, true);
+                // The files are in: an earlier failure of this row (core missing, a dropped download) is no longer its state.
+                _lastFailure.Remove(entry.Key);
+                _cleanupRequired.Remove(entry.Key);
                 if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkgAuto, MessageType.Info);
                 else
                 {

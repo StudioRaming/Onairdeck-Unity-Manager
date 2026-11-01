@@ -18,6 +18,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private readonly Dictionary<string, string> _lastFailure = new Dictionary<string, string>();
         /// <summary>The failed entries of the last batch, selected again so the batch button retries only them.</summary>
         [NonSerialized] private HashSet<string> _retryKeys = new HashSet<string>();
+        /// <summary>The "core first?" question (title, message, ok, cancel); EditMode tests answer it.</summary>
+        internal static Func<string, string, string, string, bool> CoreFirstDialog = EditorUtility.DisplayDialog;
 
         private void RememberFailure(string key, Exception e)
         {
@@ -135,7 +137,7 @@ namespace OnAirDeck.UnityManager
                 SetMessage(text, MessageType.Warning);
                 return true;
             }
-            if (!EditorUtility.DisplayDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
                 ManagerText.BInst, ManagerText.Cancel)) return true;
             InstallCoreThenAddon(entry, CoreEntry(core));
             return true;
@@ -150,9 +152,15 @@ namespace OnAirDeck.UnityManager
                 await DoInstallAsync(addon, package, true, null);
                 return;
             }
+            await InstallCoreThenAddonAsync(addon, coreEntry, null);
+        }
+
+        /// <summary>The core, then the file add-on (<paramref name="file"/>, or the one it offers). Returns how the add-on (or the core) ended.</summary>
+        private async Task<ImportOutcome> InstallCoreThenAddonAsync(CatalogEntry addon, CatalogEntry coreEntry, LicenseVersionEntry file)
+        {
             var coreVersion = coreEntry != null ? OfferedPackage(coreEntry) : null;
-            var file = OfferedFileVersion(addon);
-            if (coreVersion == null || file == null) return;
+            if (file == null) file = OfferedFileVersion(addon);
+            if (coreVersion == null || file == null) return ImportOutcome.Failed("not_available");
             // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
             // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
             // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.
@@ -169,10 +177,16 @@ namespace OnAirDeck.UnityManager
                     // A hand-off puts the core in after the next reload: the add-on follows then. Anything else: the core's row says why.
                     keepRecord = outcome.Report == ImportReport.Waiting;
                     if (!keepRecord) _lastFailure[addon.Key] = ManagerText.CoreNotIn.Replace("{a}", addon.Name).Replace("{c}", CoreAddons.CoreName(core));
-                    return;
+                    return outcome;
                 }
                 RemovePendingAddon(addon.Key);
-                await DoInstallFileAsync(addon, file, true);
+                if (!CoreInstalled(core))
+                {
+                    // Reported done but not here (never loop back into the question): the reason, nothing more.
+                    _lastFailure[addon.Key] = ManagerText.CoreNotIn.Replace("{a}", addon.Name).Replace("{c}", CoreAddons.CoreName(core));
+                    return ImportOutcome.Failed("dependency_missing");
+                }
+                return await DoInstallFileAsync(addon, file, true);
             }
             finally
             {
@@ -243,8 +257,7 @@ namespace OnAirDeck.UnityManager
 
         private async void ResumeAddonInstall(CatalogEntry entry, LicenseVersionEntry file)
         {
-            var outcome = await DoInstallFileAsync(entry, file, true);
-            if (outcome.Report == ImportReport.Done) _lastFailure.Remove(entry.Key);
+            await DoInstallFileAsync(entry, file, true);
         }
 
         /// <summary>The row reasons and retry selection of the batch that ended just before this reload.</summary>

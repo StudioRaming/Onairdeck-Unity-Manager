@@ -24,6 +24,8 @@ namespace OnAirDeck.UnityManager
         public static string CoreMissing { get { return Pick("{a}은(는) {c}가 있어야 동작해요. 이 계정에는 {c}가 없어서 설치하지 않았어요. 아틀리에에서 {c}를 먼저 받아 주세요.", "{a} works only with {c}. This account has no {c}, so nothing was installed. Get {c} on the Atelier first.", "{a}は{c}がないと動きません。このアカウントには{c}がないため、インストールしませんでした。先にアトリエで{c}を入手してください。"); } }
         /// <summary>{a} the add-on, {c} the core: the run that was to install the core first ended without it (a script reload, a failure).</summary>
         public static string CoreNotIn { get { return Pick("{c}가 설치되지 않아 {a}를 설치하지 않았어요. {c}를 먼저 설치한 뒤 다시 눌러 주세요.", "{c} did not get installed, so {a} was not installed. Install {c}, then press it again.", "{c}がインストールされなかったため、{a}をインストールしませんでした。先に{c}を入れてから、もう一度押してください。"); } }
+        /// <summary>{n} the item: an install asked for while another task runs (a batch, an update, a hand-off) did not start.</summary>
+        public static string BusyNotStarted { get { return Pick("다른 작업이 진행 중이라 {n} 설치를 시작하지 않았어요. 그 작업이 끝난 뒤 다시 눌러 주세요.", "Another task is running, so {n} did not start installing. Press it again when that task ends.", "ほかの作業中のため、{n}のインストールを始めませんでした。その作業が終わってから、もう一度押してください。"); } }
         /// <summary>{a} the add-on, after its core: installing it now (the run that installed the core ended in a script reload).</summary>
         public static string AddonResume { get { return Pick("{c} 설치가 끝나서 이어서 {a}를 설치해요.", "{c} is in, so {a} installs now.", "{c}が入ったので、続けて{a}をインストールします。"); } }
         /// <summary>{c} the core.</summary>
