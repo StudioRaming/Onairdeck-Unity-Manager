@@ -492,6 +492,17 @@ namespace OnAirDeck.UnityManager
                 IList<string> bad;
                 try { bad = handler.Validate(root, item.Owner, item); }
                 catch (Exception) { bad = new List<string> { item.Path }; }
+                // The Manager may not move it, but a later handler whose product installer takes over (hand-off) still may:
+                // an old folder with its release manifest and a user's file in it went to the installer before this handler existed.
+                // Only with the installer file at hand; without it the named files (what to move out) say more than "no installer".
+                if (bad.Count > 0 && item.Owner != null && item.Owner.Installer != null && item.Owner.Zip != null)
+                    foreach (var later in Handlers)
+                    {
+                        if (ReferenceEquals(later, handler) || !later.Handles(root, item.Owner, item) || !later.HandsOff(item.Owner, item)) continue;
+                        item.Handler = later;
+                        item.HandOff = true;
+                        return;
+                    }
                 foreach (var path in bad) item.Unmatched.Add(path);
                 item.Unmatched.Sort(StringComparer.Ordinal);
                 item.Blocked = item.Unmatched.Count > 0;

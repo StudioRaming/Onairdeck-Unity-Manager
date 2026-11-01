@@ -190,6 +190,8 @@ namespace OnAirDeck.UnityManager
                 if (willInstall != null) willInstall(version.package_name, version.package_version);
                 var report = await PackageInstallService.InstallAsync(token, version, OnWorkProgress, _workCancel.Token, _licenses, true, LegacyInstallDialog.Confirm);
                 installed = true;
+                // Kept at once, before any later await: a reload there would skip the finally and leave an undo bar for a done switch.
+                KeepSwitch(vccMove);
                 _lastFailure.Remove(entry.Key);
                 SessionState.EraseString(PackageInstallService.ReportKey);
                 _focusPackage = "";

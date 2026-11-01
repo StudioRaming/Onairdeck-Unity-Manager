@@ -154,7 +154,12 @@ namespace OnAirDeck.UnityManager
                 var queue = _batch;
                 queue.Changed -= Repaint;
                 ReportBatchFailures(queue, _batchKeys);
-                if (vccMove != null && !AnyDone(queue, items, vccMove.Packages)) UndoSwitch(vccMove);
+                // Something it moved got the Manager's copy: the switch is final. Nothing did: the entries go back.
+                if (vccMove != null)
+                {
+                    if (AnyDone(queue, items, vccMove.Packages)) KeepSwitch(vccMove);
+                    else UndoSwitch(vccMove);
+                }
                 // Each item: finished, or why not and what to do next ("0 finished, 2 failed" alone told nothing).
                 var lines = InstallResultText.Lines(ManagerText.Language, queue.Results, names);
                 var failedKeys = new HashSet<string>();

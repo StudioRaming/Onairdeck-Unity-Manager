@@ -187,6 +187,13 @@ internal static class OverwriteChecks
         Equal(before, Directory.GetFiles(project, "*", SearchOption.AllDirectories).Length);
         var ko = LegacyInstallText.BlockedBody(0, LegacyInstall.Detect(project, CoreProbe()).BlockedItems());
         Require(ko.Contains("위 파일은 직접 만들었거나 고친 파일이라 그대로 두었어요."), ko);
+        // Review r1 M1: the same folder with the product installer at hand still goes to the installer (as it did before this handler).
+        var withInstaller = CoreProbe();
+        withInstaller[0].Installer = new LegacyInstallerFile { VersionId = "v-installer", FileName = "MingToon_Installer.unitypackage", Size = 1 };
+        withInstaller[0].Zip = new LegacyInstallerFile { VersionId = "v-zip", FileName = "com.studioraming.mingtoon-0.1.15.zip", Size = 1 };
+        var handed = LegacyInstall.Detect(project, withInstaller).Items.Single();
+        Require(handed.HandOff && !handed.Blocked && handed.Handler is InstallerHandoffHandler, "user file + installer: not handed off");
+        Equal(0, handed.Unmatched.Count);
 
         // An edited shipped file.
         project = BoothProject();

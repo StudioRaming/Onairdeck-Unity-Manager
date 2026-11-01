@@ -75,6 +75,17 @@ namespace OnAirDeck.UnityManager
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not put the VCC entries back: " + e.Message); }
         }
 
+        /// <summary>
+        /// The install after <see cref="SwitchFromVcc"/> happened: the switch is final (the user already said yes to it), so no undo bar is
+        /// left whose Undo would hand MingToon back to VCC (owner decision 2026-10-31: no more MingToon updates through VCC).
+        /// </summary>
+        private void KeepSwitch(VpmMove move)
+        {
+            if (move == null) return;
+            try { VpmMigration.Keep(move); }
+            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not keep the move from VCC: " + e.Message); }
+        }
+
         // ---------- add-ons wait for their core ----------
 
         /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
