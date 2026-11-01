@@ -152,6 +152,126 @@ namespace OnAirDeck.UnityManager.EditModeTests
             Assert.AreEqual("0.1.15", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, Urp));
         }
 
+        // ------------------------------------------------------------ MingToon Core, then Ming Light Controller (a file add-on)
+
+        private const string Mlc = "73f4e203-ffd0-4e88-9b78-dc116fd74057";   // OnAirDeckConfig.CoreAddonLicenses
+        private const string MlcName = "QA Ming Light Controller";
+        private const string MlcFile = "MingLightController-readme.txt";
+
+        /// <summary>Owner rule 2026-11-01: Core and MLC picked together install the core first, then MLC, in one run.</summary>
+        [UnityTest]
+        public IEnumerator Batch_CoreAndMlc_InstallsTheCoreFirst_ThenMlc()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _server.AddFile("mv-1", MlcFile, Encoding.UTF8.GetBytes("Ming Light Controller test file\n"));
+            try
+            {
+                var queue = new BatchQueue(CoreThenMlc(true));
+                yield return Await(BatchActions.RunAsync(queue), 180);
+                var text = InstallResultText.Summary(0, InstallResultText.Lines(0, queue.Results, new[] { "MingToon Core", MlcName }));
+                Assert.AreEqual(2, queue.DoneCount, text);
+                CollectionAssert.AreEqual(new[] { "lv:cv-115", "lv:mv-1" }, _server.DownloadItems(), "the core first, then MLC");
+                Assert.AreEqual("0.1.15", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, Core));
+                Assert.IsTrue(File.Exists(Abs(Installer.ProductFolder(MlcName) + "/" + MlcFile)), "MLC's file is not in");
+            }
+            finally
+            {
+                RemoveMlc();
+            }
+        }
+
+        /// <summary>MLC alone without the core: nothing is downloaded and the row says why (not "0 finished, 1 failed" alone).</summary>
+        [UnityTest]
+        public IEnumerator Batch_MlcWithoutTheCore_DownloadsNothing_AndSaysWhy()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _server.AddFile("mv-1", MlcFile, Encoding.UTF8.GetBytes("Ming Light Controller test file\n"));
+            try
+            {
+                var queue = new BatchQueue(CoreThenMlc(false));
+                yield return Await(BatchActions.RunAsync(queue), 60);
+                var lines = InstallResultText.Lines(0, queue.Results, new[] { MlcName });
+                Assert.AreEqual(BatchStatus.Failed, queue.Results[0].Status);
+                Assert.IsInstanceOf<AddonNeedsCoreException>(queue.Results[0].Error);
+                StringAssert.Contains("MingToon Core가 이 프로젝트에 없어서 설치하지 않았어요.", InstallResultText.Summary(0, lines));
+                Assert.AreEqual(0, _server.DownloadItems().Length, "something was downloaded");
+            }
+            finally
+            {
+                RemoveMlc();
+            }
+        }
+
+        /// <summary>
+        /// A run of Core + MLC cut by a script reload after the core: only the SessionState record is left (what the window wrote before the
+        /// core). Read back from SessionState alone, MLC is due because the core is in, and installs; the record is then gone.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Reload_AfterTheCore_TheRecordedMlcInstallsFromSessionState()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            _server.AddFile("mv-1", MlcFile, Encoding.UTF8.GetBytes("Ming Light Controller test file\n"));
+            var oldRecord = SessionState.GetString(ReloadCarry.PendingAddonsKey, "");
+            try
+            {
+                SessionState.SetString(ReloadCarry.PendingAddonsKey, ReloadCarry.AddAddon("", new PendingAddon
+                {
+                    AddonKey = "license:" + Mlc, LicenseId = Mlc, Core = Core, Name = MlcName, SinceUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                }));
+                // The run: the core only, then it "ends in a reload" (no MLC step, nothing in memory carries over).
+                var first = new BatchQueue(BatchActions.InstallAll(Token(), new List<LicenseVersionEntry> { Version("cv-115", Core, "0.1.15") }, MlcLicenses(), CancellationToken.None, plan => true));
+                yield return Await(BatchActions.RunAsync(first), 180);
+                Assert.AreEqual(1, first.DoneCount);
+                first = null;
+
+                var install = new List<PendingAddon>();
+                var missing = new List<PendingAddon>();
+                ReloadCarry.Split(ReloadCarry.ParseAddons(SessionState.GetString(ReloadCarry.PendingAddonsKey, "")), DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    core => CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core), install, missing);
+                Assert.AreEqual(0, missing.Count);
+                Assert.AreEqual(1, install.Count, "MLC is not due after the reload");
+                SessionState.SetString(ReloadCarry.PendingAddonsKey, ReloadCarry.RemoveAddon(SessionState.GetString(ReloadCarry.PendingAddonsKey, ""), install[0].AddonKey));
+                var license = Array.Find(MlcLicenses(), l => l.license_id == install[0].LicenseId);
+                var second = new BatchQueue(new List<BatchItem> { BatchActions.InstallFile(Token(), license, license.versions[0], MlcLicenses()) });
+                yield return Await(BatchActions.RunAsync(second), 120);
+                Assert.AreEqual(1, second.DoneCount, InstallResultText.Summary(0, InstallResultText.Lines(0, second.Results, null)));
+                CollectionAssert.AreEqual(new[] { "lv:cv-115", "lv:mv-1" }, _server.DownloadItems());
+                Assert.IsTrue(File.Exists(Abs(Installer.ProductFolder(MlcName) + "/" + MlcFile)), "MLC's file is not in");
+                Assert.AreEqual("", SessionState.GetString(ReloadCarry.PendingAddonsKey, ""), "the record is still there");
+            }
+            finally
+            {
+                SessionState.SetString(ReloadCarry.PendingAddonsKey, oldRecord);
+                RemoveMlc();
+            }
+        }
+
+        private List<BatchItem> CoreThenMlc(bool withCore)
+        {
+            var licenses = MlcLicenses();
+            var items = new List<BatchItem>();
+            if (withCore) items.AddRange(BatchActions.InstallAll(Token(), new List<LicenseVersionEntry> { Version("cv-115", Core, "0.1.15") }, licenses, CancellationToken.None, plan => true));
+            items.Add(BatchActions.InstallFile(Token(), licenses[1], licenses[1].versions[0], licenses));
+            return items;
+        }
+
+        private static LicenseEntry[] MlcLicenses()
+        {
+            var file = new LicenseVersionEntry { version_id = "mv-1", version_label = "1.0.0", file_name = MlcFile, released_at = "2026-11-01T00:00:00.000Z" };
+            return new[]
+            {
+                new LicenseEntry { license_id = "l-core", name = "MingToon Core", rights = new string[0], versions = new[] { Version("cv-115", Core, "0.1.15") } },
+                new LicenseEntry { license_id = Mlc, name = MlcName, rights = new string[0], versions = new[] { file } }
+            };
+        }
+
+        private static void RemoveMlc()
+        {
+            var folder = Abs(Installer.ProductFolder(MlcName));
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            if (File.Exists(folder + ".meta")) File.Delete(folder + ".meta");
+        }
+
         // ------------------------------------------------------------ helpers
 
         private static string Abs(string relative)

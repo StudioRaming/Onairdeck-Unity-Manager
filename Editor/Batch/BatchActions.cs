@@ -36,6 +36,34 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// A license version that is a file, not a package (Ming Light Controller's .unitypackage), placed the way a click places it. An
+        /// add-on of a core (CoreAddons) runs only when its core is here by then (installed earlier in the run or before): otherwise it fails
+        /// with the reason (AddonNeedsCoreException) and nothing is downloaded.
+        /// </summary>
+        public static BatchItem InstallFile(string sessionToken, LicenseEntry license, LicenseVersionEntry version, LicenseEntry[] licenses,
+            CancellationToken cancel = default(CancellationToken))
+        {
+            return new BatchItem
+            {
+                Name = FileItemName(version),
+                Version = version.version_label ?? "",
+                Run = async progress =>
+                {
+                    var core = CoreAddons.CoreOf("", license != null ? license.license_id : "");
+                    if (core.Length > 0 && !CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core))
+                        throw new AddonNeedsCoreException(core, "Needs " + CoreAddons.CoreName(core) + ", which is not installed in this project; nothing was installed.");
+                    return (object)await LicenseVersionInstall.InstallAsync(sessionToken, license, version, licenses, progress, cancel, false, true);
+                }
+            };
+        }
+
+        /// <summary>The item name of <see cref="InstallFile"/> ("file:&lt;version id&gt;"): never a package name, so package lookups do not match it.</summary>
+        public static string FileItemName(LicenseVersionEntry version)
+        {
+            return "file:" + (version != null ? version.version_id : "");
+        }
+
+        /// <summary>
         /// Contract v9 for a batch: one combined dialog before it starts lists every item that has an old Assets install
         /// (config table and markers; the zip-based rules need the download, so they cannot be listed yet). "Do not
         /// install" leaves only those items out. An item that turns up another old install after its download is not
@@ -85,8 +113,10 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Runs the queue with script reloads held back. Every install ends with a refresh, and a reload in the middle
         /// would drop the rest of the queue; the reload happens once when the batch ends (or is cancelled).
+        /// <paramref name="beforeUnlock"/> runs while reloads are still held: the code awaiting this task may never resume (the reload can
+        /// come first), so whatever must happen after the batch (its summary, the per-item reasons) happens there.
         /// </summary>
-        public static async Task RunAsync(BatchQueue queue)
+        public static async Task RunAsync(BatchQueue queue, Action beforeUnlock = null)
         {
             EditorApplication.LockReloadAssemblies();
             try
@@ -95,6 +125,8 @@ namespace OnAirDeck.UnityManager
             }
             finally
             {
+                try { if (beforeUnlock != null) beforeUnlock(); }
+                catch (Exception e) { UnityEngine.Debug.LogWarning(OnAirDeckConfig.LogPrefix + "After the batch: " + e.Message); }
                 EditorApplication.UnlockReloadAssemblies();
             }
         }

@@ -91,10 +91,7 @@ namespace OnAirDeck.UnityManager
         /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
         private static bool CoreInstalled(string core)
         {
-            var root = PackageInstallService.ProjectRoot;
-            if (!string.IsNullOrEmpty(InstalledPackages.InstalledVersion(root, core))) return true;
-            string legacy;
-            return OnAirDeckConfig.LegacyAssetFolders.TryGetValue(core, out legacy) && Directory.Exists(Path.Combine(root, legacy.Replace('/', Path.DirectorySeparatorChar)));
+            return CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core);
         }
 
         /// <summary>The list row that installs <paramref name="core"/>, or null.</summary>
@@ -154,12 +151,118 @@ namespace OnAirDeck.UnityManager
                 return;
             }
             var coreVersion = coreEntry != null ? OfferedPackage(coreEntry) : null;
-            if (coreVersion == null) return;
-            var outcome = await DoInstallAsync(coreEntry, coreVersion, true, null);
-            // A script reload after the core's refresh can end this method here; the add-on's button is then a plain install.
-            if (outcome.Report != ImportReport.Done) return;
             var file = OfferedFileVersion(addon);
-            if (file != null) await DoInstallFileAsync(addon, file, true);
+            if (coreVersion == null || file == null) return;
+            // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
+            // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
+            // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.
+            var core = CoreAddons.CoreOf(addon);
+            _addonLive.Add(addon.Key);
+            SavePendingAddon(new PendingAddon { AddonKey = addon.Key, LicenseId = addon.LicenseId, Core = core, Name = addon.Name, SinceUnix = NowUnix() });
+            var keepRecord = false;
+            EditorApplication.LockReloadAssemblies();
+            try
+            {
+                var outcome = await DoInstallAsync(coreEntry, coreVersion, true, null);
+                if (outcome.Report != ImportReport.Done)
+                {
+                    // A hand-off puts the core in after the next reload: the add-on follows then. Anything else: the core's row says why.
+                    keepRecord = outcome.Report == ImportReport.Waiting;
+                    if (!keepRecord) _lastFailure[addon.Key] = ManagerText.CoreNotIn.Replace("{a}", addon.Name).Replace("{c}", CoreAddons.CoreName(core));
+                    return;
+                }
+                RemovePendingAddon(addon.Key);
+                await DoInstallFileAsync(addon, file, true);
+            }
+            finally
+            {
+                if (!keepRecord) RemovePendingAddon(addon.Key);
+                _addonLive.Remove(addon.Key);
+                EditorApplication.UnlockReloadAssemblies();
+            }
+        }
+
+        // ---------- what a script reload must not drop ----------
+
+        private const string PendingAddonsKey = ReloadCarry.PendingAddonsKey;
+        private const string BatchRowsKey = ReloadCarry.BatchRowsKey;
+        /// <summary>Add-ons a run in this domain is still handling: not resumed from the record (after a reload the set is empty).</summary>
+        [NonSerialized] private readonly HashSet<string> _addonLive = new HashSet<string>();
+
+        private static long NowUnix()
+        {
+            return DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        }
+
+        private static void SavePendingAddon(PendingAddon addon)
+        {
+            SessionState.SetString(PendingAddonsKey, ReloadCarry.AddAddon(SessionState.GetString(PendingAddonsKey, ""), addon));
+        }
+
+        private static void RemovePendingAddon(string addonKey)
+        {
+            var text = SessionState.GetString(PendingAddonsKey, "");
+            if (text.Length == 0) return;
+            text = ReloadCarry.RemoveAddon(text, addonKey);
+            if (text.Length == 0) SessionState.EraseString(PendingAddonsKey);
+            else SessionState.SetString(PendingAddonsKey, text);
+        }
+
+        /// <summary>
+        /// The list is loaded and nothing runs: an add-on that a run (core first, then the add-on) recorded and did not reach installs now
+        /// when its core is here, or says why not when the core is not. One at a time; the next one follows the refresh of this one.
+        /// </summary>
+        private void ResumePendingAddons()
+        {
+            if (_session == null || Busy || _entries == null) return;
+            var text = SessionState.GetString(PendingAddonsKey, "");
+            if (text.Length == 0) return;
+            var records = ReloadCarry.ParseAddons(text).FindAll(a => !_addonLive.Contains(a.AddonKey));
+            if (records.Count == 0) return;
+            var install = new List<PendingAddon>();
+            var missing = new List<PendingAddon>();
+            ReloadCarry.Split(records, NowUnix(), CoreInstalled, install, missing);
+            foreach (var record in records) if (!install.Contains(record)) RemovePendingAddon(record.AddonKey);
+            foreach (var record in missing)
+            {
+                var reason = ManagerText.CoreNotIn.Replace("{a}", record.Name).Replace("{c}", CoreAddons.CoreName(record.Core));
+                _lastFailure[record.AddonKey] = reason;
+                SetMessage(reason, MessageType.Warning);
+            }
+            foreach (var record in install)
+            {
+                RemovePendingAddon(record.AddonKey);
+                var entry = FindEntry(record.AddonKey) ?? (_entries.Find(e => e.IsLicense && e.HoldsLicense(record.LicenseId)));
+                var file = entry != null ? OfferedFileVersion(entry) : null;
+                if (file == null) continue;
+                Debug.Log(OnAirDeckConfig.LogPrefix + ManagerText.AddonResume.Replace("{a}", entry.Name).Replace("{c}", CoreAddons.CoreName(record.Core)));
+                ResumeAddonInstall(entry, file);
+                return;
+            }
+        }
+
+        private async void ResumeAddonInstall(CatalogEntry entry, LicenseVersionEntry file)
+        {
+            var outcome = await DoInstallFileAsync(entry, file, true);
+            if (outcome.Report == ImportReport.Done) _lastFailure.Remove(entry.Key);
+        }
+
+        /// <summary>The row reasons and retry selection of the batch that ended just before this reload.</summary>
+        private void RestoreBatchRows()
+        {
+            var text = SessionState.GetString(BatchRowsKey, "");
+            if (text.Length == 0) return;
+            SessionState.EraseString(BatchRowsKey);
+            var retry = new List<string>();
+            var rows = new List<CarriedRow>();
+            if (!ReloadCarry.ParseRows(text, NowUnix(), retry, rows)) return;
+            foreach (var row in rows)
+            {
+                if (row.Cleanup) _cleanupRequired[row.Key] = row.Text;
+                else _lastFailure[row.Key] = row.Text;
+            }
+            _retryKeys = new HashSet<string>(retry);
+            foreach (var key in retry) _selected.Add(key);
         }
     }
 }

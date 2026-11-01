@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace OnAirDeck.UnityManager
 {
@@ -48,6 +49,15 @@ namespace OnAirDeck.UnityManager
         {
             string name;
             return core != null && OnAirDeckConfig.CorePackages.TryGetValue(core, out name) ? name : core ?? "";
+        }
+
+        /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
+        public static bool CoreIsHere(string projectRoot, string core)
+        {
+            if (string.IsNullOrEmpty(core)) return true;
+            if (!string.IsNullOrEmpty(InstalledPackages.InstalledVersion(projectRoot, core))) return true;
+            string legacy;
+            return OnAirDeckConfig.LegacyAssetFolders.TryGetValue(core, out legacy) && Directory.Exists(Path.Combine(projectRoot, legacy.Replace('/', Path.DirectorySeparatorChar)));
         }
 
         /// <summary>The button state of an add-on. <paramref name="coreInstalled"/>: the core is in Packages/ (or its old Assets folder is there).</summary>

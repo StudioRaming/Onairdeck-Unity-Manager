@@ -67,6 +67,7 @@
     <Compile Include="../../Editor/Catalog/UpdateCheckLogic.cs" />
     <Compile Include="../../Editor/Batch/BatchQueue.cs" />
     <Compile Include="../../Editor/Batch/InstallResultText.cs" />
+    <Compile Include="../../Editor/Batch/ReloadCarry.cs" />
     <Compile Include="../../Editor/Packages/ReleaseManifestHandler.cs" />
     <Compile Include="../../Editor/Catalog/CoreAddons.cs" />
     <Compile Include="../../Editor/Api/DeviceIdentityCore.cs" />

@@ -19,7 +19,9 @@ namespace OnAirDeck.UnityManager
         private static bool CanBatch(CatalogEntry entry)
         {
             if (entry.Kind == FavoriteKind.Purchase) return entry.Purchase != null && entry.Purchase.CanDownload;
-            return OfferedPackage(entry) != null;
+            if (OfferedPackage(entry) != null) return true;
+            // A file add-on of a core (Ming Light Controller): selectable with its core, so one run installs the core, then the add-on.
+            return entry.License != null && CoreAddons.CoreOf(entry).Length > 0 && OfferedFileVersion(entry) != null;
         }
 
         private float BatchBarHeightNow()
@@ -92,9 +94,11 @@ namespace OnAirDeck.UnityManager
             _batchCancel = new CancellationTokenSource();
             var cancel = _batchCancel.Token;
             var items = new List<BatchItem>();
+            var fileItems = new List<BatchItem>();
             var keyOf = new Dictionary<string, string>();
             var nameOf = new Dictionary<string, string>();
             var versions = new List<LicenseVersionEntry>();
+            var waiting = new List<PendingAddon>();
             // MingToon Core before its add-ons (owner rule 2026-11-01); everything else keeps the list order.
             picked = CoreAddons.OrderCoreFirst(picked, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId);
             foreach (var entry in picked)
@@ -105,14 +109,24 @@ namespace OnAirDeck.UnityManager
                     items.Add(item);
                     keyOf[item.Name] = entry.Key;
                     nameOf[item.Name] = entry.Name;
+                    continue;
                 }
-                else
+                var version = OfferedPackage(entry);
+                if (version != null)
                 {
-                    var version = OfferedPackage(entry);
                     versions.Add(version);
                     keyOf[version.package_name + " " + version.package_version] = entry.Key;
                     nameOf[version.package_name + " " + version.package_version] = entry.Name;
+                    continue;
                 }
+                // A file add-on of a core (MLC): after every package, so the core of this run is in when it starts.
+                var file = OfferedFileVersion(entry);
+                if (file == null || entry.License == null) continue;
+                var fileItem = BatchActions.InstallFile(token, entry.License, file, _licenses, cancel);
+                fileItems.Add(fileItem);
+                keyOf[fileItem.Name] = entry.Key;
+                nameOf[fileItem.Name] = entry.Name;
+                waiting.Add(new PendingAddon { AddonKey = entry.Key, LicenseId = entry.LicenseId, Core = CoreAddons.CoreOf(entry), Name = entry.Name, SinceUnix = NowUnix() });
             }
             // MingToon from VCC or the BOOTH installer: one question for the whole batch (undone below when none of them installed).
             VpmMove vccMove = null;
@@ -123,6 +137,7 @@ namespace OnAirDeck.UnityManager
                 return;
             }
             if (versions.Count > 0) items.AddRange(BatchActions.InstallAll(token, versions, _licenses, cancel, LegacyInstallDialog.ConfirmBatch));
+            items.AddRange(fileItems);
             if (items.Count == 0)
             {
                 UndoSwitch(vccMove);
@@ -137,12 +152,24 @@ namespace OnAirDeck.UnityManager
                 _batchKeys.Add(keyOf.TryGetValue(item.Name, out key) ? key : "");
                 names.Add(nameOf.TryGetValue(item.Name, out name) ? name : item.Name);
             }
+            // The file add-ons wait for their core in SessionState too: when a reload ends this run before they ran, the window installs
+            // them once the core is in (ResumePendingAddons). This run removes them when it ends.
+            foreach (var addon in waiting) { _addonLive.Add(addon.AddonKey); SavePendingAddon(addon); }
+            SessionState.EraseString(BatchRowsKey);
             _batch = new BatchQueue(items);
             _batch.Changed += Repaint;
             SetMessage(null, MessageType.None);
+            var finished = false;
+            // Runs while reloads are still held (the code after the await may never run: the reload can come first).
+            Action finish = () =>
+            {
+                if (finished) return;
+                finished = true;
+                FinishBatch(_batch, items, names, vccMove, clearSelection, waiting);
+            };
             try
             {
-                await BatchActions.RunAsync(_batch);
+                await BatchActions.RunAsync(_batch, finish);
             }
             catch (Exception e)
             {
@@ -151,45 +178,66 @@ namespace OnAirDeck.UnityManager
             }
             finally
             {
-                var queue = _batch;
-                queue.Changed -= Repaint;
-                ReportBatchFailures(queue, _batchKeys);
-                // Something it moved got the Manager's copy: the switch is final. Nothing did: the entries go back.
-                if (vccMove != null)
-                {
-                    if (AnyDone(queue, items, vccMove.Packages)) KeepSwitch(vccMove);
-                    else UndoSwitch(vccMove);
-                }
-                // Each item: finished, or why not and what to do next ("0 finished, 2 failed" alone told nothing).
-                var lines = InstallResultText.Lines(ManagerText.Language, queue.Results, names);
-                var failedKeys = new HashSet<string>();
-                for (var i = 0; i < queue.Results.Count; i++)
-                {
-                    var key = i < _batchKeys.Count ? _batchKeys[i] : "";
-                    if (key.Length == 0) continue;
-                    var result = queue.Results[i];
-                    if (result.Status == BatchStatus.Done) { _lastFailure.Remove(key); _cleanupRequired.Remove(key); continue; }
-                    if (result.Status != BatchStatus.Failed) continue;
-                    failedKeys.Add(key);
-                    if (result.Error is LegacyCleanupRequiredException) _cleanupRequired[key] = result.Error.Message;
-                    else RememberFailure(key, result.Error);
-                }
-                if (queue.SessionExpired) OnSessionExpired("");
-                else SetMessage(InstallResultText.Summary(ManagerText.Language, lines), queue.Results.Count == queue.DoneCount ? MessageType.Info : MessageType.Warning);
-                foreach (var line in lines)
-                    if (line.Status == BatchStatus.Failed) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Batch item " + line.Name + " failed: " + line.Reason);
-                // A second press retries only the failed items: they stay selected, the rest is cleared.
-                if (clearSelection || failedKeys.Count > 0) _selected.Clear();
-                _retryKeys = new HashSet<string>();
-                foreach (var key in failedKeys)
-                {
-                    var entry = _entries != null ? _entries.Find(x => x.Key == key) : null;
-                    if (entry != null && CanBatch(entry)) { _selected.Add(key); _retryKeys.Add(key); }
-                }
-                if (_batchCancel != null) { _batchCancel.Dispose(); _batchCancel = null; }
-                _batch = null;
-                RefreshInstalledState();
+                finish();
             }
+        }
+
+        /// <summary>
+        /// After a batch: each item finished, or why not and what to do next ("0 finished, 2 failed" alone told nothing); the failed items
+        /// stay selected for a retry; the VCC switch is kept or undone. Row reasons and the retry selection also go to SessionState, because
+        /// the reload that follows a batch clears the window's dictionaries.
+        /// </summary>
+        private void FinishBatch(BatchQueue queue, List<BatchItem> items, List<string> names, VpmMove vccMove, bool clearSelection, List<PendingAddon> waiting)
+        {
+            if (queue == null) return;
+            queue.Changed -= Repaint;
+            foreach (var addon in waiting) { _addonLive.Remove(addon.AddonKey); RemovePendingAddon(addon.AddonKey); }
+            ReportBatchFailures(queue, _batchKeys);
+            // Something it moved got the Manager's copy: the switch is final. Nothing did: the entries go back.
+            if (vccMove != null)
+            {
+                if (AnyDone(queue, items, vccMove.Packages)) KeepSwitch(vccMove);
+                else UndoSwitch(vccMove);
+            }
+            var lines = InstallResultText.Lines(ManagerText.Language, queue.Results, names);
+            var failedKeys = new HashSet<string>();
+            var carried = new List<CarriedRow>();
+            for (var i = 0; i < queue.Results.Count; i++)
+            {
+                var key = i < _batchKeys.Count ? _batchKeys[i] : "";
+                if (key.Length == 0) continue;
+                var result = queue.Results[i];
+                if (result.Status == BatchStatus.Done) { _lastFailure.Remove(key); _cleanupRequired.Remove(key); continue; }
+                if (result.Status != BatchStatus.Failed) continue;
+                failedKeys.Add(key);
+                if (result.Error is LegacyCleanupRequiredException)
+                {
+                    _cleanupRequired[key] = result.Error.Message;
+                    carried.Add(new CarriedRow { Key = key, Cleanup = true, Text = result.Error.Message });
+                }
+                else
+                {
+                    RememberFailure(key, result.Error);
+                    string text;
+                    if (_lastFailure.TryGetValue(key, out text)) carried.Add(new CarriedRow { Key = key, Text = text });
+                }
+            }
+            if (queue.SessionExpired) OnSessionExpired("");
+            else SetMessage(InstallResultText.Summary(ManagerText.Language, lines), queue.Results.Count == queue.DoneCount ? MessageType.Info : MessageType.Warning);
+            foreach (var line in lines)
+                if (line.Status == BatchStatus.Failed) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Batch item " + line.Name + " failed: " + line.Reason);
+            // A second press retries only the failed items: they stay selected, the rest is cleared.
+            if (clearSelection || failedKeys.Count > 0) _selected.Clear();
+            _retryKeys = new HashSet<string>();
+            foreach (var key in failedKeys)
+            {
+                var entry = _entries != null ? _entries.Find(x => x.Key == key) : null;
+                if (entry != null && CanBatch(entry)) { _selected.Add(key); _retryKeys.Add(key); }
+            }
+            if (carried.Count > 0 || _retryKeys.Count > 0) SessionState.SetString(BatchRowsKey, ReloadCarry.FormatRows(NowUnix(), _retryKeys, carried));
+            if (_batchCancel != null) { _batchCancel.Dispose(); _batchCancel = null; }
+            _batch = null;
+            RefreshInstalledState();
         }
 
         /// <summary>True when an item installing one of <paramref name="packages"/> finished (item names are "&lt;package&gt; &lt;version&gt;").</summary>
@@ -199,7 +247,7 @@ namespace OnAirDeck.UnityManager
             {
                 if (queue.Results[i].Status != BatchStatus.Done) continue;
                 foreach (var package in packages)
-                    if (items[i].Name.StartsWith(package, StringComparison.Ordinal)) return true;
+                    if (BatchQueue.ItemIsPackage(items[i].Name, package)) return true;
             }
             return false;
         }

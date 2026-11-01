@@ -33,6 +33,8 @@ internal static class OverwriteChecks
         if (!string.IsNullOrEmpty(realZip)) check("old BOOTH folder: the real MingToon " + Path.GetFileName(realZip) + " unpacked under " + Folder + " proves itself", () => RealZip(realZip));
         check("add-ons: URP (package name) and MLC (license table) need MingToon Core; core first, add-ons last in a run", CoreFirstOrder);
         check("add-ons: blocked state (core missing: install it first when offered, else explain); rows nest under the core", AddonStateAndNest);
+        check("reload: Core + MLC cut after the core; from the SessionState text alone MLC installs once the core is in, else says why; row reasons come back", AddonSurvivesReload);
+        check("batch: an item counts for exactly its package (URP is not the core); a missing core is a plain reason", ItemNamesExact);
     }
 
     // ---------- results ----------
@@ -285,6 +287,65 @@ internal static class OverwriteChecks
         var alone = CoreAddons.Nest(new List<ListLine> { row("URP Addon", Urp, "u"), row("MaskMaker", "", "m") });
         Equal("URP Addon|MaskMaker", string.Join("|", alone.Select(l => l.Entry.Name)));
         Require(alone.All(l => !l.Child));
+    }
+
+    // ---------- what a script reload must not drop ----------
+
+    // Core + MLC in one run, the run cut by a reload after the core: only the SessionState text is left. After the "reload" a fresh parse
+    // decides: core in = MLC installs; core not in = MLC reported, never silently gone; a record from long ago starts nothing.
+    private static void AddonSurvivesReload()
+    {
+        var now = 1793520000L;
+        var text = ReloadCarry.AddAddon("", new PendingAddon { AddonKey = "license:mlc", LicenseId = Mlc, Core = Core, Name = "Ming\tLight Controller", SinceUnix = now });
+        text = ReloadCarry.AddAddon(text, new PendingAddon { AddonKey = "license:mlc", LicenseId = Mlc, Core = Core, Name = "Ming Light Controller", SinceUnix = now + 5 });
+        text = ReloadCarry.AddAddon(text, new PendingAddon { AddonKey = "license:old", LicenseId = "x", Core = Core, Name = "Old", SinceUnix = now - ReloadCarry.MaxAgeSeconds - 10 });
+        var parsed = ReloadCarry.ParseAddons(text);   // the "reload": nothing but the text
+        Equal(2, parsed.Count);
+        Equal("Ming Light Controller", parsed.Single(a => a.AddonKey == "license:mlc").Name);
+
+        var project = NewProject();
+        var install = new List<PendingAddon>();
+        var missing = new List<PendingAddon>();
+        ReloadCarry.Split(parsed, now + 60, core => CoreAddons.CoreIsHere(project, core), install, missing);
+        Equal(0, install.Count);
+        Equal("license:mlc", missing.Single().AddonKey);   // core not in: said, not dropped silently; the old one is dropped
+
+        Put(project, "Packages/" + Core + "/package.json", "{\"name\":\"" + Core + "\",\"version\":\"0.1.15\"}");
+        install.Clear(); missing.Clear();
+        ReloadCarry.Split(parsed, now + 60, core => CoreAddons.CoreIsHere(project, core), install, missing);
+        Equal("license:mlc", install.Single().AddonKey);
+        Equal(Mlc, install[0].LicenseId);
+        Equal(0, missing.Count);
+        Equal("", ReloadCarry.RemoveAddon(ReloadCarry.RemoveAddon(text, "license:mlc"), "license:old"));
+
+        // The batch's row reasons (multi-line, tabs) and the retry selection come back once, not from long ago.
+        var rows = new List<CarriedRow>
+        {
+            new CarriedRow { Key = "license:core", Cleanup = true, Text = "MingToon Core: 이전 설치 정리 필요\nAssets/StudioRaming/MingToon/Presets/Mine.asset\t(직접 만든 파일)" },
+            new CarriedRow { Key = "license:mlc", Text = "MingToon Core가 이 프로젝트에 없어서 설치하지 않았어요.\\ 다음: ..." }
+        };
+        var carried = ReloadCarry.FormatRows(now, new[] { "license:core", "license:mlc" }, rows);
+        var retry = new List<string>();
+        var back = new List<CarriedRow>();
+        Require(ReloadCarry.ParseRows(carried, now + 30, retry, back));
+        Equal("license:core,license:mlc", string.Join(",", retry));
+        Equal(2, back.Count);
+        Require(back[0].Cleanup && !back[1].Cleanup);
+        Equal(rows[0].Text, back[0].Text);
+        Equal(rows[1].Text, back[1].Text);
+        Require(!ReloadCarry.ParseRows(carried, now + ReloadCarry.RowsMaxAgeSeconds + 1, new List<string>(), new List<CarriedRow>()), "stale rows restored");
+    }
+
+    // Review r1 m5: the VCC switch is kept when something it moved got the Manager's copy; the URP add-on's item is not the core's.
+    private static void ItemNamesExact()
+    {
+        Require(BatchQueue.ItemIsPackage(Core + " 0.1.15", Core));
+        Require(!BatchQueue.ItemIsPackage(Urp + " 0.1.15", Core), "URP counted as the core");
+        Require(BatchQueue.ItemIsPackage(Urp + " 0.1.15", Urp));
+        Require(!BatchQueue.ItemIsPackage("file:v-mlc", Core));
+        var reason = InstallResultText.Reason(0, new AddonNeedsCoreException(Core, "Needs MingToon Core"));
+        Equal("MingToon Core가 이 프로젝트에 없어서 설치하지 않았어요.", reason);
+        Equal(InstallFailureKind.Dependency, InstallResultText.Classify(new AddonNeedsCoreException(Core, "x")));
     }
 
     // ---------- helpers ----------

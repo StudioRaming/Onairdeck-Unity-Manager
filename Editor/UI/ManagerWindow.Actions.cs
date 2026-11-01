@@ -53,6 +53,8 @@ namespace OnAirDeck.UnityManager
         private void BeginWork(string key)
         {
             _workKey = key;
+            // A later install makes the last batch's carried row reasons stale: they are not restored after this one's reload.
+            SessionState.EraseString(BatchRowsKey);
             _progress = 0f;
             _progressLabel = ManagerText.Preparing;
             if (_workCancel != null) _workCancel.Dispose();

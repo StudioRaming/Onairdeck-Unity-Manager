@@ -37,6 +37,16 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal sealed class BatchQueue
     {
+        /// <summary>
+        /// The item installs exactly <paramref name="package"/> (package items are named "&lt;package&gt; &lt;version&gt;"): the URP add-on's
+        /// item "com.studioraming.mingtoon.urp 0.1.15" is not the core's.
+        /// </summary>
+        public static bool ItemIsPackage(string itemName, string package)
+        {
+            if (string.IsNullOrEmpty(itemName) || string.IsNullOrEmpty(package)) return false;
+            return itemName == package || itemName.StartsWith(package + " ", StringComparison.Ordinal);
+        }
+
         private readonly List<BatchItem> _items;
         private readonly List<BatchResult> _results = new List<BatchResult>();
         private TaskCompletionSource<bool> _resume;

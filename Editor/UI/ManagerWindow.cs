@@ -132,6 +132,7 @@ namespace OnAirDeck.UnityManager
             PurchaseWatcher.SetWindowOpen(true);
             ImportRequestWatcher.SetWindowOpen(true);
             OnEnablePackages();
+            RestoreBatchRows();
             HookHandoff();
             OnEnableAutoUpdate();
             CheckForUpdate(true);
@@ -301,6 +302,8 @@ namespace OnAirDeck.UnityManager
             }
             _linesDirty = true;
             ApplyPendingSelection();
+            // An add-on whose core a run before a script reload was installing: it follows now that the list is here.
+            if (SessionState.GetString(PendingAddonsKey, "").Length > 0) Defer(ResumePendingAddons);
         }
 
         private void RebuildLines()

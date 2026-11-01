@@ -71,6 +71,12 @@ namespace OnAirDeck.UnityManager
         public static string Reason(int language, Exception e)
         {
             var kind = Classify(e);
+            var needsCore = e as AddonNeedsCoreException;
+            if (needsCore != null)
+            {
+                var core = CoreAddons.CoreName(needsCore.Core);
+                return Pick(language, core + "가 이 프로젝트에 없어서 설치하지 않았어요.", core + " is not in this project, so nothing was installed.", "このプロジェクトに" + core + "がないため、インストールしませんでした。");
+            }
             switch (kind)
             {
                 case InstallFailureKind.Network:
