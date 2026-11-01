@@ -87,6 +87,8 @@ namespace OnAirDeck.UnityManager
         public bool FavoriteGroup;
         public bool Collapsed;
         public CatalogEntry Entry;
+        /// <summary>An add-on row drawn under its core (CoreAddons.Nest).</summary>
+        public bool Child;
     }
 
     /// <summary>Pure list logic of the window: merging, status, search, filter, sort and grouping (no Unity types, so it can be checked headless).</summary>

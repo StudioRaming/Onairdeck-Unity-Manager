@@ -145,7 +145,7 @@ namespace OnAirDeck.UnityManager
             return result;
         }
 
-        private static bool Matches(string file, string relative, IDictionary<string, string> inventory)
+        internal static bool Matches(string file, string relative, IDictionary<string, string> inventory)
         {
             string hash;
             if (!inventory.TryGetValue(relative, out hash)) return false;

@@ -21,7 +21,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private CancellationTokenSource _workCancel;
         [NonSerialized] private readonly Dictionary<string, string> _doneFolder = new Dictionary<string, string>();
         [NonSerialized] private readonly Dictionary<string, string> _depProblem = new Dictionary<string, string>();
-        [NonSerialized] private readonly HashSet<string> _cleanupRequired = new HashSet<string>();
+        /// <summary>Entry key to why its old install is in the way (the exception's text, written for the user).</summary>
+        [NonSerialized] private readonly Dictionary<string, string> _cleanupRequired = new Dictionary<string, string>();
 
         private bool Busy
         {
@@ -52,6 +53,8 @@ namespace OnAirDeck.UnityManager
         private void BeginWork(string key)
         {
             _workKey = key;
+            // A later install makes the last batch's carried row reasons stale: they are not restored after this one's reload.
+            SessionState.EraseString(BatchRowsKey);
             _progress = 0f;
             _progressLabel = ManagerText.Preparing;
             if (_workCancel != null) _workCancel.Dispose();
@@ -94,6 +97,7 @@ namespace OnAirDeck.UnityManager
         private void PrimaryAction(CatalogEntry entry)
         {
             if (entry.Kind == FavoriteKind.Purchase) DoDownload(entry);
+            else if (InstallAddonCoreFirst(entry)) { }
             else
             {
                 var version = OfferedPackage(entry);
@@ -174,15 +178,23 @@ namespace OnAirDeck.UnityManager
             var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
             var message = text.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
             if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
+            // MingToon from VCC or the BOOTH installer: one question, then its vpm-manifest entries go (undone if the install fails).
+            VpmMove vccMove;
+            if (!SwitchFromVcc(new[] { version.package_name }, out vccMove)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);
             _cleanupRequired.Remove(entry.Key);
             _depProblem.Remove(entry.Key);
             var token = _session.token;
+            var installed = false;
             try
             {
                 if (willInstall != null) willInstall(version.package_name, version.package_version);
                 var report = await PackageInstallService.InstallAsync(token, version, OnWorkProgress, _workCancel.Token, _licenses, true, LegacyInstallDialog.Confirm);
+                installed = true;
+                // Kept at once, before any later await: a reload there would skip the finally and leave an undo bar for a done switch.
+                KeepSwitch(vccMove);
+                _lastFailure.Remove(entry.Key);
                 SessionState.EraseString(PackageInstallService.ReportKey);
                 _focusPackage = "";
                 SessionState.EraseString(FocusKey);
@@ -200,16 +212,19 @@ namespace OnAirDeck.UnityManager
                 SetMessage(ManagerText.Cancelled, MessageType.None);
                 return ImportOutcome.Failed("cancelled");
             }
-            catch (LegacyCleanupRequiredException)
+            catch (LegacyCleanupRequiredException e)
             {
-                // Not an error: the item waits for a click that accepts the clean-up.
-                _cleanupRequired.Add(entry.Key);
+                // Not an error report, but never silent: the reason (which folder, which files, what to do) shows on the row and in the bar.
+                _cleanupRequired[entry.Key] = e.Message;
+                SetMessage(e.Message, MessageType.Warning);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Install of " + version.package_name + " " + version.package_version + " stopped: " + e.Message);
                 return ImportOutcome.Failed("cleanup_required");
             }
             catch (DependencyUnavailableException e)
             {
                 if (e.Kind == DependencyErrorKind.GetOnAtelierFirst) _depProblem[entry.Key] = e.PackageName ?? "";
                 else FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
+                RememberFailure(entry.Key, e);
                 return ImportOutcome.Failed("dependency_missing");
             }
             catch (SessionExpiredException e)
@@ -220,11 +235,13 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 FailedInstall(ProductIdOf(entry), entry.Name, version.package_version, e);
+                RememberFailure(entry.Key, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Package install failed: " + e.Message);
                 return ImportOutcome.Failed(IsNoticeRefusal(e) ? "device_limit" : "install_failed");
             }
             finally
             {
+                if (!installed) UndoSwitch(vccMove);
                 EndWork();
                 RefreshInstalledState();
             }
@@ -239,7 +256,35 @@ namespace OnAirDeck.UnityManager
         /// <param name="confirmed">The import confirm already asked: no second dialog.</param>
         private async Task<ImportOutcome> DoInstallFileAsync(CatalogEntry entry, LicenseVersionEntry version, bool confirmed)
         {
-            if (_session == null || Busy || version == null || entry.License == null) return ImportOutcome.Release();
+            if (_session == null || version == null || entry.License == null) return ImportOutcome.Release();
+            if (Busy)
+            {
+                // Never a silent skip: the click (or the web import) says why nothing started.
+                SetMessage(ManagerText.BusyNotStarted.Replace("{n}", entry.Name), MessageType.Warning);
+                return ImportOutcome.Release();
+            }
+            // Every way in (the row, a version in the history, the one-button import) waits for the core: an add-on without it does not
+            // compile. The core goes first when this account has it, else the reason shows and nothing is downloaded.
+            var core = CoreAddons.CoreOf(entry);
+            if (core.Length > 0 && !CoreInstalled(core))
+            {
+                var coreName = CoreAddons.CoreName(core);
+                var coreEntry = CoreEntry(core);
+                if (coreEntry == null)
+                {
+                    var missing = ManagerText.CoreMissing.Replace("{a}", entry.Name).Replace("{c}", coreName);
+                    _lastFailure[entry.Key] = missing;
+                    SetMessage(missing, MessageType.Warning);
+                    return ImportOutcome.Failed("dependency_missing");
+                }
+                if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+                    ManagerText.BInst, ManagerText.Cancel))
+                {
+                    SetMessage(ManagerText.Declined, MessageType.None);
+                    return ImportOutcome.Declined();
+                }
+                return await InstallCoreThenAddonAsync(entry, coreEntry, version);
+            }
             var label = string.IsNullOrEmpty(version.version_label) ? version.file_name : version.version_label;
             var title = ManagerText.DlgInT.Replace("{n}", entry.Name).Replace("{v}", label);
             // A .unitypackage or loose files overwrite in place; nothing is backed up either way.
@@ -253,6 +298,9 @@ namespace OnAirDeck.UnityManager
             try
             {
                 var summary = await LicenseVersionInstall.InstallAsync(token, entry.License, version, _licenses, OnWorkProgress, _workCancel.Token, false, true);
+                // The files are in: an earlier failure of this row (core missing, a dropped download) is no longer its state.
+                _lastFailure.Remove(entry.Key);
+                _cleanupRequired.Remove(entry.Key);
                 if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkgAuto, MessageType.Info);
                 else
                 {

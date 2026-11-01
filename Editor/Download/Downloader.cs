@@ -47,7 +47,7 @@ namespace OnAirDeck.UnityManager
                 if (!request.Succeeded())
                 {
                     TryDeleteFolder(folder);
-                    throw new Exception("Download of " + safeFileName + " failed: HTTP " + request.responseCode + " " + request.error);
+                    throw new DownloadFailedException("Download of " + safeFileName + " failed: HTTP " + request.responseCode + " " + request.error, request.responseCode);
                 }
                 if (onProgress != null) onProgress(1f);
                 return path;

@@ -284,7 +284,95 @@ namespace OnAirDeck.UnityManager.EditModeTests
             }
         }
 
+        private const string MingCore = "com.studioraming.mingtoon";
+        private const string MlcLicense = "73f4e203-ffd0-4e88-9b78-dc116fd74057";   // OnAirDeckConfig.CoreAddonLicenses
+        private const string MlcFile = "MingLightController-readme.txt";
+
+        /// <summary>
+        /// Review m-a: the one-button import of MLC alone (and the version-history button, the same DoInstallFileAsync) must not put MLC in
+        /// without MingToon Core. The account holds the core too: the core-first question is asked, then the core installs, then MLC.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator AnMlcImport_WithoutTheCoreHere_AsksAndInstallsTheCoreFirst()
+        {
+            NeedsNoMingToon();
+            LogAssert.ignoreFailingMessages = true;
+            _choice = (int)ImportChoice.Import;
+            var asked = new List<string>();
+            CoreFirstAnswer(asked, true);
+            _server.AddFile("cv-1", MingCore + "-0.1.15.zip", PackageZipBytes(MingCore, "0.1.15", null, null));
+            _server.AddFile("mv-1", MlcFile, Encoding.UTF8.GetBytes("Ming Light Controller test file\n"));
+            var mlc = FakeAtelier.License(MlcLicense, _product + " MLC", MlcVersion());
+            _server.SetLicenseItemRequestOnAccount(_product, _id, new[] { mlc },
+                new[] { FakeAtelier.License("l-core", "MingToon Core", FakeAtelier.Version("cv-1", MingCore, "0.1.15")), mlc });
+            try
+            {
+                yield return Await(ImportRequestWatcher.PollNowAsync(Token()), 180);
+
+                Assert.AreEqual(1, asked.Count, "the core-first question");
+                StringAssert.Contains("MingToon Core", asked[0]);
+                CollectionAssert.AreEqual(new[] { "lv:cv-1", "lv:mv-1" }, _server.DownloadItems(), "the core first, then MLC");
+                Assert.AreEqual("0.1.15", InstalledPackages.InstalledVersion(PackageInstallService.ProjectRoot, MingCore));
+                Assert.IsTrue(File.Exists(Path.Combine(PackageInstallService.ProjectRoot, Installer.ProductFolder(_product + " MLC"), MlcFile)), "MLC's file is not in");
+                CollectionAssert.AreEqual(new[] { "claim:" + _id + "::", "done:" + _id + ":c-1:" }, _server.Posts());
+            }
+            finally
+            {
+                ManagerWindow.CoreFirstDialog = EditorUtility.DisplayDialog;
+                RemoveFolder(Installer.ProductFolder(_product + " MLC"));
+                RemovePackages(MingCore);
+            }
+        }
+
+        /// <summary>Review m-a: MLC alone on an account without the core downloads nothing and reports why (dependency_missing).</summary>
+        [UnityTest]
+        public IEnumerator AnMlcImport_OnAnAccountWithoutTheCore_DownloadsNothing_AndSaysWhy()
+        {
+            NeedsNoMingToon();
+            LogAssert.ignoreFailingMessages = true;
+            _choice = (int)ImportChoice.Import;
+            var asked = new List<string>();
+            CoreFirstAnswer(asked, true);
+            _server.AddFile("mv-1", MlcFile, Encoding.UTF8.GetBytes("Ming Light Controller test file\n"));
+            _server.SetLicenseItemRequest(_product, _id, FakeAtelier.License(MlcLicense, _product + " MLC", MlcVersion()));
+            try
+            {
+                yield return Await(ImportRequestWatcher.PollNowAsync(Token()), 60);
+
+                Assert.AreEqual(0, asked.Count, "no core to offer: no question");
+                Assert.AreEqual(0, _server.DownloadItems().Length, "something was downloaded");
+                CollectionAssert.AreEqual(new[] { "claim:" + _id + "::", "failed:" + _id + ":c-1:dependency_missing" }, _server.Posts());
+            }
+            finally
+            {
+                ManagerWindow.CoreFirstDialog = EditorUtility.DisplayDialog;
+                RemoveFolder(Installer.ProductFolder(_product + " MLC"));
+            }
+        }
+
         // ------------------------------------------------------------ helpers
+
+        private static void NeedsNoMingToon()
+        {
+            if (CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, MingCore))
+                Assert.Ignore("Needs a test project without MingToon (it installs and removes the real core package).");
+        }
+
+        private static void CoreFirstAnswer(List<string> asked, bool yes)
+        {
+            ManagerWindow.CoreFirstDialog = (title, message, ok, cancel) => { asked.Add(title + "\n" + message); return yes; };
+        }
+
+        private static string MlcVersion()
+        {
+            return "{\"version_id\":\"mv-1\",\"version_label\":\"1.0.0\",\"file_name\":\"" + MlcFile + "\",\"file_size\":0,\"released_at\":\"2026-10-31T00:00:00.000Z\"," +
+                "\"release_notes\":\"\",\"package_name\":\"\",\"package_version\":\"\"}";
+        }
+
+        private static void RemoveFolder(string folder)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) AssetDatabase.DeleteAsset(folder);
+        }
 
         /// <summary>A VPM-style package zip: package.json at the root, with one exact vpmDependency when <paramref name="dependency"/> is set.</summary>
         private static byte[] PackageZipBytes(string name, string version, string dependency, string dependencyVersion)
@@ -386,9 +474,12 @@ namespace OnAirDeck.UnityManager.EditModeTests
         private readonly Dictionary<string, string> _versionFiles = new Dictionary<string, string>();
         private string _fileName = "readme.txt";
 
-        public FakeAtelier()
+        public FakeAtelier() : this(0) { }
+
+        /// <param name="port">0 picks a free one; a fixed one lets a window check keep its URL across a script reload.</param>
+        public FakeAtelier(int port)
         {
-            var port = FreePort();
+            if (port <= 0) port = FreePort();
             BaseUrl = "http://127.0.0.1:" + port;
             _listener.Prefixes.Add(BaseUrl + "/");
             _listener.Start();
@@ -421,6 +512,22 @@ namespace OnAirDeck.UnityManager.EditModeTests
             _requestsJson = "{\"requests\":[{\"request_id\":\"" + requestId + "\",\"target\":\"unity\",\"kind\":\"item\",\"item_id\":\"it-1\",\"license_id\":\"\",\"product_id\":\"p-1\"," +
                 "\"created_at\":\"2026-10-31T00:00:00.000Z\",\"expires_at\":\"" + expires + "\",\"purchase\":" + item + ",\"licenses\":[" + list + "]}]}";
             _purchasesJson = "{\"purchases\":[" + item + "],\"licenses\":[" + list + "]}";
+        }
+
+        /// <summary>The account's licenses (plugin-purchases) with no import request waiting.</summary>
+        public void SetAccount(params string[] licenses)
+        {
+            _requestsJson = "{\"requests\":[]}";
+            _purchasesJson = "{\"purchases\":[],\"licenses\":[" + string.Join(",", licenses) + "]}";
+        }
+
+        /// <summary>As <see cref="SetLicenseItemRequest"/>, but the account (plugin-purchases) holds <paramref name="onAccount"/>, more than the item grants.</summary>
+        public void SetLicenseItemRequestOnAccount(string product, string requestId, string[] granted, string[] onAccount)
+        {
+            SetLicenseItemRequest(product, requestId, granted);
+            var item = "{\"name\":\"" + product + "\",\"date\":\"2026-10-31\",\"item_id\":\"it-1\",\"product_id\":\"p-1\",\"files\":[],\"downloaded\":false,\"update_available\":false," +
+                "\"thumbnail_url\":\"\",\"seller_id\":\"s-1\",\"seller_name\":\"Seller\",\"category\":\"\",\"purchased_at\":\"2026-10-31T00:00:00.000Z\",\"source\":\"purchase\",\"description\":\"\",\"product_url\":\"\",\"versions\":[]}";
+            _purchasesJson = "{\"purchases\":[" + item + "],\"licenses\":[" + string.Join(",", onAccount) + "]}";
         }
 
         public static string License(string id, string name, params string[] versions)

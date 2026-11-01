@@ -43,6 +43,7 @@ internal static partial class LegacyChecks
         RunHandoff(check);
         RunAstraR1(check);
         LegacyInstall.Handlers.Clear();
+        LegacyInstall.Handlers.Add(new ReleaseManifestHandler());
         LegacyInstall.Handlers.Add(new InstallerHandoffHandler());
     }
 
