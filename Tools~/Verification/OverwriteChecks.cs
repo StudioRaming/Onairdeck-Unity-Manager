@@ -28,6 +28,8 @@ internal static class OverwriteChecks
         check("old BOOTH folder: an exact copy of its release manifest is moved to the backup (hash of a .meta ignored), then the plan is empty", ManifestMoves);
         check("old BOOTH folder: a user file, an edited file or a git checkout blocks the move, names the file and says what to do", ManifestBlocks);
         check("old BOOTH folder: with no release manifest the old rule stays (legacy case without installer = clear refusal, not silent)", NoManifestUnchanged);
+        check("working copy: an old folder with .git (or .serena, a nested .vs, a .git file) and an unmatched file says 'move this folder out by hand' with its path before any question, never hands off, moves nothing", WorkingCopyNeedsManualMove);
+        check("working copy: a clean old install keeps today's plan (manifest move, installer hand-off, M1 hand-off); no refusal before the question", CleanInstallUnchanged);
         // A real MingToon zip (its Release/MingToon_ReleaseManifest.json lists Assets/StudioRaming/MingToon paths) unpacked as the old layout.
         var realZip = Environment.GetEnvironmentVariable("ONAIRDECK_MINGTOON_ZIP");
         if (!string.IsNullOrEmpty(realZip)) check("old BOOTH folder: the real MingToon " + Path.GetFileName(realZip) + " unpacked under " + Folder + " proves itself", () => RealZip(realZip));
@@ -209,9 +211,142 @@ internal static class OverwriteChecks
         Put(project, Folder + "/.git/HEAD", "ref: refs/heads/main\n");
         plan = LegacyInstall.Detect(project, CoreProbe());
         Require(plan.Items[0].Blocked);
+        Require(plan.Items[0].ManualMove, plan.Items[0].BlockedReason);
         Equal(Folder + "/.git", plan.Items[0].Unmatched.Single());
         ko = LegacyInstallText.BlockedBody(0, plan.BlockedItems());
-        Require(ko.Contains("개발용 git 작업 폴더라 아틀리에 매니저가 옮기지 않아요"), ko);
+        Require(ko.Contains("아래 폴더를 직접 프로젝트 밖으로 옮겨 주세요:\n  " + Folder), ko);
+    }
+
+    // Owner report 2026-11-02: Assets/StudioRaming/MingToon was a developer's git working copy (.git, .serena, handoff docs). The
+    // install said the old install would be cleaned up, the clean-up refused, and the last text did not say what to do.
+    private static void WorkingCopyNeedsManualMove()
+    {
+        DefaultHandlers();
+        var installer = CoreProbe();
+        installer[0].Installer = new LegacyInstallerFile { VersionId = "v-installer", FileName = "MingToon_Installer.unitypackage", Size = 1 };
+        installer[0].Zip = new LegacyInstallerFile { VersionId = "v-zip", FileName = "com.studioraming.mingtoon-0.1.15.zip", Size = 1 };
+
+        // With and without its release manifest (a checkout may carry Release/), with and without the product installer at hand.
+        foreach (var withManifest in new[] { true, false })
+            foreach (var probes in new[] { CoreProbe(), installer })
+            {
+                var project = withManifest ? BoothProject() : NewProject();
+                if (!withManifest) Put(project, Folder + "/Shaders/MingToon.shader", "work in progress");
+                Put(project, Folder + "/.git/HEAD", "ref: refs/heads/main\n");
+                Put(project, Folder + "/.git/objects/ab/cdef", "blob");
+                Put(project, Folder + "/.serena/project.yml", "name: mingtoon\n");
+                Put(project, Folder + "/HANDOFF.md", "notes");
+                Put(project, Folder + ".meta", "fileFormatVersion: 2\nguid: 00000000000000000000000000000001\n");
+                var before = Snapshot(project);
+
+                foreach (var plan in new[] { LegacyInstall.Detect(project, probes), LegacyInstall.DetectKnown(project, probes) })
+                {
+                    var item = plan.Items.Single();
+                    Require(item.Blocked && item.ManualMove && !item.HandOff && item.Handler == null, item.BlockedReason + " handoff=" + item.HandOff);
+                    CollectionAssertEqual(new[] { Folder + "/.git", Folder + "/.serena" }, item.Unmatched);
+                    Require(!plan.HasHandoff, "a hand-off is still offered");
+                    var known = LegacyInstall.RefusalBeforeConfirm(plan);
+                    Require(known != null, "no refusal before the question");
+                    Equal(Folder, known.ManualFolder);
+                }
+
+                // The install asks nothing, hands nothing off and moves nothing; the reason names the folder and what to do.
+                var asked = 0;
+                LegacyHandoffRequest handoff = null;
+                var e = Throws<LegacyCleanupRequiredException>(() => LegacyInstall.Prepare(project, probes, true, p => { asked++; return true; }, DateTime.Now, out handoff));
+                Equal(0, asked);
+                Require(handoff == null, "handed off");
+                Equal(Folder, e.ManualFolder);
+                Require(e.Message.Contains("\n  " + Folder + "\n"), e.Message);
+                Require(e.Message.Contains(".git"), e.Message);
+                // The short overload (no hand-off caller) and a background caller say the same, not "install it yourself and it is moved".
+                Equal(e.Message, Throws<LegacyCleanupRequiredException>(() => LegacyInstall.Prepare(project, probes, true, p => { asked++; return true; }, DateTime.Now)).Message);
+                Equal(e.Message, Throws<LegacyCleanupRequiredException>(() => LegacyInstall.Prepare(project, probes, false, null, DateTime.Now)).Message);
+                Equal(0, asked);
+                Require(Snapshot(project) == before, "something was moved or deleted");
+                Require(!Directory.Exists(Path.Combine(project, "Library", "OnAirDeck", "Backup")), "a backup folder was made");
+            }
+
+        // The texts in every language: why in one line (with the names found), the exact folder, nothing changed.
+        var sample = new LegacyItem { Path = Folder, Product = "MingToon Core", Blocked = true, BlockedReason = LegacyItem.ReasonManualMove };
+        sample.Unmatched.Add(Folder + "/.git");
+        sample.Unmatched.Add(Folder + "/.serena");
+        var items = new List<LegacyItem> { sample };
+        Equal("MingToon Core: 이전 설치를 아틀리에 매니저가 자동으로 정리할 수 없어요.\n이 폴더에 MingToon Core 배포 파일이 아닌 파일이 있어요 (예: .git, .serena).\n아래 폴더를 직접 프로젝트 밖으로 옮겨 주세요:\n  "
+            + Folder + "\n옮긴 뒤 다시 설치해 주세요. 아무것도 옮기거나 지우지 않았어요.", LegacyInstallText.ManualMoveBody(0, items));
+        Require(LegacyInstallText.ManualMoveBody(1, items).Contains("Move this folder out of the project yourself:\n  " + Folder + "\nThen install again. Nothing was moved or deleted."), LegacyInstallText.ManualMoveBody(1, items));
+        Require(LegacyInstallText.ManualMoveBody(2, items).Contains("（例: .git, .serena）") && LegacyInstallText.ManualMoveBody(2, items).Contains("\n  " + Folder + "\n"), LegacyInstallText.ManualMoveBody(2, items));
+        Equal(LegacyInstallText.ManualMoveBody(0, items), LegacyInstallText.BlockedBody(0, items));
+
+        // Only an IDE folder, deeper down; a ".git" file (worktree pointer); the name in any case.
+        var nested = BoothProject();
+        Put(nested, Folder + "/Editor/.VS/state", "x");
+        Equal(Folder + "/Editor/.VS", LegacyInstall.Detect(nested, CoreProbe()).Items.Single().Unmatched.Single());
+        var pointer = BoothProject();
+        Put(pointer, Folder + "/.git", "gitdir: C:/dev/mingtoon/.git/worktrees/a\n");
+        var pointed = LegacyInstall.Detect(pointer, installer).Items.Single();
+        Require(pointed.ManualMove && !pointed.HandOff, pointed.BlockedReason);
+        Equal(Folder + "/.git", pointed.Unmatched.Single());
+        // Not a match: a file that only starts with .git (.gitattributes, .gitignore) is a plain unmatched file, as before.
+        var attributes = BoothProject();
+        Put(attributes, Folder + "/.gitattributes", "* text=auto\n");
+        var plain = LegacyInstall.Detect(attributes, CoreProbe()).Items.Single();
+        Require(plain.Blocked && !plain.ManualMove && plain.BlockedReason == "unmatched", plain.BlockedReason);
+    }
+
+    private static void CleanInstallUnchanged()
+    {
+        DefaultHandlers();
+        // A clean BOOTH folder: the Manager moves it after its usual question.
+        var project = BoothProject();
+        var plan = LegacyInstall.DetectKnown(project, CoreProbe());
+        Require(!plan.Items.Single().Blocked && !plan.Items.Single().HandOff);
+        Require(LegacyInstall.RefusalBeforeConfirm(plan) == null);
+        var asked = 0;
+        var move = LegacyInstall.Prepare(project, CoreProbe(), true, p => { asked++; return true; }, DateTime.Now);
+        Equal(1, asked);
+        Require(move != null && !Directory.Exists(Path.Combine(project, Folder.Replace('/', Path.DirectorySeparatorChar))));
+
+        // No release manifest, installer at hand: the product installer hand-off, after its question.
+        var installer = CoreProbe();
+        installer[0].Installer = new LegacyInstallerFile { VersionId = "v-installer", FileName = "MingToon_Installer.unitypackage", Size = 1 };
+        installer[0].Zip = new LegacyInstallerFile { VersionId = "v-zip", FileName = "com.studioraming.mingtoon-0.1.15.zip", Size = 1 };
+        project = NewProject();
+        Put(project, Folder + "/Shaders/MingToon.shader", "old");
+        plan = LegacyInstall.DetectKnown(project, installer);
+        Require(plan.HasHandoff && !plan.Items.Single().Blocked);
+        Require(LegacyInstall.RefusalBeforeConfirm(plan) == null);
+        LegacyHandoffRequest handoff;
+        asked = 0;
+        Require(LegacyInstall.Prepare(project, installer, true, p => { asked++; return true; }, DateTime.Now, out handoff) == null);
+        Equal(1, asked);
+        Require(handoff != null && handoff.Folder == Folder);
+
+        // Review r1 M1 (a user's file, installer at hand): still the hand-off, no refusal before the question.
+        project = BoothProject();
+        Put(project, Folder + "/Presets/MyLook.asset", "mine");
+        plan = LegacyInstall.DetectKnown(project, installer);
+        Require(plan.HasHandoff);
+        Require(LegacyInstall.RefusalBeforeConfirm(plan) == null);
+        // The same without the installer: refused before the question, files named, no folder to move by hand.
+        plan = LegacyInstall.DetectKnown(project, CoreProbe());
+        var refusal = LegacyInstall.RefusalBeforeConfirm(plan);
+        Require(refusal != null && refusal.ManualFolder.Length == 0);
+        Require(refusal.Message.Contains(Folder + "/Presets/MyLook.asset"), refusal.Message);
+        // Nothing old in the project: nothing to say.
+        Require(LegacyInstall.RefusalBeforeConfirm(LegacyInstall.DetectKnown(NewProject(), CoreProbe())) == null);
+    }
+
+    private static string Snapshot(string project)
+    {
+        var files = Directory.GetFiles(project, "*", SearchOption.AllDirectories).Select(f => f.Substring(project.Length) + ":" + File.ReadAllText(f)).ToList();
+        files.Sort(StringComparer.Ordinal);
+        return string.Join("\n", files);
+    }
+
+    private static void CollectionAssertEqual(IList<string> expected, IList<string> actual)
+    {
+        if (!expected.SequenceEqual(actual)) throw new Exception("Expected [" + string.Join(", ", expected) + "], got [" + string.Join(", ", actual) + "]");
     }
 
     private static void NoManifestUnchanged()
