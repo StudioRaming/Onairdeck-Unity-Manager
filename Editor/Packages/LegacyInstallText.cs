@@ -291,6 +291,10 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static string BlockedBody(int language, IList<LegacyItem> blocked)
         {
+            // A working copy among them: moving that folder out by hand is the one step that helps, so that is what is said.
+            var manual = new List<LegacyItem>();
+            foreach (var item in blocked) if (item.ManualMove) manual.Add(item);
+            if (manual.Count > 0) return ManualMoveBody(language, manual);
             var sb = new StringBuilder();
             var names = new List<string>();
             foreach (var item in blocked) if (!names.Contains(item.Product)) names.Add(item.Product);
@@ -319,6 +323,55 @@ namespace OnAirDeck.UnityManager
                 foreach (var path in item.Unmatched) if (path != item.Path && !path.EndsWith("/.git", StringComparison.Ordinal)) listed = true;
             }
             sb.Append('\n').Append(BlockedNext(language, git, listed));
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// An old folder that holds a version-control or IDE folder (<see cref="LegacyItem.ReasonManualMove"/>): the Manager cannot clean it
+        /// up, why in one line (with up to three of the names found as the example), the exact folders to move out of the project by hand,
+        /// and that nothing was moved or deleted.
+        /// </summary>
+        public static string ManualMoveBody(int language, IList<LegacyItem> items)
+        {
+            var names = new List<string>();
+            var examples = new List<string>();
+            foreach (var item in items)
+            {
+                if (!names.Contains(item.Product)) names.Add(item.Product);
+                foreach (var path in item.Unmatched)
+                {
+                    var name = path.Substring(path.LastIndexOf('/') + 1);
+                    if (examples.Count < 3 && !examples.Contains(name)) examples.Add(name);
+                }
+            }
+            var product = string.Join(", ", names.ToArray());
+            var example = examples.Count > 0 ? string.Join(", ", examples.ToArray()) : ".git";
+            var sb = new StringBuilder();
+            switch (language)
+            {
+                case 0:
+                    sb.Append(product).Append(": 이전 설치를 아틀리에 매니저가 자동으로 정리할 수 없어요.");
+                    sb.Append("\n이 폴더에 ").Append(product).Append(" 배포 파일이 아닌 파일이 있어요 (예: ").Append(example).Append(").");
+                    sb.Append("\n아래 폴더를 직접 프로젝트 밖으로 옮겨 주세요:");
+                    break;
+                case 2:
+                    sb.Append(product).Append(": 以前のインストールをアトリエマネージャーが自動で整理できません。");
+                    sb.Append("\nこのフォルダに").Append(product).Append("の配布ファイルではないファイルがあります（例: ").Append(example).Append("）。");
+                    sb.Append("\n次のフォルダをご自身でプロジェクトの外へ移動してください:");
+                    break;
+                default:
+                    sb.Append(product).Append(": the Atelier Manager cannot clean up the old install by itself.");
+                    sb.Append("\nThis folder holds files that are not part of the ").Append(product).Append(" release (for example ").Append(example).Append(").");
+                    sb.Append("\nMove this folder out of the project yourself:");
+                    break;
+            }
+            foreach (var item in items) sb.Append("\n  ").Append(item.Path);
+            switch (language)
+            {
+                case 0: sb.Append("\n옮긴 뒤 다시 설치해 주세요. 아무것도 옮기거나 지우지 않았어요."); break;
+                case 2: sb.Append("\n移動してから、もう一度インストールしてください。何も移動・削除していません。"); break;
+                default: sb.Append("\nThen install again. Nothing was moved or deleted."); break;
+            }
             return sb.ToString();
         }
 

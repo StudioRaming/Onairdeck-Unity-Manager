@@ -213,6 +213,9 @@ namespace OnAirDeck.UnityManager
                 if (result.Error is LegacyCleanupRequiredException)
                 {
                     _cleanupRequired[key] = result.Error.Message;
+                    var manual = ((LegacyCleanupRequiredException)result.Error).ManualFolder;
+                    if (manual.Length > 0) _manualFolder[key] = manual;
+                    else _manualFolder.Remove(key);
                     carried.Add(new CarriedRow { Key = key, Cleanup = true, Text = result.Error.Message });
                 }
                 else

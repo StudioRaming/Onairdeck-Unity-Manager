@@ -67,7 +67,8 @@ namespace OnAirDeck.UnityManager
         /// Contract v9 for a batch: one combined dialog before it starts lists every item that has an old Assets install
         /// (config table and markers; the zip-based rules need the download, so they cannot be listed yet). "Do not
         /// install" leaves only those items out. An item that turns up another old install after its download is not
-        /// moved without consent: it fails with the "old install needs clean-up" text and waits for a click.
+        /// moved without consent: it fails with the "old install needs clean-up" text and waits for a click. An item whose own old folder
+        /// nobody can clean up (<see cref="LegacyInstall.RefusalBeforeConfirm"/>) is not in the dialog: it fails at once with what to do.
         /// </summary>
         public static List<BatchItem> InstallAll(string sessionToken, IList<LicenseVersionEntry> versions, LicenseEntry[] licenses,
             CancellationToken cancel = default(CancellationToken), Func<LegacyPlan, bool> confirmBatch = null)
@@ -75,6 +76,7 @@ namespace OnAirDeck.UnityManager
             var root = PackageInstallService.ProjectRoot;
             var asked = confirmBatch ?? LegacyInstallDialog.ConfirmBatch;
             var flagged = new Dictionary<LicenseVersionEntry, LegacyPlan>();
+            var refused = new Dictionary<LicenseVersionEntry, LegacyCleanupRequiredException>();
             var combined = new LegacyPlan();
             foreach (var version in versions)
             {
@@ -87,6 +89,16 @@ namespace OnAirDeck.UnityManager
                 foreach (var probe in probes) if (probe.Name == core) probe.Display = CoreAddons.CoreName(core);
                 var plan = LegacyInstall.DetectKnown(root, probes);
                 if (plan.IsEmpty) continue;
+                // The item's own old folder can never be cleaned up (a working copy, or unlisted files with no installer): it fails with
+                // that reason at once, downloads nothing and is not part of the question.
+                var own = new LegacyPlan();
+                own.Items.AddRange(plan.Items.FindAll(x => x.Owner != null && x.Owner.Name == version.package_name));
+                var refusal = LegacyInstall.RefusalBeforeConfirm(own);
+                if (refusal != null)
+                {
+                    refused[version] = refusal;
+                    continue;
+                }
                 flagged[version] = plan;
                 foreach (var item in plan.Items)
                     if (!item.Blocked && !item.HandOff && !combined.Items.Exists(x => string.Equals(x.Path, item.Path, StringComparison.OrdinalIgnoreCase))) combined.Items.Add(item);
@@ -97,6 +109,18 @@ namespace OnAirDeck.UnityManager
             var items = new List<BatchItem>();
             foreach (var version in versions)
             {
+                LegacyCleanupRequiredException refusal;
+                if (refused.TryGetValue(version, out refusal))
+                {
+                    var reason = refusal;
+                    items.Add(new BatchItem
+                    {
+                        Name = version.package_name + " " + version.package_version,
+                        Version = version.package_version,
+                        Run = progress => { throw reason; }
+                    });
+                    continue;
+                }
                 if (!move && flagged.ContainsKey(version)) continue;   // "Do not install": this item is skipped, nothing changes
                 // A product installer hand-off (import, reload, wait) is one click at a time: a batch never starts one.
                 items.Add(Install(sessionToken, version, cancel, licenses, plan =>

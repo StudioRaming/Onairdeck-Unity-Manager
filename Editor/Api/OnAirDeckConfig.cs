@@ -111,6 +111,17 @@ namespace OnAirDeck.UnityManager
             "Assets/StudioRaming/MingLightController",
             "Assets/MLC"
         };
+
+        /// <summary>
+        /// Folder names (any depth, case-insensitive) that no shipped install holds: a version-control or IDE folder means the old folder is
+        /// someone's working copy, not a buyer's install. Such a folder is never cleaned up by the Manager or handed to a product installer;
+        /// the user is told to move it out of the project by hand (owner report 2026-11-02: a MingToon git checkout in Assets/). A file
+        /// named ".git" (a worktree or submodule pointer) counts too.
+        /// </summary>
+        public static readonly string[] WorkingCopyFolderNames =
+        {
+            ".git", ".svn", ".hg", ".bzr", ".serena", ".vs", ".idea", ".vscode"
+        };
     }
 
     /// <summary>Where one product's own installer takes over the old Assets install (see <see cref="OnAirDeckConfig.LegacyInstallers"/>).</summary>

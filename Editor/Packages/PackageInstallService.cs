@@ -147,6 +147,27 @@ namespace OnAirDeck.UnityManager
         }
 
         // One probe per item of the install; the requested package carries its license id (the marker rule needs it).
+        /// <summary>
+        /// The old-install refusal that is certain before any question or download (<see cref="LegacyInstall.RefusalBeforeConfirm"/>: a
+        /// working copy to move out by hand, or files the product's list does not match with no installer to take over), for this version's
+        /// own package; null when the install may go on. A dependency (an add-on's core) is known only after the download; LegacyInstall.Prepare
+        /// checks it then, before its question. Never throws: a detection that fails leaves the decision to the install.
+        /// </summary>
+        internal static LegacyCleanupRequiredException KnownLegacyRefusal(LicenseVersionEntry version, LicenseEntry[] licenses)
+        {
+            try
+            {
+                if (version == null || !version.IsPackage) return null;
+                var root = ProjectRoot;
+                var probes = ProbesFor(root, new List<InstallItem> { new InstallItem { Name = version.package_name, Version = version.package_version } }, version, licenses);
+                return LegacyInstall.RefusalBeforeConfirm(LegacyInstall.DetectKnown(root, probes));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         internal static List<LegacyProbe> ProbesFor(string root, List<InstallItem> items, LicenseVersionEntry version, LicenseEntry[] licenses)
         {
             var licenseId = "";

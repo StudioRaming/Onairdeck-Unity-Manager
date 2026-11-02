@@ -111,7 +111,15 @@ namespace OnAirDeck.UnityManager
 
             string cleanup;
             string failed;
-            if (_cleanupRequired.TryGetValue(entry.Key, out cleanup))
+            string manualFolder;
+            if (_cleanupRequired.TryGetValue(entry.Key, out cleanup) && _manualFolder.TryGetValue(entry.Key, out manualFolder))
+            {
+                // Only the user can clear it (a working copy): the button shows the folder to move out, it never offers a clean-up.
+                // The row's own Install checks again and goes on once the folder is gone.
+                if (SRGui.HelpBox(cleanup, SRTone.Warning, ManagerText.OpenFolder)) RevealProjectFolder(manualFolder);
+                GUILayout.Space(SRMetrics.Space6);
+            }
+            else if (_cleanupRequired.TryGetValue(entry.Key, out cleanup))
             {
                 // The reason itself (which folder, which files, what to do); the button tries again once the user has acted on it.
                 var version = OfferedPackage(entry);

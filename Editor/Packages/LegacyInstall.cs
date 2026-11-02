@@ -23,10 +23,20 @@ namespace OnAirDeck.UnityManager
         public LegacyProbe Owner;
         /// <summary>True when sources 1-3 could not prove the folder is only the old install: the item must not move. See <see cref="BlockedReason"/>.</summary>
         public bool Blocked;
-        /// <summary>"no-inventory", "inventory-unreadable" or "unmatched" (see <see cref="Unmatched"/>); "" when not blocked.</summary>
+        /// <summary>
+        /// "no-inventory", "inventory-unreadable", "unmatched" (see <see cref="Unmatched"/>) or <see cref="ReasonManualMove"/>; "" when not
+        /// blocked.
+        /// </summary>
         public string BlockedReason = "";
+        /// <summary>
+        /// The folder holds a version-control or IDE folder (<see cref="OnAirDeckConfig.WorkingCopyFolderNames"/>): nobody cleans it up, not
+        /// the Manager and not a product installer; the user moves it out of the project by hand. <see cref="Unmatched"/> names those folders.
+        /// </summary>
+        public const string ReasonManualMove = "manual-move";
         /// <summary>Project-relative files that stopped the move (user-added or changed), sorted.</summary>
         public readonly List<string> Unmatched = new List<string>();
+        /// <summary>True when only the user can clear this item: see <see cref="ReasonManualMove"/>.</summary>
+        public bool ManualMove { get { return Blocked && BlockedReason == ReasonManualMove; } }
         /// <summary>The product installer that validates and may detach this item, or null for the Manager's own move.</summary>
         public ILegacyHandler Handler;
         /// <summary>The product's own installer cleans this up: the Manager never moves it (see <see cref="ILegacyHandler.HandsOff"/>).</summary>
@@ -43,6 +53,12 @@ namespace OnAirDeck.UnityManager
         public List<LegacyItem> BlockedItems()
         {
             return Items.FindAll(i => i.Blocked);
+        }
+
+        /// <summary>The items the user must move out of the project by hand (<see cref="LegacyItem.ReasonManualMove"/>).</summary>
+        public List<LegacyItem> ManualItems()
+        {
+            return Items.FindAll(i => i.ManualMove);
         }
 
         /// <summary>The item the product's own installer takes over, or null.</summary>
@@ -96,6 +112,14 @@ namespace OnAirDeck.UnityManager
     internal sealed class LegacyCleanupRequiredException : PackageInstallException
     {
         public LegacyCleanupRequiredException(string message) : base(message) { }
+
+        public LegacyCleanupRequiredException(string message, string manualFolder) : base(message)
+        {
+            ManualFolder = manualFolder ?? "";
+        }
+
+        /// <summary>Project-relative folder the user must move out of the project by hand (<see cref="LegacyItem.ReasonManualMove"/>); "" otherwise.</summary>
+        public string ManualFolder { get; private set; } = "";
     }
 
     /// <summary>One backup folder that still holds an old install (state moving or moved: the install never finished).</summary>
@@ -480,6 +504,16 @@ namespace OnAirDeck.UnityManager
         // installer's handler, or the inventory the incoming package declares. Otherwise the item is blocked (fail closed).
         private static void Validate(string root, LegacyItem item, bool withZips)
         {
+            // A working copy (git, svn, an IDE's folder) is nobody's to clean up: not moved, not handed to the product installer (which would
+            // refuse it after the user said yes). Checked first, so the user hears it before any clean-up question.
+            var working = WorkingCopyFolders(root, item.Path);
+            if (working.Count > 0)
+            {
+                item.Unmatched.AddRange(working);
+                item.Blocked = true;
+                item.BlockedReason = LegacyItem.ReasonManualMove;
+                return;
+            }
             foreach (var handler in Handlers)
             {
                 if (!handler.Handles(root, item.Owner, item)) continue;
@@ -530,6 +564,71 @@ namespace OnAirDeck.UnityManager
             {
                 item.BlockedReason = "inventory-unreadable";
             }
+        }
+
+        /// <summary>
+        /// Project-relative paths of the version-control and IDE folders (<see cref="OnAirDeckConfig.WorkingCopyFolderNames"/>) at any depth
+        /// in the folder <paramref name="relative"/>, and of a ".git" file; sorted. A found folder is not looked into, and neither is a link
+        /// (junction, symlink). Empty for a single file or a folder that cannot be read.
+        /// </summary>
+        internal static List<string> WorkingCopyFolders(string root, string relative)
+        {
+            var found = new List<string>();
+            var start = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!Directory.Exists(start)) return found;
+            var pending = new Stack<string>();
+            pending.Push(start);
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                try
+                {
+                    foreach (var file in Directory.GetFiles(current, ".git"))
+                        if (string.Equals(Path.GetFileName(file), ".git", StringComparison.OrdinalIgnoreCase))
+                            found.Add(relative + "/" + file.Substring(start.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
+                    foreach (var folder in Directory.GetDirectories(current))
+                    {
+                        var name = Path.GetFileName(folder);
+                        if (IsWorkingCopyName(name))
+                        {
+                            found.Add(relative + "/" + folder.Substring(start.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
+                            continue;
+                        }
+                        if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) continue;
+                        pending.Push(folder);
+                    }
+                }
+                catch (Exception)
+                {
+                    // An unreadable folder proves nothing either way; the other rules still have to prove the item before it moves.
+                }
+            }
+            found.Sort(StringComparer.Ordinal);
+            return found;
+        }
+
+        private static bool IsWorkingCopyName(string name)
+        {
+            foreach (var known in OnAirDeckConfig.WorkingCopyFolderNames)
+                if (string.Equals(name, known, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// The refusal that is certain before anything is asked or downloaded, or null: an item the user must move out by hand
+        /// (<see cref="LegacyItem.ReasonManualMove"/>), else a folder whose files the product's own list does not match while no product
+        /// installer takes it over (handler "unmatched"). An item handed to the product installer, or one only the downloaded package can
+        /// prove (no inventory yet), gives no refusal here: the install goes on as before. Use with a plan from <see cref="DetectKnown"/>.
+        /// </summary>
+        public static LegacyCleanupRequiredException RefusalBeforeConfirm(LegacyPlan plan)
+        {
+            if (plan == null || plan.IsEmpty) return null;
+            var language = LegacyInstallText.Language();
+            var manual = plan.ManualItems();
+            if (manual.Count > 0) return new LegacyCleanupRequiredException(LegacyInstallText.ManualMoveBody(language, manual), manual[0].Path);
+            var unmatched = plan.Items.FindAll(i => i.Blocked && !i.HandOff && i.BlockedReason == "unmatched");
+            if (unmatched.Count > 0) return new LegacyCleanupRequiredException(LegacyInstallText.BlockedBody(language, unmatched));
+            return null;
         }
 
         private static LegacyPlan DetectUnvalidated(string projectRoot, IList<LegacyProbe> probes, bool withZips)
@@ -711,6 +810,10 @@ namespace OnAirDeck.UnityManager
             handoff = null;
             var plan = Detect(projectRoot, probes);
             if (plan.IsEmpty) return null;
+            // A working copy stops the whole install before any question: nobody can clean it up, so no dialog may promise it.
+            var manual = plan.ManualItems();
+            if (manual.Count > 0)
+                throw new LegacyCleanupRequiredException(LegacyInstallText.ManualMoveBody(LegacyInstallText.Language(), manual), manual[0].Path);
             var handed = plan.HandoffItem();
             if (handed != null)
             {

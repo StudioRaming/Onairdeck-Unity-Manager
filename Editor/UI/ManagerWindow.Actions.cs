@@ -23,6 +23,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private readonly Dictionary<string, string> _depProblem = new Dictionary<string, string>();
         /// <summary>Entry key to why its old install is in the way (the exception's text, written for the user).</summary>
         [NonSerialized] private readonly Dictionary<string, string> _cleanupRequired = new Dictionary<string, string>();
+        /// <summary>Entry key to the project-relative old folder the user must move out by hand (a working copy); its banner offers Show Folder.</summary>
+        [NonSerialized] private readonly Dictionary<string, string> _manualFolder = new Dictionary<string, string>();
 
         private bool Busy
         {
@@ -173,6 +175,14 @@ namespace OnAirDeck.UnityManager
         private async Task<ImportOutcome> DoInstallAsync(CatalogEntry entry, LicenseVersionEntry version, bool confirmed, Action<string, string> willInstall)
         {
             if (_session == null || Busy || version == null) return ImportOutcome.Release();
+            // An old folder nobody can clean up (a working copy, or unlisted files with no installer): said before any question or download.
+            var refusal = PackageInstallService.KnownLegacyRefusal(version, _licenses);
+            if (refusal != null)
+            {
+                ShowCleanupRequired(entry.Key, refusal);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Install of " + version.package_name + " " + version.package_version + " not started: " + refusal.Message);
+                return ImportOutcome.Failed("cleanup_required");
+            }
             var title = ManagerText.DlgInT.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
             // A backup is made only of a package that is already installed.
             var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
@@ -184,6 +194,7 @@ namespace OnAirDeck.UnityManager
 
             BeginWork(entry.Key);
             _cleanupRequired.Remove(entry.Key);
+            _manualFolder.Remove(entry.Key);
             _depProblem.Remove(entry.Key);
             var token = _session.token;
             var installed = false;
@@ -215,8 +226,7 @@ namespace OnAirDeck.UnityManager
             catch (LegacyCleanupRequiredException e)
             {
                 // Not an error report, but never silent: the reason (which folder, which files, what to do) shows on the row and in the bar.
-                _cleanupRequired[entry.Key] = e.Message;
-                SetMessage(e.Message, MessageType.Warning);
+                ShowCleanupRequired(entry.Key, e);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Install of " + version.package_name + " " + version.package_version + " stopped: " + e.Message);
                 return ImportOutcome.Failed("cleanup_required");
             }
@@ -394,7 +404,24 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>The reason on the row and in the bar; a folder to move out by hand is kept for the banner's Show Folder.</summary>
+        private void ShowCleanupRequired(string key, LegacyCleanupRequiredException e)
+        {
+            _cleanupRequired[key] = e.Message;
+            if (!string.IsNullOrEmpty(e.ManualFolder)) _manualFolder[key] = e.ManualFolder;
+            else _manualFolder.Remove(key);
+            SetMessage(e.Message, MessageType.Warning);
+        }
+
         // ------------------------------------------------------------ folders and pages
+
+        /// <summary>Shows a project-relative folder in Explorer / Finder (the old folder the user must move out by hand).</summary>
+        private static void RevealProjectFolder(string relative)
+        {
+            if (string.IsNullOrEmpty(relative)) return;
+            var absolute = Path.Combine(PackageInstallService.ProjectRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(absolute)) EditorUtility.RevealInFinder(absolute);
+        }
 
         private void OpenEntryFolder(CatalogEntry entry)
         {
