@@ -122,6 +122,12 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>The mode of the imports waiting in the queue (meaningful while <see cref="PendingCount"/> is above 0).</summary>
+        public static bool QueuedInteractive
+        {
+            get { return SessionState.GetBool(InteractiveKey, true); }
+        }
+
         public static int PendingCount
         {
             get { return Load().Count; }
@@ -180,7 +186,22 @@ namespace OnAirDeck.UnityManager
             {
                 _importing = true;
                 var head = list[0];
-                var imported = UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head));
+                // Content counts too (review R2): an update keeps paths and GUIDs, so the previous version's files alone are not this import.
+                Dictionary<string, string> hashes = null;
+                try { hashes = UnityPackageArchive.AssetSha256(head); }
+                catch (Exception) { hashes = null; }
+                var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
+                var settle = UnityPackageArchive.SettleAfterReload(UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head), hashes), interactive);
+                if (settle == ImportSettle.WaitForWindow)
+                {
+                    // Unity's import window may still be open across the reload (review R1): the person's Import or Cancel there decides.
+                    // Only the callbacks come back; the package is not imported a second time.
+                    AssetDatabase.importPackageCompleted += OnCompleted;
+                    AssetDatabase.importPackageCancelled += OnCancelled;
+                    AssetDatabase.importPackageFailed += OnFailed;
+                    return;
+                }
+                var imported = settle == ImportSettle.Imported;
                 string[] started;
                 if (LoadContexts().TryGetValue(head, out started))
                 {

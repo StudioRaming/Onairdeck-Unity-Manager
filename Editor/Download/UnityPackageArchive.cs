@@ -7,6 +7,14 @@ using System.Text;
 
 namespace OnAirDeck.UnityManager
 {
+    /// <summary>How the import queue settles a head a script reload cut off (<see cref="UnityPackageArchive.SettleAfterReload"/>).</summary>
+    internal enum ImportSettle
+    {
+        Imported,
+        WaitForWindow,
+        Failed
+    }
+
     /// <summary>One asset of a .unitypackage: its project path (forward slashes), whether it is a folder, and its GUID (the archive folder name, which the import writes into the .meta).</summary>
     internal sealed class PackageAsset
     {
@@ -166,6 +174,13 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static bool ImportedOnDisk(string projectRoot, IList<PackageAsset> assets)
         {
+            return ImportedOnDisk(projectRoot, assets, null);
+        }
+
+        /// <param name="sha256ByGuid">The package's content hashes (<see cref="AssetSha256"/>): when given, each file must also hold that
+        /// content, so the previous version's files at the same paths with the same GUIDs are not taken for the update (review R2).</param>
+        public static bool ImportedOnDisk(string projectRoot, IList<PackageAsset> assets, IDictionary<string, string> sha256ByGuid)
+        {
             if (assets == null) return false;
             var files = 0;
             foreach (var asset in assets)
@@ -176,9 +191,37 @@ namespace OnAirDeck.UnityManager
                 var full = Path.Combine(projectRoot, path);
                 if (!File.Exists(full) || !File.Exists(full + ".meta")) return false;
                 if (!string.Equals(MetaGuid(full + ".meta"), asset.Guid, StringComparison.OrdinalIgnoreCase)) return false;
+                string expected;
+                if (sha256ByGuid != null && sha256ByGuid.TryGetValue(asset.Guid, out expected) && !string.Equals(FileSha256(full), expected, StringComparison.OrdinalIgnoreCase))
+                    return false;
                 files++;
             }
             return files > 0;
+        }
+
+        /// <summary>
+        /// What the import queue does with a head a script reload cut off (review R1): imported when the package is on disk; an
+        /// interactive import that is not may still have Unity's import window open, so the queue re-arms its callbacks and waits for
+        /// the person; a non-interactive one that is not on disk failed.
+        /// </summary>
+        public static ImportSettle SettleAfterReload(bool onDisk, bool interactive)
+        {
+            if (onDisk) return ImportSettle.Imported;
+            return interactive ? ImportSettle.WaitForWindow : ImportSettle.Failed;
+        }
+
+        private static string FileSha256(string path)
+        {
+            try
+            {
+                using (var sha = SHA256.Create())
+                using (var stream = File.OpenRead(path))
+                    return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            }
+            catch (Exception)
+            {
+                return "";
+            }
         }
 
         /// <summary>The "guid:" value of a .meta file, or "".</summary>

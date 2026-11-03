@@ -199,6 +199,13 @@ namespace OnAirDeck.UnityManager
             var purchase = addon.Kind == FavoriteKind.Purchase;
             if (!purchase && file == null) file = OfferedFileVersion(addon);
             if ((coreVersion == null && coreFile == null && !corePurchase) || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
+            // The core and the add-on import without the import window; an interactive import still waiting in the queue (another
+            // purchase's import window) cannot be mixed with them, so nothing starts until it is done (review R3).
+            if ((coreFile != null || corePurchase) && !CoreAddons.CanJoinImportQueue(PackageImportQueue.PendingCount, PackageImportQueue.QueuedInteractive, false))
+            {
+                SetMessage(ManagerText.BusyNotStarted.Replace("{n}", addon.Name), MessageType.Warning);
+                return ImportOutcome.Release();
+            }
             // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
             // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
             // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.

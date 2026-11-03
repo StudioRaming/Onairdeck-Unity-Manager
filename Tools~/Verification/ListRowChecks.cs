@@ -23,6 +23,45 @@ internal static class ListRowChecks
         check("file core (G4): a run puts the base license before the Plus license, and the list nests Plus under the base license row", FileCoreOrderAndNest);
         check("file core (G4 retest D1): the base that reaches a buyer only as a purchase row is the core to install first, and Plus nests under it", FileCoreFromPurchase);
         check("import queue (G4 retest D2): an import a script reload cut off counts as imported only when every file of the package is on disk with its GUID", ImportSettledAfterReload);
+        check("import queue (G4 retest review R1-R3): old content is not an import, an open import window waits, core-first does not mix import modes", RetestReviewRules);
+    }
+
+    private static void RetestReviewRules()
+    {
+        // R2: an update keeps paths and GUIDs; the old files alone are not the new import. With the package's hashes, content decides.
+        var project = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "oad-r2-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var full = System.IO.Path.Combine(project, "Assets", "Tool", "A.cs");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full));
+            System.IO.File.WriteAllText(full, "old");
+            System.IO.File.WriteAllText(full + ".meta", "guid: a1\n");
+            var assets = new List<PackageAsset> { new PackageAsset { Path = "Assets/Tool/A.cs", Guid = "a1" } };
+            string newHash;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                newHash = BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes("new"))).Replace("-", "").ToLowerInvariant();
+            var hashes = new Dictionary<string, string> { { "a1", newHash } };
+            Require(!UnityPackageArchive.ImportedOnDisk(project, assets, hashes), "old content with the same GUID");
+            System.IO.File.WriteAllText(full, "new");
+            Require(UnityPackageArchive.ImportedOnDisk(project, assets, hashes), "new content");
+            Require(UnityPackageArchive.ImportedOnDisk(project, assets), "without hashes the GUID check alone still works");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(project, true); } catch (Exception) { }
+        }
+
+        // R1: after a reload, a started head that is on disk is done; an interactive one that is not may still have its window open,
+        // so it waits for the window (callbacks re-armed); a non-interactive one that is not on disk failed.
+        Equal(ImportSettle.Imported, UnityPackageArchive.SettleAfterReload(true, true));
+        Equal(ImportSettle.Imported, UnityPackageArchive.SettleAfterReload(true, false));
+        Equal(ImportSettle.WaitForWindow, UnityPackageArchive.SettleAfterReload(false, true));
+        Equal(ImportSettle.Failed, UnityPackageArchive.SettleAfterReload(false, false));
+
+        // R3: a non-interactive core download may not join a queue that holds an interactive import (Enqueue would throw).
+        Require(CoreAddons.CanJoinImportQueue(0, true, false), "empty queue");
+        Require(CoreAddons.CanJoinImportQueue(2, false, false), "same mode");
+        Require(!CoreAddons.CanJoinImportQueue(1, true, false), "an interactive import is still queued");
     }
 
     // test1 on 2026-11-04: the base import compiled scripts, the domain reloaded mid-import, the queue's completion callback never

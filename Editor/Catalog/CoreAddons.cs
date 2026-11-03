@@ -136,6 +136,15 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// True when an import of mode <paramref name="interactive"/> may join the import queue: it is empty, or what waits there runs in
+        /// the same mode (the queue cannot mix them). Core-first refuses with the "busy" text otherwise (review R3).
+        /// </summary>
+        public static bool CanJoinImportQueue(int queued, bool queuedInteractive, bool interactive)
+        {
+            return queued <= 0 || queuedInteractive == interactive;
+        }
+
+        /// <summary>
         /// The row that installs <paramref name="core"/> before an add-on, or null: the core package's license row
         /// (<paramref name="offersPackage"/>), then a license row that ships a file core (<paramref name="offersFile"/>), then a purchase
         /// row that carries the core with files to download. The last one is how most buyers hold VModular: the base license comes with
