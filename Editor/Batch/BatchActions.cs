@@ -14,11 +14,13 @@ namespace OnAirDeck.UnityManager
         /// must not stop at one dialog per package (a single download from the window keeps the dialog). A purchase add-on of a core
         /// (<paramref name="core"/>, VModular Plus) runs only when its core is here by then, else it fails with the reason and nothing is downloaded.
         /// </summary>
-        public static BatchItem Download(string sessionToken, PurchaseItem item, CancellationToken cancel = default(CancellationToken), string core = "")
+        public static BatchItem Download(string sessionToken, PurchaseItem item, CancellationToken cancel = default(CancellationToken), string core = "",
+            string name = "")
         {
             return new BatchItem
             {
-                Name = item.name,
+                // The row's name with its option (CatalogEntry.DisplayName), so two options of one product read apart in the run.
+                Name = string.IsNullOrEmpty(name) ? item.name : name,
                 Version = DownloadService.VersionOf(item),
                 Run = async progress =>
                 {

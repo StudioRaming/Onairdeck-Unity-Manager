@@ -113,13 +113,13 @@ namespace OnAirDeck.UnityManager
             var list = new List<WatchedEntry>();
             if (response == null) return list;
             var keys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var item in response.purchases ?? new PurchaseItem[0])
+            // The same rows and keys as the list (ManagerCatalog.Build), so a newly bought option of a product is announced too.
+            foreach (var row in FavoritesLogic.PurchaseRows(response.purchases))
             {
-                if (item == null || !item.ShownInUnity) continue;
+                var item = row.Key;
                 var id = !string.IsNullOrEmpty(item.product_id) ? item.product_id : item.item_id;
-                var key = FavoritesLogic.EntryKey(FavoriteKind.Purchase, id);
-                if (key == null || !keys.Add(key)) continue;
-                list.Add(new WatchedEntry { Kind = FavoriteKind.Purchase, Id = id, Key = key, Purchase = item });
+                if (!keys.Add(row.Value)) continue;
+                list.Add(new WatchedEntry { Kind = FavoriteKind.Purchase, Id = id, Key = row.Value, Purchase = item });
             }
             foreach (var license in response.licenses ?? new LicenseEntry[0])
             {
