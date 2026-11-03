@@ -101,6 +101,13 @@ namespace OnAirDeck.UnityManager
             var nameOf = new Dictionary<string, string>();
             // Purchase and file items by the item itself: two options of one product share a product name.
             var rowOf = new Dictionary<BatchItem, CatalogEntry>();
+            // Writing over another option's files is asked once per batch; that answer holds for the rest of the run (review R2).
+            bool? overwriteAnswer = null;
+            Func<CatalogEntry, Func<List<string>, bool>> askOnce = row => paths =>
+            {
+                if (!overwriteAnswer.HasValue) overwriteAnswer = ConfirmOptionOverwrite(row, paths, true);
+                return overwriteAnswer.Value;
+            };
             var versions = new List<LicenseVersionEntry>();
             var waiting = new List<PendingAddon>();
             // MingToon Core before its add-ons (owner rule 2026-11-01); everything else keeps the list order.
@@ -110,7 +117,7 @@ namespace OnAirDeck.UnityManager
                 if (entry.Kind == FavoriteKind.Purchase && CoreAddons.CoreOf(entry).Length > 0)
                 {
                     // A purchase add-on of a core (VModular Plus): after every package, like a file add-on, so the core of this run is in first.
-                    var addonItem = BatchActions.Download(token, entry.Purchase, cancel, CoreAddons.CoreOf(entry), entry.DisplayName);
+                    var addonItem = BatchActions.Download(token, entry.Purchase, cancel, CoreAddons.CoreOf(entry), entry.DisplayName, OtherOptionKeys(entry), askOnce(entry));
                     fileItems.Add(addonItem);
                     rowOf[addonItem] = entry;
                     waiting.Add(new PendingAddon { AddonKey = entry.Key, Core = CoreAddons.CoreOf(entry), Name = entry.Name, SinceUnix = NowUnix() });
@@ -118,7 +125,7 @@ namespace OnAirDeck.UnityManager
                 }
                 if (entry.Kind == FavoriteKind.Purchase)
                 {
-                    var item = BatchActions.Download(token, entry.Purchase, cancel, "", entry.DisplayName);
+                    var item = BatchActions.Download(token, entry.Purchase, cancel, "", entry.DisplayName, OtherOptionKeys(entry), askOnce(entry));
                     items.Add(item);
                     rowOf[item] = entry;
                     continue;

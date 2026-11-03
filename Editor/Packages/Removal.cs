@@ -117,6 +117,8 @@ namespace OnAirDeck.UnityManager
             PlacedEntry entry;
             if (!all.Products.TryGetValue(key, out entry)) all.Products[key] = entry = new PlacedEntry();
             var added = AddUnique(entry.Paths, tracker.Paths, RemovalPlanner.IsAssetFile, false);
+            // A file this install created (or took over from another option, OptionOverwrite) is no longer one it only wrote over.
+            added |= entry.Touched.RemoveAll(t => entry.Paths.Exists(p => string.Equals(p, t, StringComparison.OrdinalIgnoreCase))) > 0;
             // A file this product created before stays created by it when a reinstall writes it again.
             var touched = new List<string>();
             foreach (var path in tracker.Touched) if (!entry.Paths.Exists(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) touched.Add(path);
@@ -178,6 +180,32 @@ namespace OnAirDeck.UnityManager
                 }
             }
             Save(projectRoot, all);
+        }
+
+        /// <summary>
+        /// The answer "overwrite" of <see cref="OptionOverwrite"/>: the other options of the product give these files up (the path and its
+        /// GUID and SHA-256 proofs), so the option that wrote over them now owns them and a removal of either option stays correct.
+        /// </summary>
+        public static void HandOver(string projectRoot, IEnumerable<string> fromKeys, ICollection<string> paths)
+        {
+            if (string.IsNullOrEmpty(projectRoot) || fromKeys == null || paths == null || paths.Count == 0) return;
+            var all = Load(projectRoot);
+            var changed = false;
+            foreach (var key in fromKeys)
+            {
+                PlacedEntry entry;
+                if (string.IsNullOrEmpty(key) || !all.Products.TryGetValue(key, out entry)) continue;
+                foreach (var path in paths)
+                {
+                    var at = entry.Paths.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                    if (at < 0) continue;
+                    entry.Paths.RemoveAt(at);
+                    entry.Guids.Remove(path);
+                    entry.Hashes.Remove(path);
+                    changed = true;
+                }
+            }
+            if (changed) Save(projectRoot, all);
         }
 
         private static bool AddUnique(List<string> list, IEnumerable<string> items, Func<string, bool> valid, bool folders)
@@ -265,6 +293,23 @@ namespace OnAirDeck.UnityManager
             BeforeCreateFolder(clean.Substring(0, clean.LastIndexOf('/')));
         }
 
+        /// <summary>
+        /// The answer "overwrite" of <see cref="OptionOverwrite"/>: these files, which another option of the product created and this install
+        /// wrote over, count as created by this install (with the proof it wrote them with). Call after they were written.
+        /// </summary>
+        public void Adopt(IEnumerable<string> paths)
+        {
+            if (paths == null) return;
+            foreach (var raw in paths)
+            {
+                var clean = (raw ?? "").Replace('\\', '/');
+                var at = Touched.FindIndex(p => string.Equals(p, clean, StringComparison.OrdinalIgnoreCase));
+                if (at < 0) continue;
+                Touched.RemoveAt(at);
+                Paths.Add(clean);
+            }
+        }
+
         /// <summary>Call before a folder is created: it and every parent that does not exist yet are created by this install.</summary>
         public void BeforeCreateFolder(string folder)
         {
@@ -275,6 +320,75 @@ namespace OnAirDeck.UnityManager
                 if (_folders.Add(clean)) Folders.Add(clean);
                 clean = clean.Substring(0, clean.LastIndexOf('/'));
             }
+        }
+    }
+
+    /// <summary>One file an install is about to write and what it will hold: a .unitypackage asset by its GUID, a copied or extracted file by its SHA-256.</summary>
+    internal sealed class IncomingFile
+    {
+        public string Path = "";
+        public string Guid = "";
+        public string Sha256 = "";
+    }
+
+    /// <summary>The person chose not to write over another option's files: nothing of this option was written.</summary>
+    internal sealed class OptionOverwriteDeclinedException : OperationCanceledException
+    {
+        public readonly int Files;
+
+        public OptionOverwriteDeclinedException(int files)
+            : base("This option would write other contents over " + files + " file(s) another option of the same product installed; it was not installed.")
+        {
+            Files = files;
+        }
+    }
+
+    /// <summary>
+    /// Two options (line items) of one product install into the same product folder, and a .unitypackage at its own paths. When an
+    /// install would write other contents over a file another option created (its PlacedFiles record lists it as created, the file is
+    /// here, and its GUID or SHA-256 differs), it asks first (review R2, lead decision 2026-11-04): overwrite hands the files over
+    /// (<see cref="PlacedFiles.HandOver"/>, <see cref="PlacementTracker.Adopt"/>), cancel writes nothing of this option. Installs from
+    /// before the Manager kept records, other products and the user's files are never asked about. No UnityEngine.
+    /// </summary>
+    internal static class OptionOverwrite
+    {
+        /// <summary>The paths of <paramref name="incoming"/> another option created, that are here, and that this install would change.</summary>
+        public static List<string> Conflicts(string projectRoot, PlacedRecords placed, IEnumerable<string> otherOptionKeys, IEnumerable<IncomingFile> incoming)
+        {
+            var result = new List<string>();
+            if (placed == null || otherOptionKeys == null || incoming == null) return result;
+            var theirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in otherOptionKeys)
+            {
+                PlacedEntry entry;
+                if (!string.IsNullOrEmpty(key) && placed.Products.TryGetValue(key, out entry)) foreach (var path in entry.Paths) theirs.Add(path);
+            }
+            if (theirs.Count == 0) return result;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in incoming)
+            {
+                if (file == null) continue;
+                var path = (file.Path ?? "").Replace('\\', '/');
+                if (!theirs.Contains(path) || !seen.Add(path) || !File.Exists(RemovalPlanner.Absolute(projectRoot, path))) continue;
+                var differs = RemovalPlanner.IsGuid(file.Guid)
+                    ? !string.Equals(RemovalPlanner.MetaGuid(projectRoot, path), file.Guid, StringComparison.OrdinalIgnoreCase)
+                    : !string.IsNullOrEmpty(file.Sha256) && RemovalPlanner.FileSha256(projectRoot, path) != file.Sha256;
+                if (differs) result.Add(path);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Before an install writes anything: the files it would take over from another option, after <paramref name="confirm"/> said yes
+        /// (empty when there are none, and then nothing is asked). Throws <see cref="OptionOverwriteDeclinedException"/> when the answer is
+        /// no, or when there is no one to ask.
+        /// </summary>
+        public static List<string> Check(string projectRoot, ICollection<string> otherOptionKeys, Func<IEnumerable<IncomingFile>> incoming, Func<List<string>, bool> confirm)
+        {
+            if (otherOptionKeys == null || otherOptionKeys.Count == 0 || incoming == null) return new List<string>();
+            var conflicts = Conflicts(projectRoot, PlacedFiles.Load(projectRoot), otherOptionKeys, incoming());
+            if (conflicts.Count == 0 || (confirm != null && confirm(conflicts))) return conflicts;
+            throw new OptionOverwriteDeclinedException(conflicts.Count);
         }
     }
 
@@ -458,6 +572,17 @@ namespace OnAirDeck.UnityManager
             if (string.IsNullOrEmpty(text) || text.Length != 32) return false;
             foreach (var c in text) if (!Uri.IsHexDigit(c)) return false;
             return true;
+        }
+
+        /// <summary>The SHA-256 (lowercase hex) of what <paramref name="stream"/> holds from here to its end.</summary>
+        public static string StreamSha256(Stream stream)
+        {
+            using (var sha = SHA256.Create())
+            {
+                var sb = new StringBuilder(64);
+                foreach (var b in sha.ComputeHash(stream)) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
         }
 
         /// <summary>The GUID in &lt;path&gt;.meta, or "" when there is none.</summary>

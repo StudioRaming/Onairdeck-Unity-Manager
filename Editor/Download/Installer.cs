@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using UnityEngine;
@@ -93,6 +94,31 @@ namespace OnAirDeck.UnityManager
             if (skipped > 0)
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Skipped " + skipped + " unsafe entr" + (skipped == 1 ? "y" : "ies") + " in " + Path.GetFileName(zipPath));
             return written;
+        }
+
+        /// <summary>
+        /// The files <see cref="ExtractZip(string, string, out int, PlacementTracker)"/> would write into <paramref name="productFolder"/>
+        /// (asset path and the SHA-256 of the entry), by the same path rules; nothing is written.
+        /// </summary>
+        public static List<IncomingFile> ZipTargets(string zipPath, string productFolder)
+        {
+            var targets = new List<IncomingFile>();
+            var absoluteFolder = ToAbsolute(productFolder);
+            using (var stream = File.OpenRead(zipPath))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\")) continue;
+                    var relative = PathSafety.SafeRelativePath(entry.FullName);
+                    if (relative == null || relative.StartsWith("__MACOSX/")) continue;
+                    var destination = Path.GetFullPath(Path.Combine(absoluteFolder, relative.Replace('/', Path.DirectorySeparatorChar)));
+                    if (!PathSafety.IsInside(absoluteFolder, destination)) continue;
+                    using (var input = entry.Open())
+                        targets.Add(new IncomingFile { Path = productFolder + "/" + relative, Sha256 = RemovalPlanner.StreamSha256(input) });
+                }
+            }
+            return targets;
         }
 
         public static bool IsUnityPackage(string fileName)

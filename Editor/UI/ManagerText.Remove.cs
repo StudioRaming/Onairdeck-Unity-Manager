@@ -35,6 +35,14 @@ namespace OnAirDeck.UnityManager
         /// <summary>{b} backup folders.</summary>
         public static string RmBackup { get { return Pick("패키지는 여기에 보관했어요: {b}", "The package is kept at: {b}", "パッケージはここに保管しました: {b}"); } }
         /// <summary>{list} what could not be removed.</summary>
+        public static string OwTitle { get { return Pick("다른 옵션의 파일을 덮어써요", "This Overwrites Another Option's Files", "別のオプションのファイルを上書きします"); } }
+        /// <summary>{n} the row (name and option), {c} how many files.</summary>
+        public static string OwAsk { get { return Pick("{n}: 같은 상품의 다른 옵션이 설치한 파일 {c}개를 다른 내용으로 덮어써요. 덮어쓰면 그 파일은 이 옵션의 것이 되고, 다른 옵션의 내용은 남지 않아요.", "{n}: this writes other contents over {c} files another option of the same product installed. If it does, those files become this option's and the other option's version is gone.", "{n}: 同じ商品の別のオプションが入れたファイル{c}件を別の内容で上書きします。上書きすると、そのファイルはこのオプションのものになり、別のオプションの内容は残りません。"); } }
+        public static string OwAskBatch { get { return Pick("이 답은 이번 일괄 설치의 다른 옵션에도 똑같이 써요.", "This answer is used for every other option in this batch.", "この答えは今回の一括インストールの他のオプションにも使います。"); } }
+        public static string OwOverwrite { get { return Pick("덮어쓰기", "Overwrite", "上書き"); } }
+        public static string OwCancelOption { get { return Pick("이 옵션 취소", "Cancel This Option", "このオプションを取り消す"); } }
+        /// <summary>{n} the row (name and option).</summary>
+        public static string OwCancelled { get { return Pick("{n}은 설치하지 않았어요. 다른 옵션의 파일은 그대로예요.", "{n} was not installed. The other option's files are unchanged.", "{n} はインストールしませんでした。別のオプションのファイルはそのままです。"); } }
         public static string RmFailed { get { return Pick("지우지 못한 것이 있어서 거기서 멈췄어요: {list}", "Some could not be removed, so it stopped there: {list}", "削除できないものがあったため、そこで止めました: {list}"); } }
     }
 }
