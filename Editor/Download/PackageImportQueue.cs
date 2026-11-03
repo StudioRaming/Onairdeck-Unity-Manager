@@ -54,9 +54,7 @@ namespace OnAirDeck.UnityManager
         // Unity's import window (internal in 2021.3, UnityEditor.PackageImport). Null in a Unity that renamed it: the watch then treats
         // the window as open, so an interactive import waits for its callback as it did before the watch.
         private static readonly Type ImportWindowType = typeof(EditorWindow).Assembly.GetType("UnityEditor.PackageImport");
-        private static double _startedAt;
-        private static double _windowSeenAt;
-        private static bool _windowSeen;
+        private static readonly ImportWatcher Watcher = new ImportWatcher();
         private static double _lastWatch;
 
         static PackageImportQueue()
@@ -79,8 +77,7 @@ namespace OnAirDeck.UnityManager
 
         private static void StartWatch()
         {
-            _startedAt = _windowSeenAt = EditorApplication.timeSinceStartup;
-            _windowSeen = false;
+            Watcher.Start(EditorApplication.timeSinceStartup);
         }
 
         /// <summary>
@@ -90,21 +87,15 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         private static void WatchImport()
         {
-            if (!_importing) return;
+            if (!_importing || !Watcher.Active) return;
             var now = EditorApplication.timeSinceStartup;
             if (now - _lastWatch < 1) return;
             _lastWatch = now;
             var list = Load();
             if (list.Count == 0 || SessionState.GetString(StartedKey, "") != list[0]) return;
             var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
-            var open = interactive && ImportWindowOpen();
-            if (open)
-            {
-                _windowSeenAt = now;
-                _windowSeen = true;
-            }
             var busy = EditorApplication.isCompiling || EditorApplication.isUpdating;
-            if (ImportWatch.Next(interactive, open, _windowSeen, busy, now - _startedAt, now - _windowSeenAt) == ImportWatchStep.Settle)
+            if (Watcher.Tick(now, interactive, interactive && ImportWindowOpen(), busy))
                 SettleFromDisk(list[0], interactive ? "its import window closed without an answer" : "no completion callback came");
         }
 
@@ -384,6 +375,7 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCancelled -= OnCancelled;
             AssetDatabase.importPackageFailed -= OnFailed;
             _overwritten = null;
+            Watcher.Stop();
             SessionState.EraseString(StartedKey);
 
             var list = Load();

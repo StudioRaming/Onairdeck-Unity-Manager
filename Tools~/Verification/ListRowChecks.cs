@@ -68,9 +68,12 @@ internal static class ListRowChecks
         // An open window waits for the person, however long (R2: no unlock, no settle under it).
         Equal(ImportWatchStep.Wait, ImportWatch.Next(true, true, true, false, 100000, 0));
         Equal(ImportWatchStep.Wait, ImportWatch.Next(false, true, true, false, 100000, 100000));
-        // Unity is still importing or compiling: the callback may still come.
-        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, true, 100000, 100000));
-        Equal(ImportWatchStep.Wait, ImportWatch.Next(false, false, false, true, 100000, 100000));
+        // Unity is still importing or compiling: the callback may still come, but not forever (r2 R5: with reloads held, a finished
+        // compile can keep reporting "compiling" until the reload, which waits for the hold).
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, true, 100000, noCallback - 1));
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(true, false, true, true, 100000, noCallback));
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(false, false, false, true, noCallback - 1, noCallback - 1));
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(false, false, false, true, noCallback, noCallback));
         // Interactive, the window was shown and is gone (closed with X): settles after the grace, so the queue goes on (R1).
         Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, false, 100, grace - 0.5));
         Equal(ImportWatchStep.Settle, ImportWatch.Next(true, false, true, false, 100, grace));
@@ -82,6 +85,26 @@ internal static class ListRowChecks
         // Non-interactive: no window to watch; only a callback that never came within the limit settles it.
         Equal(ImportWatchStep.Wait, ImportWatch.Next(false, false, false, false, noCallback - 1, noCallback - 1));
         Equal(ImportWatchStep.Settle, ImportWatch.Next(false, false, false, false, noCallback, noCallback));
+
+        // The watcher the queue ticks (r2 R3): it remembers the window, measures the grace from when the window was last open, settles
+        // once, and does nothing before Start or after Stop.
+        var watcher = new ImportWatcher();
+        Require(!watcher.Tick(1000, true, false, false), "not started");
+        watcher.Start(0);
+        Require(!watcher.Tick(1, true, false, false), "window not shown yet");
+        Require(!watcher.Tick(2, true, true, false), "window open");
+        Require(!watcher.Tick(900, true, true, false), "window open long after the start");
+        Require(!watcher.Tick(900 + grace - 1, true, false, false), "closed a moment ago");
+        Require(watcher.Tick(900 + grace, true, false, false), "closed for the grace: settle");
+        Require(!watcher.Active && !watcher.Tick(5000, true, false, false), "settles once");
+        watcher.Start(10000);
+        Require(!watcher.Tick(10000 + noCallback - 1, false, false, true), "a new import starts its own clock");
+        watcher.Stop();
+        Require(!watcher.Tick(10000 + noCallback * 2, false, false, false), "stopped by its callback");
+        watcher.Start(0);
+        Require(!watcher.Tick(1, true, true, false), "seen");
+        watcher.Start(100);
+        Require(!watcher.Tick(100 + grace, true, false, false), "Start forgets the previous import's window");
     }
 
     private static void RetestReviewRules()

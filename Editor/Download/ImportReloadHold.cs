@@ -86,9 +86,52 @@ namespace OnAirDeck.UnityManager
         /// <param name="sinceWindow">Seconds since an import window was last seen open.</param>
         public static ImportWatchStep Next(bool interactive, bool windowOpen, bool windowSeen, bool editorBusy, double sinceStart, double sinceWindow)
         {
-            if (windowOpen || editorBusy) return ImportWatchStep.Wait;
-            if (interactive && windowSeen) return sinceWindow >= ClosedGraceSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+            if (windowOpen) return ImportWatchStep.Wait;
+            var closedWindow = interactive && windowSeen;
+            // Busy waits only up to the long limit (review r2 R5): with reloads held, Unity can report "compiling" until the reload
+            // that waits for this very hold, so busy alone must not hold it forever.
+            if (editorBusy) return (closedWindow ? sinceWindow : sinceStart) >= NoCallbackSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+            if (closedWindow) return sinceWindow >= ClosedGraceSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
             return sinceStart >= NoCallbackSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+        }
+    }
+
+    /// <summary>
+    /// The watch of one started import (review r2 R3): its clock, whether its window was seen and when last. The queue starts it
+    /// with the import, stops it in Finish, and settles the import when <see cref="Tick"/> says so (once).
+    /// </summary>
+    internal sealed class ImportWatcher
+    {
+        private double _startedAt;
+        private double _windowSeenAt;
+        private bool _windowSeen;
+
+        public bool Active { get; private set; }
+
+        public void Start(double now)
+        {
+            Active = true;
+            _startedAt = _windowSeenAt = now;
+            _windowSeen = false;
+        }
+
+        public void Stop()
+        {
+            Active = false;
+        }
+
+        /// <summary>True once, when the import should settle from disk; the watch then stops.</summary>
+        public bool Tick(double now, bool interactive, bool windowOpen, bool editorBusy)
+        {
+            if (!Active) return false;
+            if (windowOpen)
+            {
+                _windowSeen = true;
+                _windowSeenAt = now;
+            }
+            if (ImportWatch.Next(interactive, windowOpen, _windowSeen, editorBusy, now - _startedAt, now - _windowSeenAt) != ImportWatchStep.Settle) return false;
+            Active = false;
+            return true;
         }
     }
 }
