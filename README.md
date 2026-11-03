@@ -27,7 +27,7 @@ Advanced, if you use VRChat Creator Companion (VCC): add the listing `https://st
 
 ## Use
 
-1. Open **Window ▸ Atelier Manager** and click **Sign in with browser**. Approve the request on onairdeck.com. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
+1. Open **Window ▸ Atelier Manager** and click **Sign in with browser**. Approve the request on atelier.io.kr. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
 2. Your purchases are listed with the files the seller made available for Unity. Items the seller has not enabled for Unity say "Not available in Unity".
 3. Click **Download**. The first download of an item makes the purchase non-refundable (the same rule as the website), so Unity asks you to confirm.
    - `.unitypackage` files open Unity's normal import dialog and use the asset paths stored in the package.
@@ -137,7 +137,7 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 
 ### 사용
 
-1. **Window ▸ 아틀리에 매니저 ▸ Sign in with browser**를 누르고 onairdeck.com에서 로그인을 승인하세요. 로그인은 컴퓨터의 모든 Unity 프로젝트에서 공유되며, 로그아웃하지 않으면 30일 동안 유지됩니다.
+1. **Window ▸ 아틀리에 매니저 ▸ Sign in with browser**를 누르고 atelier.io.kr에서 로그인을 승인하세요. 로그인은 컴퓨터의 모든 Unity 프로젝트에서 공유되며, 로그아웃하지 않으면 30일 동안 유지됩니다.
 2. 구매 목록에서 **Download** 또는 **Download again**을 누르세요. 최초 다운로드 시 환불이 불가능해진다는 확인 창이 표시됩니다.
 3. 이미지 등 일반 파일과 ZIP 압축 해제 결과는 `Assets/StudioRaming_Onairdeck/<상품명>/`에 저장됩니다. `.unitypackage`는 Unity 가져오기 창을 열며 패키지에 저장된 경로를 사용합니다.
 4. 판매자가 파일을 변경하면 **Update available**이 표시됩니다. **Refresh**로 목록을 갱신하세요.
@@ -174,7 +174,7 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 
 ### 使い方
 
-1. **Window ▸ アトリエマネージャー ▸ Sign in with browser** を押し、onairdeck.comでサインインを承認してください。サインインは同じコンピューターの全Unityプロジェクトで共有され、サインアウトしなければ30日間有効です。
+1. **Window ▸ アトリエマネージャー ▸ Sign in with browser** を押し、atelier.io.krでサインインを承認してください。サインインは同じコンピューターの全Unityプロジェクトで共有され、サインアウトしなければ30日間有効です。
 2. 購入一覧の **Download** または **Download again** を押してください。初回ダウンロード時は、購入が返金対象外になることを確認するダイアログが表示されます。
 3. 画像などの通常ファイルとZIPの展開結果は `Assets/StudioRaming_Onairdeck/<商品名>/` に保存されます。`.unitypackage` はUnityのインポート画面を開き、パッケージに保存されたパスを使用します。
 4. 出品者がファイルを変更すると **Update available** が表示されます。**Refresh** で一覧を更新してください。

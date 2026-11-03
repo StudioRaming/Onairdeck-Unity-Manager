@@ -7,7 +7,7 @@ namespace OnAirDeck.UnityManager
 {
     /// <summary>
     /// Browser sign-in (PKCE + localhost callback) and sign-out against OnAirDeck.
-    /// Flow: open onairdeck.com/plugin-auth → user approves → browser redirects to our
+    /// Flow: open atelier.io.kr/plugin-auth (OnAirDeckConfig.WebsiteUrl) → user approves → browser redirects to our
     /// localhost listener with a one-time code → exchange it for a 30-day session token.
     /// </summary>
     internal static class AuthService

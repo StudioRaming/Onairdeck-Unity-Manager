@@ -9,7 +9,11 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class OnAirDeckConfig
     {
-        public const string WebsiteUrl = "https://onairdeck.com";
+        /// <summary>
+        /// The website the Manager signs in on (/plugin-auth) and opens for its own links: Atelier (owner 2026-11-04; was
+        /// https://onairdeck.com). Links the server sends (product_url) keep their own host.
+        /// </summary>
+        public const string WebsiteUrl = "https://atelier.io.kr";
         public const string FunctionsUrl = "https://pxxhdnsqezitxlkievhf.supabase.co/functions/v1";
         public const string PublishableKey = "sb_publishable_SdtMMXg2e0zHhubDu1SLxw_0zbQgv4-";
 
