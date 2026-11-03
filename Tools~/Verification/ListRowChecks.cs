@@ -18,6 +18,86 @@ internal static class ListRowChecks
         check("list checkbox: a package or a file (.unitypackage) license can be batched; up to date, newer, or nothing offered cannot, each with its reason", BatchRule);
         check("purchase add-on: a row is VModular Plus only when every file it lists is the add-on option's; the base product alone, a mixed row, no files or another product never are", PurchaseAddonRule);
         check("purchase add-on: a run puts VModular first and its purchase add-on last, the base product's own row in between", PurchaseAddonOrderAndNest);
+        check("file core (G4): the live ids map the Plus license to VModular, the base license and a base purchase row carry it, a mixed Plus row is no add-on", FileCoreIds);
+        check("file core (G4): VModular is here by its marker in Assets/ or by a package in Packages/, not by an unrelated file", FileCoreHere);
+        check("file core (G4): a run puts the base license before the Plus license, and the list nests Plus under the base license row", FileCoreOrderAndNest);
+    }
+
+    // The live ids (desk read 2026-11-04): product 7aac2c69, base license 0c873fc3 (VModular_1.0.0), Plus license 39a68f32
+    // (VModular_Plus_1.0.0), base file 2a0417aa, Plus file d888196a.
+    private const string LiveProduct = "7aac2c69-e72e-46f9-a928-5a9779392165";
+    private const string BaseLicense = "0c873fc3-af50-4a2c-987f-cce1b9949185";
+    private const string PlusLicense = "39a68f32-437f-48e0-8082-da3b67b3c319";
+    private const string BaseFile = "2a0417aa-0f1f-43b8-a7e7-c53824bf4ff6";
+    private const string PlusFile = "d888196a-c4ac-4f97-8fff-680effb40f7e";
+
+    private static void FileCoreIds()
+    {
+        Equal(Vmodular, CoreAddons.CoreOf("", PlusLicense));
+        Equal("", CoreAddons.CoreOf("", BaseLicense));
+        Equal(Vmodular, CoreAddons.FileCoreOfLicense(BaseLicense));
+        Equal("", CoreAddons.FileCoreOfLicense(PlusLicense));
+        Equal(Vmodular, CoreAddons.CoreProvidedBy(LiveLicense("VModular", BaseLicense)));
+        Equal("", CoreAddons.CoreProvidedBy(LiveLicense("VModular Plus", PlusLicense)));
+        // Purchase rows: the base option lists the base file; the Plus option lists both and installs both in order.
+        var baseRow = new CatalogEntry { Kind = FavoriteKind.Purchase, Purchase = Item(LiveProduct, BaseFile) };
+        var plusRow = new CatalogEntry { Kind = FavoriteKind.Purchase, Purchase = Item(LiveProduct, BaseFile, PlusFile) };
+        Equal(Vmodular, CoreAddons.CoreProvidedBy(baseRow));
+        Equal(Vmodular, CoreAddons.CoreProvidedBy(plusRow));
+        Equal("", CoreAddons.CoreOf(plusRow));                                    // carries its own core: never waits for it
+        Equal("", CoreAddons.CoreProvidedBy(new CatalogEntry { Kind = FavoriteKind.Purchase, Purchase = Item("other-product", BaseFile) }));
+        Equal(0, OnAirDeckConfig.CoreAddonsPending.Length);
+        Require(CoreAddons.MarkerAmong(Vmodular, new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
+        Require(CoreAddons.MarkerAmong(Vmodular, new[] { "Assets\\Editor\\VModularEditor\\VModularManager.cs" }));
+        Require(!CoreAddons.MarkerAmong(Vmodular, new[] { "Assets/VModualr_InAvartar/VModularOneBone.cs" }));
+        Require(!CoreAddons.MarkerAmong("com.studioraming.mingtoon", new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
+    }
+
+    private static void FileCoreHere()
+    {
+        var project = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "oad-filecore-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(project, "Assets", "Editor", "VModularEditor"));
+            Require(!CoreAddons.CoreIsHere(project, Vmodular), "empty project");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(project, "Assets", "Editor", "VModularEditor", "Other.cs"), "//");
+            Require(!CoreAddons.CoreIsHere(project, Vmodular), "an unrelated file in the folder");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(project, "Assets", "Editor", "VModularEditor", "VModularManager.cs"), "//");
+            Require(CoreAddons.CoreIsHere(project, Vmodular), "the 1.0.0 marker");
+            System.IO.File.Delete(System.IO.Path.Combine(project, "Assets", "Editor", "VModularEditor", "VModularManager.cs"));
+            var package = System.IO.Path.Combine(project, "Packages", Vmodular);
+            System.IO.Directory.CreateDirectory(package);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(package, "package.json"), "{\"name\":\"" + Vmodular + "\",\"version\":\"2.0.0\"}");
+            Require(CoreAddons.CoreIsHere(project, Vmodular), "the package form (a later option B)");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(project, true); } catch (Exception) { }
+        }
+    }
+
+    private static void FileCoreOrderAndNest()
+    {
+        var plus = LiveLicense("VModular Plus", PlusLicense);
+        var tool = LiveLicense("MaskMaker", "maskmaker");
+        var baseLicense = LiveLicense("VModular", BaseLicense);
+        var ordered = CoreAddons.OrderCoreFirst(new List<CatalogEntry> { plus, tool, baseLicense }, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId);
+        Equal("VModular|MaskMaker|VModular Plus", string.Join("|", ordered.Select(e => e.Name)));
+        Equal("VModular Plus|MaskMaker|VModular", string.Join("|",
+            RemovalPlanner.RemovalOrder(new List<CatalogEntry> { baseLicense, tool, plus }, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => "").Select(e => e.Name)));
+        var lines = new List<ListLine>
+        {
+            new ListLine { Header = true, Title = "all" },
+            new ListLine { Entry = plus }, new ListLine { Entry = tool }, new ListLine { Entry = baseLicense }
+        };
+        var nested = CoreAddons.Nest(lines);
+        Equal("all|MaskMaker|VModular|VModular Plus", string.Join("|", nested.Select(l => l.Header ? l.Title : l.Entry.Name)));
+        Equal("False|False|False|True", string.Join("|", nested.Select(l => l.Child.ToString())));
+    }
+
+    private static CatalogEntry LiveLicense(string name, string licenseId)
+    {
+        return new CatalogEntry { Key = "l:" + licenseId, Name = name, Kind = FavoriteKind.License, License = new LicenseEntry { license_id = licenseId } };
     }
 
     private static void Chips()

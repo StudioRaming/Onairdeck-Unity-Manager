@@ -90,18 +90,26 @@ namespace OnAirDeck.UnityManager
 
         // ---------- add-ons wait for their core ----------
 
-        /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
+        /// <summary>
+        /// The core is in Packages/, its old Assets folder or a file core's marker is there, or a file core's import is queued ahead
+        /// (the add-on then queues behind it).
+        /// </summary>
         private static bool CoreInstalled(string core)
         {
-            return CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core);
+            return CoreImports.HereOrComing(PackageInstallService.ProjectRoot, core);
         }
 
-        /// <summary>The list row that installs <paramref name="core"/>, or null.</summary>
+        /// <summary>
+        /// The list row that installs <paramref name="core"/>, or null: the core package's license, or a license that ships a file core
+        /// (VModular 1.0.0's .unitypackage) with a file version to install.
+        /// </summary>
         private CatalogEntry CoreEntry(string core)
         {
             if (_entries == null) return null;
             foreach (var entry in _entries)
                 if (entry.IsLicense && entry.PackageName == core && OfferedPackage(entry) != null) return entry;
+            foreach (var entry in _entries)
+                if (entry.IsLicense && entry.License != null && CoreAddons.FileCoreOfLicense(entry.LicenseId) == core && OfferedFileVersion(entry) != null) return entry;
             return null;
         }
 
@@ -189,9 +197,11 @@ namespace OnAirDeck.UnityManager
         private async Task<ImportOutcome> InstallCoreThenAddonAsync(CatalogEntry addon, CatalogEntry coreEntry, LicenseVersionEntry file)
         {
             var coreVersion = coreEntry != null ? OfferedPackage(coreEntry) : null;
+            // A file core (VModular 1.0.0): its .unitypackage version, imported into Assets/.
+            var coreFile = coreEntry != null && coreVersion == null ? OfferedFileVersion(coreEntry) : null;
             var purchase = addon.Kind == FavoriteKind.Purchase;
             if (!purchase && file == null) file = OfferedFileVersion(addon);
-            if (coreVersion == null || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
+            if ((coreVersion == null && coreFile == null) || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
             // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
             // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
             // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.
@@ -202,7 +212,13 @@ namespace OnAirDeck.UnityManager
             EditorApplication.LockReloadAssemblies();
             try
             {
-                var outcome = await DoInstallAsync(coreEntry, coreVersion, true, null);
+                var outcome = coreVersion != null ? await DoInstallAsync(coreEntry, coreVersion, true, null) : await DoInstallFileAsync(coreEntry, coreFile, true);
+                // A file core's .unitypackage imports one tick later: the add-on queues behind it, and the queue imports both in order.
+                if (coreFile != null && outcome.Report == ImportReport.Waiting && CoreImports.Coming(core))
+                {
+                    RemovePendingAddon(addon.Key);
+                    return purchase ? await DoDownloadAsync(addon, true) : await DoInstallFileAsync(addon, file, true);
+                }
                 if (outcome.Report != ImportReport.Done)
                 {
                     // A hand-off puts the core in after the next reload: the add-on follows then. Anything else: the core's row says why.

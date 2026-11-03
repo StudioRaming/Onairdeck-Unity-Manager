@@ -43,9 +43,10 @@ namespace OnAirDeck.UnityManager
 
             // Add-ons of this core that are here go first (the reverse of the install order).
             var addons = new List<CatalogEntry>();
-            if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName) && _entries != null)
+            var providedCore = CoreAddons.CoreProvidedBy(entry);
+            if (providedCore.Length > 0 && _entries != null && TakesCoreAway(root, entry, providedCore, placed))
                 foreach (var other in _entries)
-                    if (other != entry && CoreAddons.CoreOf(other) == entry.PackageName && AddonIsHere(root, other, placed)) addons.Add(other);
+                    if (other != entry && CoreAddons.CoreOf(other) == providedCore && AddonIsHere(root, other, placed)) addons.Add(other);
             addons = RemovalPlanner.RemovalOrder(addons, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => e.IsLicense ? "" : CoreAddons.CoreOf(e));
 
             var steps = new List<RemovalStep>();
@@ -94,6 +95,18 @@ namespace OnAirDeck.UnityManager
         {
             try { PlacedFiles.Release(root, key); }
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the placed-files record: " + e.Message); }
+        }
+
+        /// <summary>
+        /// Removing <paramref name="entry"/> takes <paramref name="core"/> out of the project: always for a core package; for a file core
+        /// (VModular 1.0.0, review N2) only when the core's marker file is one this removal moves. Another row that installed the same
+        /// files (the base license and a base purchase) keeps them, and then the add-ons stay too.
+        /// </summary>
+        private bool TakesCoreAway(string root, CatalogEntry entry, string core, PlacedRecords placed)
+        {
+            if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName)) return true;
+            var dry = StepFor(root, entry, placed, new HashSet<string>(StringComparer.Ordinal), OtherOptionKeys(entry));
+            return dry.Plan.CanRun && CoreAddons.MarkerAmong(core, dry.Plan.Files);
         }
 
         /// <summary>An add-on of a core is here: its package is installed, or files it recorded (or its marked state) are in the project.</summary>

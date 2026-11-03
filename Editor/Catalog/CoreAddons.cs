@@ -25,6 +25,22 @@ namespace OnAirDeck.UnityManager
     }
 
     /// <summary>
+    /// A core sold as a .unitypackage instead of a package (<see cref="OnAirDeckConfig.FileCores"/>, VModular 1.0.0): it never has a
+    /// Packages/ folder, so a file it imports tells that it is here, and the license rows that ship it install it before an add-on.
+    /// </summary>
+    internal sealed class FileCore
+    {
+        /// <summary>Licenses whose file versions are the core (an add-on's "install the core first" installs one of them).</summary>
+        public string[] LicenseIds = new string[0];
+        /// <summary>Project-relative files the core's import writes: any of them present means the core is here.</summary>
+        public string[] Markers = new string[0];
+        /// <summary>The product whose purchase rows can carry the core's file (a purchase of the base product).</summary>
+        public string PurchaseProductId = "";
+        /// <summary>The asset file ids of the core in that product (plugin-purchases files[].file_id).</summary>
+        public string[] PurchaseFileIds = new string[0];
+    }
+
+    /// <summary>
     /// Owner rule 2026-11-01: MingToon add-ons (URP add-on, Ming Light Controller) work only with MingToon Core, so they install only when the
     /// core is installed or goes first in the same run, the list shows them under the core, and a run orders the core first. Sources, in
     /// order: a package named "&lt;core&gt;.&lt;suffix&gt;" (the URP add-on also pins its core in vpmDependencies, which the install follows), then
@@ -74,6 +90,60 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(packageName) && OnAirDeckConfig.CorePackages.ContainsKey(packageName);
         }
 
+        /// <summary>The file core (<see cref="OnAirDeckConfig.FileCores"/>) a license ships, or "".</summary>
+        public static string FileCoreOfLicense(string licenseId)
+        {
+            return FileCoreOfLicense(licenseId, OnAirDeckConfig.FileCores);
+        }
+
+        public static string FileCoreOfLicense(string licenseId, IDictionary<string, FileCore> fileCores)
+        {
+            if (string.IsNullOrEmpty(licenseId) || fileCores == null) return "";
+            foreach (var pair in fileCores)
+                if (pair.Value != null && pair.Value.LicenseIds != null && Array.IndexOf(pair.Value.LicenseIds, licenseId) >= 0) return pair.Key;
+            return "";
+        }
+
+        /// <summary>The file core a purchase row carries (it lists one of the core's files in the core's product), or "".</summary>
+        public static string FileCoreOfPurchase(PurchaseItem item, IDictionary<string, FileCore> fileCores)
+        {
+            if (item == null || item.files == null || string.IsNullOrEmpty(item.product_id) || fileCores == null) return "";
+            foreach (var pair in fileCores)
+            {
+                var core = pair.Value;
+                if (core == null || core.PurchaseFileIds == null || core.PurchaseProductId != item.product_id) continue;
+                foreach (var file in item.files)
+                    if (file != null && !string.IsNullOrEmpty(file.file_id) && Array.IndexOf(core.PurchaseFileIds, file.file_id) >= 0) return pair.Key;
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// The core this row installs, or "": a core package, a license of a file core, or a purchase row that carries a file core's file
+        /// (and is no add-on itself).
+        /// </summary>
+        public static string CoreProvidedBy(CatalogEntry entry)
+        {
+            if (entry == null) return "";
+            if (entry.IsLicense)
+            {
+                if (IsCore(entry.PackageName)) return entry.PackageName;
+                return FileCoreOfLicense(entry.LicenseId);
+            }
+            return CoreOfPurchase(entry.Purchase).Length > 0 ? "" : FileCoreOfPurchase(entry.Purchase, OnAirDeckConfig.FileCores);
+        }
+
+        /// <summary>True when the core is a file core whose marker is one of <paramref name="paths"/> (project-relative).</summary>
+        public static bool MarkerAmong(string core, ICollection<string> paths)
+        {
+            FileCore fileCore;
+            if (string.IsNullOrEmpty(core) || paths == null || !OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) || fileCore == null) return false;
+            foreach (var marker in fileCore.Markers ?? new string[0])
+                foreach (var path in paths)
+                    if (string.Equals((path ?? "").Replace('\\', '/'), marker, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         /// <summary>The display name of a core package ("MingToon Core").</summary>
         public static string CoreName(string core)
         {
@@ -81,11 +151,18 @@ namespace OnAirDeck.UnityManager
             return core != null && OnAirDeckConfig.CorePackages.TryGetValue(core, out name) ? name : core ?? "";
         }
 
-        /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
+        /// <summary>
+        /// The core is in Packages/, its old Assets folder is there (an old install the add-on also works with), or a file core's marker
+        /// file is (VModular 1.0.0 imports into Assets/; a later package form in Packages/ counts through the first check).
+        /// </summary>
         public static bool CoreIsHere(string projectRoot, string core)
         {
             if (string.IsNullOrEmpty(core)) return true;
             if (!string.IsNullOrEmpty(InstalledPackages.InstalledVersion(projectRoot, core))) return true;
+            FileCore fileCore;
+            if (OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) && fileCore != null)
+                foreach (var marker in fileCore.Markers ?? new string[0])
+                    if (!string.IsNullOrEmpty(marker) && File.Exists(Path.Combine(projectRoot, marker.Replace('/', Path.DirectorySeparatorChar)))) return true;
             string legacy;
             return OnAirDeckConfig.LegacyAssetFolders.TryGetValue(core, out legacy) && Directory.Exists(Path.Combine(projectRoot, legacy.Replace('/', Path.DirectorySeparatorChar)));
         }
@@ -116,7 +193,7 @@ namespace OnAirDeck.UnityManager
             foreach (var item in items)
             {
                 var package = packageOf(item) ?? "";
-                if (IsCore(package)) cores.Add(item);
+                if (IsCore(package) || FileCoreOfLicense(licenseOf(item)).Length > 0) cores.Add(item);
                 else if (CoreOf(package, licenseOf(item)).Length > 0 || (purchaseCoreOf != null && (purchaseCoreOf(item) ?? "").Length > 0)) addons.Add(item);
                 else middle.Add(item);
             }
@@ -149,7 +226,10 @@ namespace OnAirDeck.UnityManager
         {
             var corePackages = new HashSet<string>(StringComparer.Ordinal);
             foreach (var row in rows)
-                if (row.Entry != null && IsCore(row.Entry.PackageName)) corePackages.Add(row.Entry.PackageName);
+            {
+                var provided = row.Entry != null && row.Entry.IsLicense ? CoreProvidedBy(row.Entry) : "";
+                if (provided.Length > 0) corePackages.Add(provided);
+            }
             var children = new Dictionary<string, List<ListLine>>(StringComparer.Ordinal);
             var kept = new List<ListLine>();
             foreach (var row in rows)
@@ -170,10 +250,10 @@ namespace OnAirDeck.UnityManager
             foreach (var row in kept)
             {
                 result.Add(row);
-                var package = row.Entry != null ? row.Entry.PackageName : "";
+                var package = row.Entry != null && row.Entry.IsLicense ? CoreProvidedBy(row.Entry) : "";
                 List<ListLine> list;
                 // Two rows of the same core (a free and a paid license that did not merge): the add-ons go under the first.
-                if (IsCore(package) && placed.Add(package) && children.TryGetValue(package, out list)) result.AddRange(list);
+                if (package.Length > 0 && placed.Add(package) && children.TryGetValue(package, out list)) result.AddRange(list);
             }
             return result;
         }

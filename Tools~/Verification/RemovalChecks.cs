@@ -33,7 +33,7 @@ internal static class RemovalChecks
         check("removal proof: a copied file the user changed, or replaced after deleting the product's, stays; an update of the product takes the new contents; no proof, no removal (r3 R13)", HashProof);
         check("removal after the files went: a file saved meanwhile at a path that just went keeps its folder (r3 R10)", FolderRecheckAfter);
         check("removal zip: a zip's folder entries and the product folder are recorded before they are made, so they go once empty (r2 R12)", ZipFolders);
-        check("removal package: VCC lists it, VModular's add-ons not yet known (r1 R5), or not here: refused with its reason", PackageRefusals);
+        check("removal package: VCC lists it or not here: refused with its reason; VModular is removable now its add-on is known", PackageRefusals);
         check("removal record file: keeps only safe Assets/ paths, merges a reinstall, prunes what is gone, lists packages", Record);
         check("removal license file: the product's own onairdeck.license by the id inside it, never another product's", OwnLicenseFiles);
         check("removal license file: one option of a product keeps the shared license while another option still has a recorded file here", OtherOptionKeepsLicense);
@@ -228,9 +228,11 @@ internal static class RemovalChecks
         Put(project, "Packages/vpm-manifest.json", "{\"dependencies\":{\"com.vrchat.base\":{\"version\":\"3.7.0\"}},\"locked\":{}}");
         Require(RemovalPlanner.ForPackage(project, Core, placed, null).CanRun);
         Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForPackage(project, "com.example.none", placed, null).Refusal);
-        // VModular's add-ons (VModular Plus) are not known yet: the core is never removed before them.
+        // VModular's add-on (the VModular Plus license) is known since 2026-11-04: a package form of the core is removable, and the
+        // window takes the add-on out first (CoreAddons.CoreOf of the Plus license is the core). No core is pending any more.
         Package(project, "com.studioraming.vmodular", "2.0.0");
-        Equal(RemovalRefusal.AddonsUnknown, RemovalPlanner.ForPackage(project, "com.studioraming.vmodular", placed, null).Refusal);
+        Require(RemovalPlanner.ForPackage(project, "com.studioraming.vmodular", placed, null).CanRun);
+        Equal(0, OnAirDeckConfig.CoreAddonsPending.Length);
     }
 
     private static void Record()

@@ -59,7 +59,7 @@ namespace OnAirDeck.UnityManager
                 ReleasedAt = version.released_at ?? "",
             };
             // The license file is written before a .unitypackage import starts (an import with scripts reloads the domain).
-            return await DownloadService.PlaceFilesAsync(files, Installer.ProductFolder(license.name), onProgress, cancel, interactiveImport, record,
+            var placed = await DownloadService.PlaceFilesAsync(files, Installer.ProductFolder(license.name), onProgress, cancel, interactiveImport, record,
                 license.name, version.version_label, license.license_id,
                 async summary =>
                 {
@@ -74,6 +74,48 @@ namespace OnAirDeck.UnityManager
                         Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the license file could not be written: " + e.Message);
                     }
                 }, PlacedFiles.LicenseKey(license.license_id));
+            // A file core (VModular 1.0.0) is "here" only after its import ran; until then its add-on may follow it in the same queue.
+            CoreImports.Note(CoreAddons.FileCoreOfLicense(license.license_id), placed.QueuedPackages);
+            return placed;
+        }
+    }
+
+    /// <summary>
+    /// The queued imports of a file core (<see cref="OnAirDeckConfig.FileCores"/>): its .unitypackage is imported one editor tick later
+    /// (<see cref="PackageImportQueue"/>), so an add-on that runs right after it (the next batch item, or "install the core first") would
+    /// not find its marker yet. While the core's import is still queued the add-on goes into the same queue behind it, which imports in
+    /// order. Kept in SessionState, like the queue.
+    /// </summary>
+    internal static class CoreImports
+    {
+        private const string Key = "OnAirDeck.UnityManager.CoreImports";
+
+        public static void Note(string core, IList<string> packagePaths)
+        {
+            if (string.IsNullOrEmpty(core) || packagePaths == null || packagePaths.Count == 0) return;
+            var lines = new List<string>();
+            foreach (var line in UnityEditor.SessionState.GetString(Key, "").Split('\n'))
+                if (line.IndexOf('\t') > 0 && PackageImportQueue.ResultOf(line.Substring(line.IndexOf('\t') + 1)) == PackageImportQueue.ResultPending) lines.Add(line);
+            foreach (var path in packagePaths) lines.Add(core + "\t" + path);
+            UnityEditor.SessionState.SetString(Key, string.Join("\n", lines.ToArray()));
+        }
+
+        /// <summary>A .unitypackage of <paramref name="core"/> is still waiting in the import queue.</summary>
+        public static bool Coming(string core)
+        {
+            if (string.IsNullOrEmpty(core)) return false;
+            foreach (var line in UnityEditor.SessionState.GetString(Key, "").Split('\n'))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab > 0 && line.Substring(0, tab) == core && PackageImportQueue.ResultOf(line.Substring(tab + 1)) == PackageImportQueue.ResultPending) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The core is here, or its import is queued ahead of what asks.</summary>
+        public static bool HereOrComing(string projectRoot, string core)
+        {
+            return CoreAddons.CoreIsHere(projectRoot, core) || Coming(core);
         }
     }
 }
