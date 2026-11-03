@@ -213,9 +213,16 @@ public static class OnAirDeckEditorVerification
             report.scriptReloads = SessionState.GetInt(ReloadKey, 0);
             Require(report.scriptReloads > 0, "No script reload occurred during queued imports");
             foreach (var package in fixture.packages) Require(!Directory.Exists(Path.GetDirectoryName(package)), "Completed import cache remains");
+            // Design A wiring: each import ended as imported, and the queue's reload hold is gone.
+            foreach (var package in fixture.packages)
+                Require((string)Call("PackageImportQueue", "ResultOf", package) == "imported", "Queued import did not end as imported: " + Path.GetFileName(package));
+            Require(!SessionState.GetBool("OnAirDeck.UnityManager.ImportHoldsReloads", false), "The import queue still holds script reloads");
+            var canReload = typeof(EditorApplication).GetMethod("CanReloadAssemblies", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            Require(canReload == null || (bool)canReload.Invoke(null, null), "Script reloads are still locked after the queue emptied");
             var checks = new List<string>(report.checks);
             checks.Add("Two queued packages imported, including a script that reloaded the editor domain");
             checks.Add("Import queue emptied and deleted completed package caches");
+            checks.Add("Each queued import ended as imported and the queue released its script reload hold");
             report.checks = checks.ToArray();
             report.result = "passed";
             Finish(report, 0);

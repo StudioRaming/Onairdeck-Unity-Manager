@@ -24,15 +24,15 @@ internal static class ListRowChecks
         check("file core (G4 retest D1): the base that reaches a buyer only as a purchase row is the core to install first, and Plus nests under it", FileCoreFromPurchase);
         check("import queue (G4 retest D2): an import a script reload cut off counts as imported only when every file of the package is on disk with its GUID", ImportSettledAfterReload);
         check("import queue (G4 retest review R1-R3): old content is not an import, a cut-off head settles at once, core-first does not mix import modes", RetestReviewRules);
-        check("import queue (G4 design A): script reloads are held from before ImportPackage until the import ends, released once on completed, cancelled, failed, a throw or the timeout", ReloadHeldDuringImport);
+        check("import queue (G4 design A): script reloads are held from before ImportPackage until the import ends, released once on completed, cancelled, failed or a throw", ReloadHeldDuringImport);
+        check("import queue (G4 design A r1): an open import window always waits; a window gone for the grace, or a non-interactive import with no callback in time, settles from disk", ImportWatchRules);
     }
 
     // Design A (lead, 2026-11-04): the reload that dropped the completion callback (D2) cannot happen while the queue holds reloads.
     private static void ReloadHeldDuringImport()
     {
         var locks = 0;
-        var now = 0.0;
-        var hold = new ImportReloadHold(() => locks++, () => locks--, () => now);
+        var hold = new ImportReloadHold(() => locks++, () => locks--);
 
         // Normal path: held before the import call runs, still held after it returns (an interactive window is open), released once
         // by the completion callback. A second release (a late callback) does not unlock someone else's hold.
@@ -57,17 +57,31 @@ internal static class ListRowChecks
         Require(thrown is InvalidOperationException, "error handed back");
         Require(!hold.Held && locks == 0, "released after a throw");
 
-        // Timeout backstop: a callback that never comes does not hold reloads forever.
-        now = 100;
-        hold.Run(() => { });
-        now = 100 + ImportReloadHold.TimeoutSeconds - 1;
-        Require(!hold.Tick(), "not yet");
-        Equal(1, locks);
-        now = 100 + ImportReloadHold.TimeoutSeconds;
-        Require(hold.Tick(), "timed out");
-        Equal(0, locks);
-        Require(!hold.Tick() && !hold.Release(), "nothing left to release");
-        Equal(0, locks);
+    }
+
+    // Design A review r1 (R1, R2): Unity raises no callback when its import window is closed with X (2021.3 PackageImport has no
+    // close hook), so a hold must end without one; but never while the window is open, or the person's answer would be lost to a reload.
+    private static void ImportWatchRules()
+    {
+        var grace = ImportWatch.ClosedGraceSeconds;
+        var noCallback = ImportWatch.NoCallbackSeconds;
+        // An open window waits for the person, however long (R2: no unlock, no settle under it).
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, true, true, false, 100000, 0));
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(false, true, true, false, 100000, 100000));
+        // Unity is still importing or compiling: the callback may still come.
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, true, 100000, 100000));
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(false, false, false, true, 100000, 100000));
+        // Interactive, the window was shown and is gone (closed with X): settles after the grace, so the queue goes on (R1).
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, false, 100, grace - 0.5));
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(true, false, true, false, 100, grace));
+        // A window gone but not for long enough waits even long after the start (the person pressed Import a moment ago).
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, true, false, noCallback * 10, 1));
+        // Never shown yet (Unity may still be unpacking a large package): only the long limit settles it.
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(true, false, false, false, noCallback - 1, noCallback - 1));
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(true, false, false, false, noCallback, noCallback));
+        // Non-interactive: no window to watch; only a callback that never came within the limit settles it.
+        Equal(ImportWatchStep.Wait, ImportWatch.Next(false, false, false, false, noCallback - 1, noCallback - 1));
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(false, false, false, false, noCallback, noCallback));
     }
 
     private static void RetestReviewRules()
