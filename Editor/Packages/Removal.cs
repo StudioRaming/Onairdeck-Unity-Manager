@@ -511,6 +511,30 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// Another option (line item) of the same purchased product still has a file of its record in this project. Every option of a
+        /// product shares its product folder and that folder's onairdeck.license, which is checked by product id, so the license stays
+        /// until the last option goes. <paramref name="otherOptionKeys"/> are the other options' PlacedFiles keys. Never throws.
+        /// </summary>
+        public static bool OtherOptionHere(string projectRoot, PlacedRecords placed, IEnumerable<string> otherOptionKeys)
+        {
+            if (placed == null || otherOptionKeys == null) return false;
+            try
+            {
+                foreach (var key in otherOptionKeys)
+                {
+                    PlacedEntry recorded;
+                    if (string.IsNullOrEmpty(key) || !placed.Products.TryGetValue(key, out recorded)) continue;
+                    foreach (var path in recorded.Paths) if (File.Exists(Absolute(projectRoot, path))) return true;
+                    foreach (var path in recorded.Touched) if (File.Exists(Absolute(projectRoot, path))) return true;
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return false;
+        }
+
+        /// <summary>
         /// The onairdeck.license files under the install root issued for this product: for one of <paramref name="licenseIds"/>, or for the
         /// purchase line item <paramref name="itemId"/> (the id inside the file decides, never the folder name). Never throws.
         /// </summary>

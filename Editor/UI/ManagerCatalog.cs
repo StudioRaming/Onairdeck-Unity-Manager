@@ -243,7 +243,9 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Several purchase rows of one product (an option each) get a <see cref="CatalogEntry.Variant"/> so they can be told apart:
         /// the server's option label, else the option part of the row's file names (<see cref="FileVariant"/>); rows that still read
-        /// the same get their purchase date. A product listed once gets none. The same rule as the WARUDO Atelier Manager.
+        /// the same get their purchase date, and rows that still read the same after that (bought the same day, file names that differed
+        /// only in letters the storage name turned into "_") get a number in list order. A product listed once gets none. The same rule
+        /// as the WARUDO Atelier Manager.
         /// </summary>
         internal static void LabelVariants(List<CatalogEntry> entries)
         {
@@ -270,14 +272,34 @@ namespace OnAirDeck.UnityManager
                     }
                     e.Variant = string.Join(", ", parts.ToArray());
                 }
-                var count = new Dictionary<string, int>(StringComparer.Ordinal);
-                foreach (var e in group) { int n; count[e.Variant] = count.TryGetValue(e.Variant, out n) ? n + 1 : 1; }
+                var dated = Repeated(group);
                 foreach (var e in group)
                 {
-                    if (count[e.Variant] < 2 || e.BoughtDate.Length == 0) continue;
+                    if (!dated.Contains(e.Variant) || e.BoughtDate.Length == 0) continue;
                     e.Variant = e.Variant.Length > 0 ? e.Variant + " \u00B7 " + e.BoughtDate : e.BoughtDate;
                 }
+                var numbered = Repeated(group);
+                var next = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var e in group)
+                {
+                    if (!numbered.Contains(e.Variant)) continue;
+                    int n;
+                    n = next.TryGetValue(e.Variant, out n) ? n + 1 : 1;
+                    next[e.Variant] = n;
+                    var number = n.ToString(CultureInfo.InvariantCulture);
+                    e.Variant = e.Variant.Length > 0 ? e.Variant + " \u00B7 " + number : number;
+                }
             }
+        }
+
+        /// <summary>The labels more than one row of the group has.</summary>
+        private static HashSet<string> Repeated(List<CatalogEntry> group)
+        {
+            var count = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var e in group) { int n; count[e.Variant] = count.TryGetValue(e.Variant, out n) ? n + 1 : 1; }
+            var repeated = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var pair in count) if (pair.Value > 1) repeated.Add(pair.Key);
+            return repeated;
         }
 
         private static readonly Regex StoragePrefix = new Regex("^sr-[0-9a-f]{8}-", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

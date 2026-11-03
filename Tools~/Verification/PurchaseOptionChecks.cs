@@ -13,7 +13,7 @@ internal static class PurchaseOptionChecks
     {
         check("purchase options: every line item of a product is a row; the oldest keeps p:<product>, later ones p:<product>/<item>; the watcher uses the same keys", RowsAndKeys);
         check("purchase options: each row of a product bought more than once names its option (server label, else its file names), a product bought once gets none", Labels);
-        check("purchase options: rows whose labels still read the same get their purchase date; the search finds a row by its option", SameLabelAndSearch);
+        check("purchase options: rows whose labels still read the same get their purchase date, then a number; the search finds a row by its option", SameLabelAndSearch);
         check("file variant: no storage prefix, no product name, '_' as a space; a (URP) part wins; a name that is only the product stays readable", FileVariants);
     }
 
@@ -74,6 +74,15 @@ internal static class PurchaseOptionChecks
         Require(entries[0].BoughtDate.Length > 0 && entries[0].BoughtDate != entries[1].BoughtDate);
         Equal("PRO · " + entries[0].BoughtDate, entries[0].Variant);
         Equal("PRO · " + entries[1].BoughtDate, entries[1].Variant);
+        // "..._PRO_<night in Japanese>" and "..._PRO_<day in Japanese>" both reach storage as "..._PRO__": one label, bought the same day, so a number.
+        var sameDay = new[]
+        {
+            Item("P", "i2", "2026-10-28T03:00:00Z", "", "sr-a79261c3-SampleResort_PRO__.unitypackage"),
+            Item("P", "i1", "2026-10-28T03:00:00Z", "", "sr-b9a1c2d3-SampleResort_PRO___.unitypackage"),
+        };
+        var numbered = ManagerCatalog.Build(sameDay, new LicenseEntry[0], n => "", new HashSet<string>());
+        Equal("PRO \u00B7 " + numbered[0].BoughtDate + " \u00B7 1", numbered[0].Variant);
+        Equal("PRO \u00B7 " + numbered[1].BoughtDate + " \u00B7 2", numbered[1].Variant);
         var options = ManagerCatalog.Build(Bought(), new LicenseEntry[0], n => "", new HashSet<string>());
         Equal("p:P/i2", string.Join(",", options.Where(e => ManagerCatalog.Matches(e, "night", FilterMode.All, "", false)).Select(e => e.Key)));
     }

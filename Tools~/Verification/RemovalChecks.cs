@@ -36,6 +36,7 @@ internal static class RemovalChecks
         check("removal package: VCC lists it, VModular's add-ons not yet known (r1 R5), or not here: refused with its reason", PackageRefusals);
         check("removal record file: keeps only safe Assets/ paths, merges a reinstall, prunes what is gone, lists packages", Record);
         check("removal license file: the product's own onairdeck.license by the id inside it, never another product's", OwnLicenseFiles);
+        check("removal license file: one option of a product keeps the shared license while another option still has a recorded file here", OtherOptionKeepsLicense);
         check("removal install record: removed licenses lose their version record, the others keep theirs", InstallRecordRemoved);
     }
 
@@ -272,6 +273,26 @@ internal static class RemovalChecks
         Equal(Installer.InstallRoot + "/MaskMaker/onairdeck.license", string.Join(",", RemovalPlanner.OwnLicenseFiles(project, new[] { "lic-mask" }, null)));
         Equal(Installer.InstallRoot + "/VModular Plus 1.0.0/onairdeck.license", string.Join(",", RemovalPlanner.OwnLicenseFiles(project, null, "item-plus")));
         Equal(0, RemovalPlanner.OwnLicenseFiles(project, new[] { "lic-none" }, "item-none").Count);
+    }
+
+    private static void OtherOptionKeepsLicense()
+    {
+        // Two options of one product share its folder and its onairdeck.license (checked by product id).
+        var project = NewProject();
+        var placed = new PlacedRecords();
+        var night = new PlacedEntry();
+        night.Paths.Add("Assets/OnAirDeck/Sample Resort/Night.unity");
+        var day = new PlacedEntry();
+        day.Touched.Add("Assets/OnAirDeck/Sample Resort/Shared.png");
+        placed.Products["purchase:item-night"] = night;
+        placed.Products["purchase:item-day"] = day;
+        Require(!RemovalPlanner.OtherOptionHere(project, placed, new[] { "purchase:item-night" }), "nothing on disk yet");
+        Put(project, "Assets/OnAirDeck/Sample Resort/Night.unity", "scene");
+        Require(RemovalPlanner.OtherOptionHere(project, placed, new[] { "purchase:item-night" }), "a created file is here");
+        Put(project, "Assets/OnAirDeck/Sample Resort/Shared.png", "png");
+        Require(RemovalPlanner.OtherOptionHere(project, placed, new[] { "purchase:item-day" }), "a file it wrote over is here");
+        Require(!RemovalPlanner.OtherOptionHere(project, placed, new[] { "purchase:item-none", null, "" }), "no record");
+        Require(!RemovalPlanner.OtherOptionHere(project, placed, new string[0]), "no other option");
     }
 
     private static void InstallRecordRemoved()

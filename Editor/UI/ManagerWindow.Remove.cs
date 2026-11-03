@@ -50,7 +50,7 @@ namespace OnAirDeck.UnityManager
             var goingFirst = new HashSet<string>(StringComparer.Ordinal);
             foreach (var addon in addons)
             {
-                var step = StepFor(root, addon, placed, goingFirst);
+                var step = StepFor(root, addon, placed, goingFirst, OtherOptionKeys(addon));
                 // Nothing of its own is left, only files another product also wrote: it gives them up when the run goes, and does not
                 // hold the core. One whose own files the user changed is still here, and does.
                 if (step.Plan.Refusal == RemovalRefusal.NothingHere && step.Plan.Changed.Count == 0) { releaseOnly.Add(step); continue; }
@@ -63,7 +63,7 @@ namespace OnAirDeck.UnityManager
                 steps.Add(step);
                 if (step.Plan.PackageFolder.Length > 0) goingFirst.Add(addon.PackageName);
             }
-            var main = StepFor(root, entry, placed, goingFirst);
+            var main = StepFor(root, entry, placed, goingFirst, OtherOptionKeys(entry));
             if (!main.Plan.CanRun)
             {
                 // Only files another product also wrote are left: this product gives them up (they pass to that product), nothing moves.
@@ -119,7 +119,19 @@ namespace OnAirDeck.UnityManager
             return keys;
         }
 
-        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst)
+        /// <summary>The PlacedFiles keys of the other options (line items) of a purchase row's product in the list; none for a license.</summary>
+        private List<string> OtherOptionKeys(CatalogEntry entry)
+        {
+            var keys = new List<string>();
+            if (entry.IsLicense || entry.Purchase == null || string.IsNullOrEmpty(entry.Purchase.product_id) || _entries == null) return keys;
+            foreach (var other in _entries)
+                if (other != entry && !other.IsLicense && other.Purchase != null && other.Purchase.product_id == entry.Purchase.product_id
+                    && other.Purchase.item_id != entry.Purchase.item_id)
+                    keys.Add(PlacedFiles.PurchaseKey(other.Purchase));
+            return keys;
+        }
+
+        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst, ICollection<string> otherOptionKeys)
         {
             var step = new RemovalStep { Entry = entry, Keys = KeysOf(entry) };
             if (entry.IsLicense)
@@ -128,6 +140,8 @@ namespace OnAirDeck.UnityManager
                 step.LicenseIds.AddRange(entry.AlsoLicenseIds);
             }
             var own = RemovalPlanner.OwnLicenseFiles(root, step.LicenseIds, entry.IsLicense || entry.Purchase == null ? null : entry.Purchase.item_id);
+            // Another option of this product is still here: the product folder's license is its license too (review R1, 2026-11-04).
+            if (RemovalPlanner.OtherOptionHere(root, placed, otherOptionKeys)) own.Clear();
             if (entry.IsLicense && entry.HasPackageVersions && InstalledPackages.IsInstalled(root, entry.PackageName))
                 step.Plan = RemovalPlanner.ForPackage(root, entry.PackageName, placed, own, goingFirst);
             else
