@@ -45,6 +45,7 @@ namespace OnAirDeck.UnityManager
         public static int ExtractZip(string zipPath, string productFolder, out int skipped, PlacementTracker tracker)
         {
             var absoluteFolder = ToAbsolute(productFolder);
+            if (tracker != null) tracker.BeforeCreateFolder(productFolder);
             Directory.CreateDirectory(absoluteFolder);
             var written = 0;
             skipped = 0;
@@ -72,6 +73,7 @@ namespace OnAirDeck.UnityManager
 
                     if (isDirectory)
                     {
+                        if (tracker != null) tracker.BeforeCreateFolder(productFolder + "/" + relative.TrimEnd('/'));
                         Directory.CreateDirectory(destination);
                         continue;
                     }

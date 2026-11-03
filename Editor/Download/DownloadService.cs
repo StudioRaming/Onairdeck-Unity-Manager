@@ -158,7 +158,7 @@ namespace OnAirDeck.UnityManager
                         packages.Add(path);
                         // The files it lists (not its folders), checked now, before its import writes them.
                         var assets = UnityPackageArchive.Assets(path);
-                        if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) tracker.BeforeWrite(asset.Path);
+                        if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) tracker.BeforeWrite(asset.Path, asset.Guid);
                     }
                     else if (Installer.IsZip(name))
                     {
@@ -173,10 +173,10 @@ namespace OnAirDeck.UnityManager
                         summary.Copied++;
                     }
                 }
-                if (!string.IsNullOrEmpty(placedKey) && tracker.Paths.Count > 0)
+                if (!string.IsNullOrEmpty(placedKey) && tracker.Paths.Count + tracker.Touched.Count > 0)
                 {
                     // Written before an import can reload the domain. A failure only means this install cannot be removed by record later.
-                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker.Paths, tracker.Folders); }
+                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker); }
                     catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the placed files (removal will ask to remove them by hand): " + e.Message); }
                 }
 

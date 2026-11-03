@@ -62,6 +62,9 @@ namespace OnAirDeck.UnityManager
             var main = StepFor(root, entry, placed, goingFirst);
             if (!main.Plan.CanRun)
             {
+                // Only files another product also wrote are left: this product gives them up (they pass to that product), nothing moves.
+                if (main.Plan.Refusal == RemovalRefusal.NothingHere && addons.Count == 0)
+                    foreach (var key in main.Keys) ReleaseRecord(root, key);
                 ExplainRefusal(main, null);
                 return;
             }
@@ -77,6 +80,12 @@ namespace OnAirDeck.UnityManager
             Debug.Log(OnAirDeckConfig.LogPrefix + "Removal of " + entry.Name + " would move:\n" + FullList(steps));
             if (!EditorUtility.DisplayDialog(ManagerText.RmAskT.Replace("{n}", entry.Name), ConfirmText(steps), ManagerText.BRemove, ManagerText.Cancel)) return;
             RunRemoval(root, steps);
+        }
+
+        private static void ReleaseRecord(string root, string key)
+        {
+            try { PlacedFiles.Release(root, key); }
+            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the placed-files record: " + e.Message); }
         }
 
         /// <summary>An add-on of a core is here: its package is installed, or files it recorded (or its marked state) are in the project.</summary>
@@ -210,9 +219,10 @@ namespace OnAirDeck.UnityManager
                         if (AssetDatabase.MoveAssetToTrash(file)) removed++;
                         else stepFailed.Add(file);
                     }
-                    // A folder is taken away only when every file in it went.
+                    // A folder is taken away only when every file went, and only if it is still empty now (checked again after the
+                    // files went: something saved into it while the question was open keeps it).
                     if (stepFailed.Count == 0)
-                        foreach (var folder in step.Plan.Folders)
+                        foreach (var folder in RemovalPlanner.EmptiedFolders(root, step.Plan.Files, new HashSet<string>(step.Plan.CreatedFolders, StringComparer.OrdinalIgnoreCase)))
                             if (Directory.Exists(RemovalPlanner.Absolute(root, folder))) AssetDatabase.MoveAssetToTrash(folder);
                     if (step.Plan.PackageFolder.Length > 0 && stepFailed.Count == 0)
                     {
@@ -231,15 +241,11 @@ namespace OnAirDeck.UnityManager
                             stepFailed.Add(step.Plan.PackageFolder + " (" + e.Message + ")");
                         }
                     }
-                    // This product gives up the files another product also recorded, so their last owner can remove them later.
-                    var released = new HashSet<string>(step.Plan.Shared, StringComparer.OrdinalIgnoreCase);
-                    foreach (var key in step.Keys)
-                    {
-                        try { PlacedFiles.Prune(root, key, released); }
-                        catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the placed-files record: " + e.Message); }
-                    }
                     if (stepFailed.Count == 0)
                     {
+                        // Only a removal that went through gives up the record: the files another product also wrote pass to it, so the
+                        // last of them removes them. A partial one keeps it, so nothing passes on too early.
+                        foreach (var key in step.Keys) ReleaseRecord(root, key);
                         try { InstallRecords.Remove(root, step.LicenseIds); }
                         catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the install record: " + e.Message); }
                         _lastFailure.Remove(step.Entry.Key);

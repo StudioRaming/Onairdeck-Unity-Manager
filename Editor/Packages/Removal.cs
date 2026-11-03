@@ -2,15 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using OnAirDeck.License;
 
 namespace OnAirDeck.UnityManager
 {
-    /// <summary>What one product placed: the files it created and the folders it created for them.</summary>
+    /// <summary>What one product placed: the files it created (with the GUID a .unitypackage gave them), the files it touched that were already there, and the folders it created.</summary>
     internal sealed class PlacedEntry
     {
+        /// <summary>Files this product created: only these can go with it.</summary>
         public readonly List<string> Paths = new List<string>();
+        /// <summary>Files it wrote over that were already there (the user's, or another product's): never removed with it, and they keep another product's file in place.</summary>
+        public readonly List<string> Touched = new List<string>();
         public readonly List<string> Folders = new List<string>();
+        /// <summary>Path to the GUID a .unitypackage gave it: a file at that path whose .meta has another GUID is not this product's.</summary>
+        public readonly Dictionary<string, string> Guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The whole record: per product key what it placed, and the packages the Manager installed in Packages/.</summary>
@@ -23,14 +29,16 @@ namespace OnAirDeck.UnityManager
     /// <summary>
     /// What the Manager placed in this project, in ProjectSettings/OnAirDeck/placed-files.json, so a removal takes away exactly that and
     /// nothing a guess would add (owner rule 2026-11-03: remove from the Manager's own records only). Per product key
-    /// (<see cref="LicenseKey"/>, <see cref="PurchaseKey(PurchaseItem)"/>): the files an install created (copied, extracted from a zip,
-    /// listed by a .unitypackage) and the folders it created for them. A file or folder that was already there before the install is
-    /// never recorded: it may be the user's or another product's, and an import that overwrites it does not make it this product's.
-    /// The packages the Manager installed in Packages/&lt;name&gt; are listed by name. Installs from before 2026-11-03 have no entry.
-    /// No UnityEngine.
+    /// (<see cref="LicenseKey"/>, <see cref="PurchaseKey(PurchaseItem)"/>): the files an install created, the files it wrote over that
+    /// were already there, and the folders it created. A file that was already there never becomes removable by the install that wrote
+    /// over it; when the product that created a file is removed while another product also wrote it, the file stays and passes to that
+    /// product (<see cref="Release"/>), so the last of them removes it. The packages the Manager installed in Packages/&lt;name&gt; are
+    /// listed by name. Installs from before 2026-11-03 have no entry. No UnityEngine.
     /// </summary>
     internal static class PlacedFiles
     {
+        private const long Format = 2;
+
         public static string PathFor(string projectRoot)
         {
             return Path.Combine(Path.Combine(Path.Combine(projectRoot, "ProjectSettings"), "OnAirDeck"), "placed-files.json");
@@ -46,7 +54,7 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(item.item_id) ? PurchaseKey(item.item_id) : "own:" + (item.product_id ?? "");
         }
 
-        /// <summary>The record. A missing or unreadable file reads as empty (then nothing can be removed by record).</summary>
+        /// <summary>The record. A missing, unreadable or other-format file reads as empty (then nothing can be removed by record).</summary>
         public static PlacedRecords Load(string projectRoot)
         {
             var result = new PlacedRecords();
@@ -55,8 +63,8 @@ namespace OnAirDeck.UnityManager
                 var path = PathFor(projectRoot);
                 if (string.IsNullOrEmpty(projectRoot) || !File.Exists(path)) return result;
                 var root = MiniJson.ParseObject(File.ReadAllText(path, Encoding.UTF8).TrimStart('﻿'));
-                if (root == null) return result;
                 object raw;
+                if (root == null || !root.TryGetValue("format", out raw) || !(raw is long) || (long)raw != Format) return result;
                 if (root.TryGetValue("products", out raw) && raw is List<object>)
                 {
                     foreach (var item in (List<object>)raw)
@@ -66,7 +74,12 @@ namespace OnAirDeck.UnityManager
                         if (key.Length == 0) continue;
                         var entry = new PlacedEntry();
                         foreach (var p in Strings(obj, "paths")) if (RemovalPlanner.IsAssetFile(p)) entry.Paths.Add(p);
+                        foreach (var p in Strings(obj, "touched")) if (RemovalPlanner.IsAssetFile(p)) entry.Touched.Add(p);
                         foreach (var f in Strings(obj, "folders")) if (RemovalPlanner.IsAssetFolder(f)) entry.Folders.Add(f);
+                        object guids;
+                        if (obj.TryGetValue("guids", out guids) && guids is Dictionary<string, object>)
+                            foreach (var pair in (Dictionary<string, object>)guids)
+                                if (pair.Value is string && RemovalPlanner.IsGuid((string)pair.Value)) entry.Guids[pair.Key] = (string)pair.Value;
                         result.Products[key] = entry;
                     }
                 }
@@ -88,17 +101,24 @@ namespace OnAirDeck.UnityManager
             foreach (var item in (List<object>)raw) if (item is string) yield return (string)item;
         }
 
-        /// <summary>
-        /// Adds what one install created to <paramref name="key"/>: <paramref name="paths"/> are files that were not there before it,
-        /// <paramref name="folders"/> folders it created. Kept unique and sorted. Throws when the file cannot be written.
-        /// </summary>
-        public static void Add(string projectRoot, string key, IEnumerable<string> paths, IEnumerable<string> folders)
+        /// <summary>Adds what one install did to <paramref name="key"/> (<see cref="PlacementTracker"/>). Throws when the file cannot be written.</summary>
+        public static void Add(string projectRoot, string key, PlacementTracker tracker)
         {
-            if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key)) return;
+            if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key) || tracker == null) return;
             var all = Load(projectRoot);
             PlacedEntry entry;
             if (!all.Products.TryGetValue(key, out entry)) all.Products[key] = entry = new PlacedEntry();
-            var added = AddUnique(entry.Paths, paths, RemovalPlanner.IsAssetFile, false) | AddUnique(entry.Folders, folders, RemovalPlanner.IsAssetFolder, true);
+            var added = AddUnique(entry.Paths, tracker.Paths, RemovalPlanner.IsAssetFile, false);
+            // A file this product created before stays created by it when a reinstall writes it again.
+            var touched = new List<string>();
+            foreach (var path in tracker.Touched) if (!entry.Paths.Exists(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) touched.Add(path);
+            added |= AddUnique(entry.Touched, touched, RemovalPlanner.IsAssetFile, false);
+            added |= AddUnique(entry.Folders, tracker.Folders, RemovalPlanner.IsAssetFolder, true);
+            foreach (var pair in tracker.Guids)
+            {
+                string old;
+                if (!entry.Guids.TryGetValue(pair.Key, out old) || old != pair.Value) { entry.Guids[pair.Key] = pair.Value; added = true; }
+            }
             if (added) Save(projectRoot, all);
         }
 
@@ -117,18 +137,30 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// After a removal: <paramref name="key"/> keeps only the files still on disk that it did not give up (<paramref name="released"/>,
-        /// the files another product also recorded, so their last owner can take them later) and the folders still on disk. The key goes
-        /// when nothing is left.
+        /// After a removal of <paramref name="key"/> that went through: each file it created that is still here (another product also
+        /// wrote it) passes to a product that touched it, with its GUID; then the key goes. Nothing passes to a product that did not write
+        /// the file, so a file only the user also has never becomes removable.
         /// </summary>
-        public static void Prune(string projectRoot, string key, ICollection<string> released)
+        public static void Release(string projectRoot, string key)
         {
             var all = Load(projectRoot);
             PlacedEntry entry;
             if (!all.Products.TryGetValue(key, out entry)) return;
-            entry.Paths.RemoveAll(p => !File.Exists(RemovalPlanner.Absolute(projectRoot, p)) || (released != null && released.Contains(p)));
-            entry.Folders.RemoveAll(f => !Directory.Exists(RemovalPlanner.Absolute(projectRoot, f)));
-            if (entry.Paths.Count == 0) all.Products.Remove(key);
+            all.Products.Remove(key);
+            foreach (var path in entry.Paths)
+            {
+                if (!File.Exists(RemovalPlanner.Absolute(projectRoot, path))) continue;
+                foreach (var other in all.Products.Values)
+                {
+                    var at = other.Touched.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                    if (at < 0) continue;
+                    other.Touched.RemoveAt(at);
+                    other.Paths.Add(path);
+                    string guid;
+                    if (entry.Guids.TryGetValue(path, out guid)) other.Guids[path] = guid;
+                    break;
+                }
+            }
             Save(projectRoot, all);
         }
 
@@ -146,6 +178,13 @@ namespace OnAirDeck.UnityManager
             return added;
         }
 
+        private static List<object> Sorted(IEnumerable<string> items)
+        {
+            var list = new List<string>(items);
+            list.Sort(StringComparer.Ordinal);
+            return list.ConvertAll(p => (object)p);
+        }
+
         private static void Save(string projectRoot, PlacedRecords all)
         {
             var keys = new List<string>(all.Products.Keys);
@@ -154,48 +193,56 @@ namespace OnAirDeck.UnityManager
             foreach (var key in keys)
             {
                 var entry = all.Products[key];
-                var paths = new List<string>(entry.Paths);
-                paths.Sort(StringComparer.Ordinal);
-                var folders = new List<string>(entry.Folders);
-                folders.Sort(StringComparer.Ordinal);
+                var guidKeys = new List<string>(entry.Guids.Keys);
+                guidKeys.Sort(StringComparer.Ordinal);
+                var guids = new Dictionary<string, object>();
+                foreach (var path in guidKeys) guids[path] = entry.Guids[path];
                 products.Add(new Dictionary<string, object>
                 {
-                    { "key", key }, { "paths", paths.ConvertAll(p => (object)p) }, { "folders", folders.ConvertAll(f => (object)f) }
+                    { "key", key }, { "paths", Sorted(entry.Paths) }, { "touched", Sorted(entry.Touched) }, { "folders", Sorted(entry.Folders) }, { "guids", guids }
                 });
             }
-            var packages = new List<string>(all.Packages);
-            packages.Sort(StringComparer.Ordinal);
-            var root = new Dictionary<string, object> { { "format", 2L }, { "products", products }, { "packages", packages.ConvertAll(p => (object)p) } };
+            var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
             AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
         }
     }
 
     /// <summary>
-    /// The files and folders an install is about to create, taken before it writes anything: a target that already exists is left out
-    /// (it is the user's or another product's), and so is every folder that exists. No UnityEngine.
+    /// What an install does, taken before it writes anything: a file that does not exist yet is created by it (with the GUID a
+    /// .unitypackage gives it), one that exists is only touched, and every folder that does not exist yet is created by it. No UnityEngine.
     /// </summary>
     internal sealed class PlacementTracker
     {
         private readonly string _projectRoot;
-        private readonly HashSet<string> _paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public readonly List<string> Paths = new List<string>();
+        public readonly List<string> Touched = new List<string>();
         public readonly List<string> Folders = new List<string>();
+        public readonly Dictionary<string, string> Guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public PlacementTracker(string projectRoot) { _projectRoot = projectRoot; }
 
-        /// <summary>Call before the file is written. Records it only when it does not exist yet, and every parent folder that does not.</summary>
-        public void BeforeWrite(string assetPath)
+        /// <summary>Call before the file is written (a .unitypackage: before its import, with the asset's GUID).</summary>
+        public void BeforeWrite(string assetPath, string guid = null)
         {
             var clean = (assetPath ?? "").Replace('\\', '/');
-            if (!RemovalPlanner.IsAssetFile(clean) || string.IsNullOrEmpty(_projectRoot)) return;
-            if (File.Exists(RemovalPlanner.Absolute(_projectRoot, clean))) return;
-            if (_paths.Add(clean)) Paths.Add(clean);
-            var folder = clean.Substring(0, clean.LastIndexOf('/'));
-            while (RemovalPlanner.IsAssetFolder(folder) && !Directory.Exists(RemovalPlanner.Absolute(_projectRoot, folder)))
+            if (!RemovalPlanner.IsAssetFile(clean) || string.IsNullOrEmpty(_projectRoot) || !_seen.Add(clean)) return;
+            if (File.Exists(RemovalPlanner.Absolute(_projectRoot, clean))) { Touched.Add(clean); return; }
+            Paths.Add(clean);
+            if (RemovalPlanner.IsGuid(guid)) Guids[clean] = guid;
+            BeforeCreateFolder(clean.Substring(0, clean.LastIndexOf('/')));
+        }
+
+        /// <summary>Call before a folder is created: it and every parent that does not exist yet are created by this install.</summary>
+        public void BeforeCreateFolder(string folder)
+        {
+            var clean = (folder ?? "").Replace('\\', '/').TrimEnd('/');
+            if (string.IsNullOrEmpty(_projectRoot)) return;
+            while (RemovalPlanner.IsAssetFolder(clean) && !Directory.Exists(RemovalPlanner.Absolute(_projectRoot, clean)))
             {
-                if (_folders.Add(folder)) Folders.Add(folder);
-                folder = folder.Substring(0, folder.LastIndexOf('/'));
+                if (_folders.Add(clean)) Folders.Add(clean);
+                clean = clean.Substring(0, clean.LastIndexOf('/'));
             }
         }
     }
@@ -226,6 +273,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Shared = new List<string>();
         /// <summary>Folders this product created that are empty once <see cref="Files"/> are gone, deepest first: they go too.</summary>
         public readonly List<string> Folders = new List<string>();
+        /// <summary>Every folder this product's installs created (the run checks again, after the files went, which of them are empty).</summary>
+        public readonly List<string> CreatedFolders = new List<string>();
         /// <summary>"Packages/&lt;name&gt;" to move to Library/OnAirDeck/Backup, or "".</summary>
         public string PackageFolder = "";
         /// <summary>Installed packages that list this package in their vpmDependencies (with <see cref="RemovalRefusal.NeededByOthers"/>).</summary>
@@ -286,13 +335,26 @@ namespace OnAirDeck.UnityManager
             var plan = new RemovalPlan();
             var mine = new List<string>();
             var myFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var others = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var recorded = false;
             foreach (var pair in placed.Products)
             {
-                if (keys.Contains(pair.Key)) { mine.AddRange(pair.Value.Paths); foreach (var f in pair.Value.Folders) myFolders.Add(f); }
-                else foreach (var p in pair.Value.Paths) others.Add(p);
+                if (keys.Contains(pair.Key))
+                {
+                    recorded = true;
+                    mine.AddRange(pair.Value.Paths);
+                    foreach (var f in pair.Value.Folders) myFolders.Add(f);
+                    foreach (var g in pair.Value.Guids) guids[g.Key] = g.Value;
+                }
+                else
+                {
+                    // Another product created it, or wrote over it: it stays.
+                    foreach (var p in pair.Value.Paths) others.Add(p);
+                    foreach (var p in pair.Value.Touched) others.Add(p);
+                }
             }
-            if (mine.Count == 0)
+            if (!recorded)
             {
                 plan.Refusal = RemovalRefusal.NoRecord;
                 if (!string.IsNullOrEmpty(manualFolder) && Directory.Exists(Absolute(projectRoot, manualFolder))) plan.ManualFolder = manualFolder;
@@ -306,6 +368,10 @@ namespace OnAirDeck.UnityManager
                 if (!IsAssetFile(path) || !seen.Add(path)) continue;
                 if (!File.Exists(Absolute(projectRoot, path))) continue;
                 if (others.Contains(path)) { plan.Shared.Add(path); continue; }
+                // A .unitypackage file is this product's only while its .meta keeps the GUID the package gave it (an import that never
+                // ran, then a file of the user at the same path, has another one).
+                string guid;
+                if (guids.TryGetValue(path, out guid) && !string.Equals(MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase)) { plan.Shared.Add(path); continue; }
                 // A license file is someone's license: only the one issued for this product (by the id inside it) goes.
                 if (IsLicenseFile(path) && !own.Contains(path)) { plan.Shared.Add(path); continue; }
                 plan.Files.Add(path);
@@ -314,10 +380,34 @@ namespace OnAirDeck.UnityManager
                 if (!others.Contains(path) && seen.Add(path) && File.Exists(Absolute(projectRoot, path))) plan.Files.Add(path);
             plan.Files.Sort(StringComparer.Ordinal);
             if (plan.Files.Count == 0) { plan.Refusal = RemovalRefusal.NothingHere; return plan; }
-            // A license file's own folder counts as created by this product when the record has none (the license step makes it).
-            foreach (var path in own) myFolders.Add(path.Substring(0, path.LastIndexOf('/')));
+            plan.CreatedFolders.AddRange(myFolders);
             plan.Folders.AddRange(EmptiedFolders(projectRoot, plan.Files, myFolders));
             return plan;
+        }
+
+        private static readonly Regex GuidLine = new Regex(@"^guid:\s*([0-9a-fA-F]{32})\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        public static bool IsGuid(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length != 32) return false;
+            foreach (var c in text) if (!Uri.IsHexDigit(c)) return false;
+            return true;
+        }
+
+        /// <summary>The GUID in &lt;path&gt;.meta, or "" when there is none.</summary>
+        public static string MetaGuid(string projectRoot, string path)
+        {
+            try
+            {
+                var meta = Absolute(projectRoot, path) + ".meta";
+                if (!File.Exists(meta)) return "";
+                var match = GuidLine.Match(File.ReadAllText(meta));
+                return match.Success ? match.Groups[1].Value : "";
+            }
+            catch (Exception)
+            {
+                return "";
+            }
         }
 
         private static bool IsLicenseFile(string path)
@@ -348,15 +438,9 @@ namespace OnAirDeck.UnityManager
             if (plan.NeededBy.Count > 0) { plan.Refusal = RemovalRefusal.NeededByOthers; return plan; }
             if (Array.IndexOf(OnAirDeckConfig.CoreAddonsPending, packageName) >= 0) { plan.Refusal = RemovalRefusal.AddonsUnknown; return plan; }
             plan.PackageFolder = "Packages/" + packageName;
-            var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (ownFiles != null)
                 foreach (var path in ownFiles)
-                    if (IsAssetFile(path) && File.Exists(Absolute(projectRoot, path)) && !plan.Files.Contains(path))
-                    {
-                        plan.Files.Add(path);
-                        folders.Add(path.Substring(0, path.LastIndexOf('/')));
-                    }
-            plan.Folders.AddRange(EmptiedFolders(projectRoot, plan.Files, folders));
+                    if (IsAssetFile(path) && File.Exists(Absolute(projectRoot, path)) && !plan.Files.Contains(path)) plan.Files.Add(path);
             return plan;
         }
 

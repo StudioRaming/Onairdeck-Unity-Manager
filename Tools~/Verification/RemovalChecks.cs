@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using OnAirDeck.UnityManager;
@@ -14,9 +15,11 @@ internal static class RemovalChecks
     private const string Urp = "com.studioraming.mingtoon.urp";
     private const string Mlc = "73f4e203-ffd0-4e88-9b78-dc116fd74057";
     private static string _root;
+    private static string _host;
 
     public static void Run(Action<string, Action> check, string project)
     {
+        _host = project;
         _root = Path.Combine(project, "removal");
         Directory.CreateDirectory(_root);
         check("removal order: the reverse of the install order, add-ons first and MingToon Core last", Order);
@@ -25,7 +28,9 @@ internal static class RemovalChecks
         check("removal record: an install records only the files and folders it creates, never what was there (a user's Assets/Editor file, a user's empty folder; r1 R1 R4)", TrackerCreatesOnly);
         check("removal files: only recorded files that are here; a file another product recorded stays; another product's license file never goes (r1 R2)", FilesFromRecord);
         check("removal folders: only folders the install created, once empty, deepest first; never Assets, the install root or a special folder (r1 R4)", EmptiedFolders);
-        check("removal shared: a file two products recorded stays with the first removal and goes with the last (r1 R6)", SharedReleased);
+        check("removal shared: a file two products installed stays with the first removal, passes to the other and goes with the last (r1 R6, r2 R9)", SharedReleased);
+        check("removal GUID: a .unitypackage file goes only while its .meta keeps the package's GUID (an import cancelled, then a user's file at that path; r2 R1)", GuidProof);
+        check("removal zip: a zip's folder entries and the product folder are recorded before they are made, so they go once empty (r2 R12)", ZipFolders);
         check("removal package: VCC lists it, VModular's add-ons not yet known (r1 R5), or not here: refused with its reason", PackageRefusals);
         check("removal record file: keeps only safe Assets/ paths, merges a reinstall, prunes what is gone, lists packages", Record);
         check("removal license file: the product's own onairdeck.license by the id inside it, never another product's", OwnLicenseFiles);
@@ -96,8 +101,9 @@ internal static class RemovalChecks
         foreach (var path in new[] { "Assets/Editor/UserTool.cs", "Assets/MyTools/Product.cs", "Assets/Tool/Sub/New.cs", "Assets/Tool/Sub/New.cs", "../x.cs" })
             tracker.BeforeWrite(path);
         Equal("Assets/MyTools/Product.cs,Assets/Tool/Sub/New.cs", string.Join(",", tracker.Paths));
+        Equal("Assets/Editor/UserTool.cs", string.Join(",", tracker.Touched));
         Equal("Assets/Tool/Sub,Assets/Tool", string.Join(",", tracker.Folders));
-        PlacedFiles.Add(project, PlacedFiles.LicenseKey("tool"), tracker.Paths, tracker.Folders);
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("tool"), tracker);
         // The import was cancelled after the record was written: nothing of it is here, so nothing is removed; the user's file stays.
         var placed = PlacedFiles.Load(project);
         var plan = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("tool") }, placed, null, "");
@@ -162,16 +168,38 @@ internal static class RemovalChecks
     private static void SharedReleased()
     {
         var project = NewProject();
+        // A installs first and creates Lib.cginc; B's install finds it there and only touches it.
+        var a = new PlacementTracker(project);
+        a.BeforeWrite("Assets/Common/Lib.cginc");
+        a.BeforeWrite("Assets/A/Only.cs");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("a"), a);
         Put(project, "Assets/Common/Lib.cginc", "s");
-        PlacedFiles.Add(project, PlacedFiles.LicenseKey("a"), new[] { "Assets/Common/Lib.cginc" }, null);
-        PlacedFiles.Add(project, PlacedFiles.LicenseKey("b"), new[] { "Assets/Common/Lib.cginc" }, null);
+        Put(project, "Assets/A/Only.cs", "a");
+        var b = new PlacementTracker(project);
+        b.BeforeWrite("Assets/Common/Lib.cginc");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("b"), b);
+        // Removing A takes its own file, never Lib.cginc (B wrote it too).
         var first = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("a") }, PlacedFiles.Load(project), null, "");
-        Equal(RemovalRefusal.NothingHere, first.Refusal);   // only a shared file: nothing of A's own
+        Equal("Assets/A/Only.cs", string.Join(",", first.Files));
         Equal("Assets/Common/Lib.cginc", string.Join(",", first.Shared));
-        PlacedFiles.Prune(project, PlacedFiles.LicenseKey("a"), new HashSet<string>(first.Shared));
+        // B alone cannot take it yet: A created it.
+        Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("b") }, PlacedFiles.Load(project), null, "").Refusal);
+        File.Delete(Path.Combine(project, "Assets", "A", "Only.cs"));
+        PlacedFiles.Release(project, PlacedFiles.LicenseKey("a"));   // A's removal went through
         Require(!PlacedFiles.Load(project).Products.ContainsKey(PlacedFiles.LicenseKey("a")));
         var last = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("b") }, PlacedFiles.Load(project), null, "");
         Equal("Assets/Common/Lib.cginc", string.Join(",", last.Files));
+        // A user's file that a product only touched never passes to anyone.
+        Put(project, "Assets/User/Mine.cs", "user");
+        var c = new PlacementTracker(project);
+        c.BeforeWrite("Assets/User/Mine.cs");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("c"), c);
+        var d = new PlacementTracker(project);
+        d.BeforeWrite("Assets/User/Mine.cs");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("d"), d);
+        PlacedFiles.Release(project, PlacedFiles.LicenseKey("c"));
+        foreach (var entry in PlacedFiles.Load(project).Products.Values) Require(!entry.Paths.Contains("Assets/User/Mine.cs"));
+        Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("d") }, PlacedFiles.Load(project), null, "").Refusal);
     }
 
     private static void PackageRefusals()
@@ -195,26 +223,35 @@ internal static class RemovalChecks
     {
         var project = NewProject();
         var key = PlacedFiles.LicenseKey("tool");
+        var tracker = new PlacementTracker(project);
+        foreach (var path in new[] { "Assets/Tool/A.cs", "Assets\\Tool\\B.cs", "../escape.cs", "Packages/x/y.cs", "Assets/Tool/A.cs.meta", "Assets/../x.cs", "C:/abs.cs", "Assets/Tool/" })
+            tracker.BeforeWrite(path);
+        tracker.BeforeCreateFolder("Assets");
+        tracker.BeforeCreateFolder("Assets/Editor");
+        PlacedFiles.Add(project, key, tracker);
+        var again = new PlacementTracker(project);
+        again.BeforeWrite("Assets/Tool/C.cs");
+        PlacedFiles.Add(project, key, again);
         Put(project, "Assets/Tool/A.cs", "a");
-        Put(project, "Assets/Tool/B.cs", "b");
-        PlacedFiles.Add(project, key, new[] { "Assets/Tool/A.cs", "Assets\\Tool\\B.cs", "../escape.cs", "Packages/x/y.cs", "Assets/Tool/A.cs.meta", "Assets/../x.cs", "C:/abs.cs", "Assets/Tool/" },
-            new[] { "Assets/Tool", "Assets", "Assets/Editor", "../up" });
-        PlacedFiles.Add(project, key, new[] { "Assets/Tool/A.cs", "Assets/Tool/C.cs" }, null);
+        var reinstall = new PlacementTracker(project);
+        reinstall.BeforeWrite("Assets/Tool/A.cs");   // its own file, there from the first install: stays created by it
+        PlacedFiles.Add(project, key, reinstall);
         var loaded = PlacedFiles.Load(project).Products[key];
         Equal("Assets/Tool/A.cs,Assets/Tool/B.cs,Assets/Tool/C.cs", string.Join(",", loaded.Paths));
+        Equal(0, loaded.Touched.Count);
         Equal("Assets/Tool", string.Join(",", loaded.Folders));
-        PlacedFiles.Prune(project, key, null);
-        Equal("Assets/Tool/A.cs,Assets/Tool/B.cs", string.Join(",", PlacedFiles.Load(project).Products[key].Paths));
-        File.Delete(Path.Combine(project, "Assets", "Tool", "A.cs"));
-        File.Delete(Path.Combine(project, "Assets", "Tool", "B.cs"));
-        PlacedFiles.Prune(project, key, null);
+        PlacedFiles.Release(project, key);
         Require(!PlacedFiles.Load(project).Products.ContainsKey(key));
+        // A format-1 file (the unreleased first draft) or a broken one reads as no records.
+        Put(project, "ProjectSettings/OnAirDeck/placed-files.json", "{\"format\":1,\"products\":[{\"key\":\"license:x\",\"paths\":[\"Assets/Tool/A.cs\"]}]}");
+        Equal(0, PlacedFiles.Load(project).Products.Count);
         PlacedFiles.AddPackage(project, Core);
-        Require(PlacedFiles.Load(project).Packages.Contains(Core));
         PlacedFiles.RemovePackage(project, Core);
         Require(!PlacedFiles.Load(project).Packages.Contains(Core));
         Put(project, "ProjectSettings/OnAirDeck/placed-files.json", "{ broken");
         Equal(0, PlacedFiles.Load(project).Products.Count);
+        PlacedFiles.AddPackage(project, Core);
+        Require(PlacedFiles.Load(project).Packages.Contains(Core));
         Equal("purchase:item-1", PlacedFiles.PurchaseKey(new PurchaseItem { item_id = "item-1", product_id = "p" }));
         Equal("own:p", PlacedFiles.PurchaseKey(new PurchaseItem { product_id = "p" }));
     }
@@ -239,6 +276,45 @@ internal static class RemovalChecks
         InstallRecords.Remove(project, new[] { "a", "" });
         var left = InstallRecords.Load(project);
         Require(!left.ContainsKey("a") && left.ContainsKey("b"));
+    }
+
+    private static void GuidProof()
+    {
+        var project = NewProject();
+        const string Guid = "0123456789abcdef0123456789abcdef";
+        var tracker = new PlacementTracker(project);
+        tracker.BeforeWrite("Assets/Pkg/Tool.cs", Guid);
+        tracker.BeforeWrite("Assets/Pkg/Shader.shader", "ffffffffffffffffffffffffffffffff");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("pkg"), tracker);
+        // The import ran for Tool.cs (its .meta has the package's GUID). Shader.shader is the user's own, saved later at that path.
+        Put(project, "Assets/Pkg/Tool.cs", "t");
+        Put(project, "Assets/Pkg/Tool.cs.meta", "fileFormatVersion: 2\nguid: " + Guid + "\n");
+        Put(project, "Assets/Pkg/Shader.shader", "user");
+        Put(project, "Assets/Pkg/Shader.shader.meta", "fileFormatVersion: 2\nguid: 99999999999999999999999999999999\n");
+        var plan = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("pkg") }, PlacedFiles.Load(project), null, "");
+        Equal("Assets/Pkg/Tool.cs", string.Join(",", plan.Files));
+        Equal("Assets/Pkg/Shader.shader", string.Join(",", plan.Shared));
+        // No .meta at all (never imported): not removed either.
+        File.Delete(Path.Combine(project, "Assets", "Pkg", "Tool.cs.meta"));
+        Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("pkg") }, PlacedFiles.Load(project), null, "").Refusal);
+    }
+
+    private static void ZipFolders()
+    {
+        var zip = Path.Combine(_root, "dirs-" + System.Guid.NewGuid().ToString("N") + ".zip");
+        using (var stream = File.Create(zip))
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
+        {
+            archive.CreateEntry("Sub/");
+            using (var writer = new StreamWriter(archive.CreateEntry("Sub/Tool.cs").Open())) writer.Write("t");
+        }
+        var folder = Installer.ProductFolder("zipdirs-" + System.Guid.NewGuid().ToString("N").Substring(0, 6));
+        var tracker = new PlacementTracker(_host);
+        int skipped;
+        Equal(1, Installer.ExtractZip(zip, folder, out skipped, tracker));
+        Equal(folder + "/Sub/Tool.cs", string.Join(",", tracker.Paths));
+        Require(tracker.Folders.Contains(folder) && tracker.Folders.Contains(folder + "/Sub"), string.Join(",", tracker.Folders));
+        Require(!tracker.Folders.Contains(Installer.InstallRoot));
     }
 
     // ---------- fixtures ----------

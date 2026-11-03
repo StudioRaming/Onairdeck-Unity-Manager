@@ -6,11 +6,12 @@ using System.Text;
 
 namespace OnAirDeck.UnityManager
 {
-    /// <summary>One asset of a .unitypackage: its project path (forward slashes) and whether it is a folder.</summary>
+    /// <summary>One asset of a .unitypackage: its project path (forward slashes), whether it is a folder, and its GUID (the archive folder name, which the import writes into the .meta).</summary>
     internal sealed class PackageAsset
     {
         public string Path = "";
         public bool IsFolder;
+        public string Guid = "";
     }
 
     /// <summary>
@@ -93,7 +94,7 @@ namespace OnAirDeck.UnityManager
                 });
             if (!ok) return null;
             var assets = new List<PackageAsset>();
-            foreach (var guid in order) assets.Add(new PackageAsset { Path = paths[guid], IsFolder = folders.Contains(guid) });
+            foreach (var guid in order) assets.Add(new PackageAsset { Path = paths[guid], IsFolder = folders.Contains(guid), Guid = guid });
             return assets;
         }
 
