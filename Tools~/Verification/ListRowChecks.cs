@@ -22,6 +22,47 @@ internal static class ListRowChecks
         check("file core (G4): VModular is here by its marker in Assets/ or by a package in Packages/, not by an unrelated file", FileCoreHere);
         check("file core (G4): a run puts the base license before the Plus license, and the list nests Plus under the base license row", FileCoreOrderAndNest);
         check("file core (G4 retest D1): the base that reaches a buyer only as a purchase row is the core to install first, and Plus nests under it", FileCoreFromPurchase);
+        check("import queue (G4 retest D2): an import a script reload cut off counts as imported only when every file of the package is on disk with its GUID", ImportSettledAfterReload);
+    }
+
+    // test1 on 2026-11-04: the base import compiled scripts, the domain reloaded mid-import, the queue's completion callback never
+    // ran, so the queue kept the package and refused the next (non-interactive) import. After a reload the queue settles that head
+    // from what is on disk.
+    private static void ImportSettledAfterReload()
+    {
+        var project = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "oad-settle-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var assets = new List<PackageAsset>
+            {
+                new PackageAsset { Path = "Assets/Editor/VModularEditor", IsFolder = true, Guid = "f0" },
+                new PackageAsset { Path = "Assets/Editor/VModularEditor/VModularManager.cs", Guid = "a1" },
+                new PackageAsset { Path = "Assets/VModualr_InAvartar/VModularOneBone.cs", Guid = "b2" },
+            };
+            Action<string, string> put = (path, guid) =>
+            {
+                var full = System.IO.Path.Combine(project, path.Replace('/', System.IO.Path.DirectorySeparatorChar));
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full));
+                System.IO.File.WriteAllText(full, "//");
+                if (guid != null) System.IO.File.WriteAllText(full + ".meta", "fileFormatVersion: 2\nguid: " + guid + "\nMonoImporter:\n");
+            };
+            Require(!UnityPackageArchive.ImportedOnDisk(project, assets), "nothing on disk");
+            put("Assets/Editor/VModularEditor/VModularManager.cs", "a1");
+            Require(!UnityPackageArchive.ImportedOnDisk(project, assets), "partial import counts as failed");
+            put("Assets/VModualr_InAvartar/VModularOneBone.cs", "zz");
+            Require(!UnityPackageArchive.ImportedOnDisk(project, assets), "a file with another GUID is not this package's");
+            put("Assets/VModualr_InAvartar/VModularOneBone.cs", "b2");
+            Require(UnityPackageArchive.ImportedOnDisk(project, assets), "every file with its GUID");
+            put("Assets/VModualr_InAvartar/VModularOneBone.cs", null);
+            System.IO.File.Delete(System.IO.Path.Combine(project, "Assets", "VModualr_InAvartar", "VModularOneBone.cs.meta"));
+            Require(!UnityPackageArchive.ImportedOnDisk(project, assets), "no .meta yet: not imported");
+            Require(!UnityPackageArchive.ImportedOnDisk(project, new List<PackageAsset>()), "an empty list proves nothing");
+            Require(!UnityPackageArchive.ImportedOnDisk(project, null), "an unreadable package proves nothing");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(project, true); } catch (Exception) { }
+        }
     }
 
     // test1 on 2026-11-04: the base license came with 0 versions (the purchase offers the file), so the list had no base license row,

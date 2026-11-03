@@ -21,6 +21,9 @@ namespace OnAirDeck.UnityManager
         private const string RecordsKey = "OnAirDeck.UnityManager.PendingImportRecords";
         // "path<TAB>result" lines of the last finished imports (newest last), for a caller that waits on one (the one-button import).
         private const string ResultsKey = "OnAirDeck.UnityManager.ImportResults";
+        // The package path whose ImportPackage call has started; erased when it ends (Finish). Still set after a domain reload means
+        // the reload cut the import off before its completion callback (G4 retest D2).
+        private const string StartedKey = "OnAirDeck.UnityManager.ImportStarted";
         private const int MaxResults = 50;
         public const string ResultPending = "pending";
         public const string ResultImported = "imported";
@@ -169,7 +172,29 @@ namespace OnAirDeck.UnityManager
             Save(list);
             if (list.Count == 0) return;
 
+            // The head was already started by an earlier domain (G4 retest D2, 2026-11-04): a package with scripts compiles and reloads
+            // the domain during its import, which drops the completion callbacks above, so the head would be imported again and the
+            // queue would never empty. It is settled from what is on disk instead: imported when every file of the package is there
+            // with its GUID, else failed (a partial or cancelled import), so the person can retry.
+            if (SessionState.GetString(StartedKey, "") == list[0])
+            {
+                _importing = true;
+                var head = list[0];
+                var imported = UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head));
+                string[] started;
+                if (LoadContexts().TryGetValue(head, out started))
+                {
+                    if (imported) InstallErrorWatch.ImportFinished(head, started[0], started[1]);
+                    else InstallErrorWatch.End(head, started[0], started[1]);
+                }
+                Finish(imported ? "Imported " + Path.GetFileName(head) + " (settled after a script reload)"
+                                : "Import of " + Path.GetFileName(head) + " did not finish: not every file of the package is in the project",
+                    !imported, imported ? ResultImported : ResultFailed);
+                return;
+            }
+
             _importing = true;
+            SessionState.SetString(StartedKey, list[0]);
             var assets = AssetsOf(list[0]);
             _overwritten = ExistingFiles(assets);
             string[] context;
@@ -266,6 +291,7 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCancelled -= OnCancelled;
             AssetDatabase.importPackageFailed -= OnFailed;
             _overwritten = null;
+            SessionState.EraseString(StartedKey);
 
             var list = Load();
             if (list.Count > 0)

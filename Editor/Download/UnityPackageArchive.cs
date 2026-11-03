@@ -160,6 +160,45 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// True when every file asset of the package is in the project with a .meta that carries the package's GUID for it (folders are
+        /// not checked). Used after a script reload cut an import off before its completion callback (G4 retest D2): anything less,
+        /// an unreadable package or an empty list, is not proof of an import.
+        /// </summary>
+        public static bool ImportedOnDisk(string projectRoot, IList<PackageAsset> assets)
+        {
+            if (assets == null) return false;
+            var files = 0;
+            foreach (var asset in assets)
+            {
+                if (asset == null || asset.IsFolder) continue;
+                var path = PathSafety.SafeRelativePath(asset.Path);
+                if (path == null || string.IsNullOrEmpty(asset.Guid)) return false;
+                var full = Path.Combine(projectRoot, path);
+                if (!File.Exists(full) || !File.Exists(full + ".meta")) return false;
+                if (!string.Equals(MetaGuid(full + ".meta"), asset.Guid, StringComparison.OrdinalIgnoreCase)) return false;
+                files++;
+            }
+            return files > 0;
+        }
+
+        /// <summary>The "guid:" value of a .meta file, or "".</summary>
+        private static string MetaGuid(string metaPath)
+        {
+            try
+            {
+                foreach (var line in File.ReadAllLines(metaPath))
+                {
+                    var t = line.Trim();
+                    if (t.StartsWith("guid:", StringComparison.Ordinal)) return t.Substring(5).Trim();
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return "";
+        }
+
+        /// <summary>
         /// Asset path to last write time (UTC) of the given package paths that already exist as files under
         /// <paramref name="projectRoot"/>. Only clean relative Assets/ and Packages/ paths count.
         /// </summary>
