@@ -80,6 +80,13 @@ namespace OnAirDeck.UnityManager
         };
 
         /// <summary>
+        /// Cores whose add-ons the Manager cannot list yet (VModular: the VModular Plus ids in <see cref="CoreAddonPurchases"/> and
+        /// <see cref="CoreAddonLicenses"/> are still to be confirmed). Removing one is refused, so it never goes before an add-on the
+        /// Manager would not see; take a core out of here when its add-on ids are in.
+        /// </summary>
+        public static readonly string[] CoreAddonsPending = { "com.studioraming.vmodular" };
+
+        /// <summary>
         /// Packages that only the Manager updates (owner decision 2026-10-31: no more MingToon updates through VCC). A VCC install of
         /// one of them is offered a move to the Manager (VpmMigration), which takes its vpm-manifest.json entries out.
         /// </summary>

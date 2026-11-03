@@ -254,6 +254,13 @@ namespace OnAirDeck.UnityManager
             var report = PackageTransaction.Execute(root, items, DateTime.Now, afterTransaction);
             // A reload follows Refresh, so the window's own code may never see this result: leave it where the next load can show it.
             SessionState.SetString(ReportKey, report.Describe());
+            // The removal record: these Packages/<name> folders are the Manager's (written before the refresh can reload the domain).
+            foreach (var item in items)
+            {
+                if (item.TargetFolder.Length > 0) continue;
+                try { PlacedFiles.AddPackage(root, item.Name); }
+                catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the installed package (removal will ask to remove it by hand): " + e.Message); }
+            }
             if (watchLicenses != null)
                 foreach (var item in items)
                     if (item.TargetFolder.Length == 0) InstallErrorWatch.Begin("package:" + item.Name + "@" + item.Version, item.Name, LicenseIdOf(watchLicenses, item.Name), item.Version, new[] { "Packages/" + item.Name });

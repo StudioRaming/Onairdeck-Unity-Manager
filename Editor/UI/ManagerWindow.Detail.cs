@@ -298,6 +298,14 @@ namespace OnAirDeck.UnityManager
                 if (SRGui.Button(new GUIContent(ManagerText.OpenFolder), SRButtonKind.Secondary, SRButtonSize.Large, GUILayout.ExpandWidth(false)))
                     OpenEntryFolder(entry);
             }
+            if (CanOfferRemove(entry))
+            {
+                using (new GUIEnabledScope(!busy))
+                {
+                    if (SRGui.Button(new GUIContent(ManagerText.BRemove, tip), SRButtonKind.Ghost, SRButtonSize.Large, GUILayout.ExpandWidth(false)))
+                        Defer(() => RemoveEntry(entry));
+                }
+            }
             if (SRGui.Button(new GUIContent(ManagerText.ViewAt), SRButtonKind.Ghost, SRButtonSize.Large, GUILayout.ExpandWidth(false)))
                 OpenAtelier(entry);
             GUILayout.FlexibleSpace();

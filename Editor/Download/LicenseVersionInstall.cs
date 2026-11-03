@@ -73,7 +73,7 @@ namespace OnAirDeck.UnityManager
                         summary.LicenseRefused = e is DeviceLimitException || e is DeviceReleasedException || e is ManagerUpdateRequiredException;
                         Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the license file could not be written: " + e.Message);
                     }
-                });
+                }, PlacedFiles.LicenseKey(license.license_id));
         }
     }
 }

@@ -40,6 +40,7 @@
     <Compile Include="MingToonMoveChecks.cs" />
     <Compile Include="AutoUpdateChecks.cs" />
     <Compile Include="ListRowChecks.cs" />
+    <Compile Include="RemovalChecks.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflicts.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflictFixes.cs" />
     <Compile Include="../../Editor/Import/ImportRequestLogic.cs" />
@@ -75,6 +76,7 @@
     <Compile Include="../../Editor/Api/DeviceModels.cs" />
     <Compile Include="../../Editor/Api/ApiErrors.cs" />
     <Compile Include="../../Editor/Packages/InstalledPackages.cs" />
+    <Compile Include="../../Editor/Packages/Removal.cs" />
     <Compile Include="../../Editor/Packages/AtomicFile.cs" />
     <Compile Include="../../Editor/Packages/GuidCollisions.cs" />
     <Compile Include="../../Editor/Packages/JsonWriter.cs" />

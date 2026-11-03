@@ -37,7 +37,15 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static int ExtractZip(string zipPath, string productFolder, out int skipped)
         {
+            return ExtractZip(zipPath, productFolder, out skipped, null);
+        }
+
+        /// <param name="tracker">Told each file before it is written, so the removal record (PlacedFiles) holds only what this
+        /// extraction created; or null.</param>
+        public static int ExtractZip(string zipPath, string productFolder, out int skipped, PlacementTracker tracker)
+        {
             var absoluteFolder = ToAbsolute(productFolder);
+            if (tracker != null) tracker.BeforeCreateFolder(productFolder);
             Directory.CreateDirectory(absoluteFolder);
             var written = 0;
             skipped = 0;
@@ -65,16 +73,19 @@ namespace OnAirDeck.UnityManager
 
                     if (isDirectory)
                     {
+                        if (tracker != null) tracker.BeforeCreateFolder(productFolder + "/" + relative.TrimEnd('/'));
                         Directory.CreateDirectory(destination);
                         continue;
                     }
 
+                    if (tracker != null) tracker.BeforeWrite(productFolder + "/" + relative);
                     Directory.CreateDirectory(Path.GetDirectoryName(destination));
                     using (var input = entry.Open())
                     using (var output = File.Create(destination))
                     {
                         input.CopyTo(output);
                     }
+                    if (tracker != null) tracker.AfterWrite(productFolder + "/" + relative);
                     written++;
                 }
             }
