@@ -15,13 +15,10 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private List<string> _batchKeys = new List<string>();
         [NonSerialized] private CancellationTokenSource _batchCancel;
 
-        /// <summary>A product a batch can handle: a downloadable purchase or a license with an installable package.</summary>
+        /// <summary>A product a batch can handle (ManagerCatalog.BatchBlockOf): a downloadable purchase, a license with an installable package, or a file add-on of a core.</summary>
         private static bool CanBatch(CatalogEntry entry)
         {
-            if (entry.Kind == FavoriteKind.Purchase) return entry.Purchase != null && entry.Purchase.CanDownload;
-            if (OfferedPackage(entry) != null) return true;
-            // A file add-on of a core (Ming Light Controller): selectable with its core, so one run installs the core, then the add-on.
-            return entry.License != null && CoreAddons.CoreOf(entry).Length > 0 && OfferedFileVersion(entry) != null;
+            return ManagerCatalog.BatchBlockOf(entry) == BatchBlock.None;
         }
 
         private float BatchBarHeightNow()
@@ -73,7 +70,10 @@ namespace OnAirDeck.UnityManager
             var picked = new List<CatalogEntry>();
             foreach (var entry in _visible) if (_selected.Contains(entry.Key) && CanBatch(entry)) picked.Add(entry);
             if (picked.Count == 0) return;
-            if (!EditorUtility.DisplayDialog(ManagerText.DlgBatchT, ManagerText.DlgBatch.Replace("{n}", picked.Count.ToString()), ManagerText.BatchGet, ManagerText.Cancel)) return;
+            var ask = ManagerText.DlgBatch.Replace("{n}", picked.Count.ToString());
+            // The single install of a file product says it overwrites without a backup; a batch that reinstalls one says it too.
+            if (picked.Exists(e => e.IsLicense && OfferedPackage(e) == null && e.State != EntryState.None)) ask += ManagerText.DlgBatchFiles;
+            if (!EditorUtility.DisplayDialog(ManagerText.DlgBatchT, ask, ManagerText.BatchGet, ManagerText.Cancel)) return;
             RunBatch(picked, true);
         }
 
@@ -84,7 +84,9 @@ namespace OnAirDeck.UnityManager
             var picked = new List<CatalogEntry>();
             foreach (var entry in _entries) if (entry.State == EntryState.New && CanBatch(entry)) picked.Add(entry);
             if (picked.Count == 0) return;
-            if (!EditorUtility.DisplayDialog(ManagerText.DlgBatchT, ManagerText.DlgUpdAll.Replace("{n}", picked.Count.ToString()), ManagerText.UpdAll, ManagerText.Cancel)) return;
+            var ask = ManagerText.DlgUpdAll.Replace("{n}", picked.Count.ToString());
+            if (picked.Exists(e => e.IsLicense && OfferedPackage(e) == null)) ask += ManagerText.DlgBatchFiles;
+            if (!EditorUtility.DisplayDialog(ManagerText.DlgBatchT, ask, ManagerText.UpdAll, ManagerText.Cancel)) return;
             RunBatch(picked, false);
         }
 
@@ -100,9 +102,19 @@ namespace OnAirDeck.UnityManager
             var versions = new List<LicenseVersionEntry>();
             var waiting = new List<PendingAddon>();
             // MingToon Core before its add-ons (owner rule 2026-11-01); everything else keeps the list order.
-            picked = CoreAddons.OrderCoreFirst(picked, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId);
+            picked = CoreAddons.OrderCoreFirst(picked, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => e.IsLicense ? "" : CoreAddons.CoreOf(e));
             foreach (var entry in picked)
             {
+                if (entry.Kind == FavoriteKind.Purchase && CoreAddons.CoreOf(entry).Length > 0)
+                {
+                    // A purchase add-on of a core (VModular Plus): after every package, like a file add-on, so the core of this run is in first.
+                    var addonItem = BatchActions.Download(token, entry.Purchase, cancel, CoreAddons.CoreOf(entry));
+                    fileItems.Add(addonItem);
+                    keyOf[addonItem.Name] = entry.Key;
+                    nameOf[addonItem.Name] = entry.Name;
+                    waiting.Add(new PendingAddon { AddonKey = entry.Key, Core = CoreAddons.CoreOf(entry), Name = entry.Name, SinceUnix = NowUnix() });
+                    continue;
+                }
                 if (entry.Kind == FavoriteKind.Purchase)
                 {
                     var item = BatchActions.Download(token, entry.Purchase, cancel);
@@ -119,14 +131,15 @@ namespace OnAirDeck.UnityManager
                     nameOf[version.package_name + " " + version.package_version] = entry.Name;
                     continue;
                 }
-                // A file add-on of a core (MLC): after every package, so the core of this run is in when it starts.
+                // A file version (.unitypackage, zip): after every package, so the core of this run is in when a file add-on (MLC) starts.
                 var file = OfferedFileVersion(entry);
                 if (file == null || entry.License == null) continue;
                 var fileItem = BatchActions.InstallFile(token, entry.License, file, _licenses, cancel);
                 fileItems.Add(fileItem);
                 keyOf[fileItem.Name] = entry.Key;
                 nameOf[fileItem.Name] = entry.Name;
-                waiting.Add(new PendingAddon { AddonKey = entry.Key, LicenseId = entry.LicenseId, Core = CoreAddons.CoreOf(entry), Name = entry.Name, SinceUnix = NowUnix() });
+                var fileCore = CoreAddons.CoreOf(entry);
+                if (fileCore.Length > 0) waiting.Add(new PendingAddon { AddonKey = entry.Key, LicenseId = entry.LicenseId, Core = fileCore, Name = entry.Name, SinceUnix = NowUnix() });
             }
             // MingToon from VCC or the BOOTH installer: one question for the whole batch (undone below when none of them installed).
             VpmMove vccMove = null;

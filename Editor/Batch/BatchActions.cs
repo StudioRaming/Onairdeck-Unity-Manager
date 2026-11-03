@@ -11,15 +11,21 @@ namespace OnAirDeck.UnityManager
     {
         /// <summary>
         /// A purchase or own-product download. Unity packages are imported without the import window, because a batch
-        /// must not stop at one dialog per package (a single download from the window keeps the dialog).
+        /// must not stop at one dialog per package (a single download from the window keeps the dialog). A purchase add-on of a core
+        /// (<paramref name="core"/>, VModular Plus) runs only when its core is here by then, else it fails with the reason and nothing is downloaded.
         /// </summary>
-        public static BatchItem Download(string sessionToken, PurchaseItem item, CancellationToken cancel = default(CancellationToken))
+        public static BatchItem Download(string sessionToken, PurchaseItem item, CancellationToken cancel = default(CancellationToken), string core = "")
         {
             return new BatchItem
             {
                 Name = item.name,
                 Version = DownloadService.VersionOf(item),
-                Run = async progress => (object)await DownloadService.DownloadItemAsync(sessionToken, item, progress, cancel, false)
+                Run = async progress =>
+                {
+                    if (!string.IsNullOrEmpty(core) && !CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core))
+                        throw new AddonNeedsCoreException(core, "Needs " + CoreAddons.CoreName(core) + ", which is not installed in this project; nothing was installed.");
+                    return (object)await DownloadService.DownloadItemAsync(sessionToken, item, progress, cancel, false);
+                }
             };
         }
 

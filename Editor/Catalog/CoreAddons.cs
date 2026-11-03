@@ -15,11 +15,21 @@ namespace OnAirDeck.UnityManager
         CoreMissing
     }
 
+    /// <summary>The add-on option of a product sold with its core (<see cref="OnAirDeckConfig.CoreAddonPurchases"/>).</summary>
+    internal sealed class PurchaseAddon
+    {
+        /// <summary>The core package ("com.studioraming.vmodular").</summary>
+        public string Core = "";
+        /// <summary>The asset file ids of the add-on option (plugin-purchases files[].file_id).</summary>
+        public string[] FileIds = new string[0];
+    }
+
     /// <summary>
     /// Owner rule 2026-11-01: MingToon add-ons (URP add-on, Ming Light Controller) work only with MingToon Core, so they install only when the
     /// core is installed or goes first in the same run, the list shows them under the core, and a run orders the core first. Sources, in
     /// order: a package named "&lt;core&gt;.&lt;suffix&gt;" (the URP add-on also pins its core in vpmDependencies, which the install follows), then
-    /// <see cref="OnAirDeckConfig.CoreAddonLicenses"/> for add-ons that declare nothing (MLC). No UnityEngine: checked headless.
+    /// <see cref="OnAirDeckConfig.CoreAddonLicenses"/> for add-ons that declare nothing (MLC). A purchase row is an add-on through
+    /// <see cref="OnAirDeckConfig.CoreAddonPurchases"/> (VModular Plus, an option of the VModular product). No UnityEngine: checked headless.
     /// </summary>
     internal static class CoreAddons
     {
@@ -36,7 +46,27 @@ namespace OnAirDeck.UnityManager
 
         public static string CoreOf(CatalogEntry entry)
         {
-            return entry == null || !entry.IsLicense ? "" : CoreOf(entry.PackageName, entry.LicenseId);
+            if (entry == null) return "";
+            return entry.IsLicense ? CoreOf(entry.PackageName, entry.LicenseId) : CoreOfPurchase(entry.Purchase);
+        }
+
+        public static string CoreOfPurchase(PurchaseItem item)
+        {
+            return CoreOfPurchase(item, OnAirDeckConfig.CoreAddonPurchases);
+        }
+
+        /// <summary>
+        /// The core a purchase row is an add-on of, or "": its product is in <paramref name="addons"/> and every file the row lists is one
+        /// of the add-on's files. A row with no files, or with any other file (the base product), is not an add-on.
+        /// </summary>
+        public static string CoreOfPurchase(PurchaseItem item, IDictionary<string, PurchaseAddon> addons)
+        {
+            PurchaseAddon addon;
+            if (item == null || addons == null || string.IsNullOrEmpty(item.product_id) || !addons.TryGetValue(item.product_id, out addon)) return "";
+            if (addon == null || string.IsNullOrEmpty(addon.Core) || addon.FileIds == null || item.files == null || item.files.Length == 0) return "";
+            foreach (var file in item.files)
+                if (file == null || string.IsNullOrEmpty(file.file_id) || Array.IndexOf(addon.FileIds, file.file_id) < 0) return "";
+            return addon.Core;
         }
 
         public static bool IsCore(string packageName)
@@ -74,6 +104,12 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static List<T> OrderCoreFirst<T>(IList<T> items, Func<T, string> packageOf, Func<T, string> licenseOf)
         {
+            return OrderCoreFirst(items, packageOf, licenseOf, null);
+        }
+
+        /// <param name="purchaseCoreOf">The core of an item that is a purchase add-on (<see cref="CoreOfPurchase(PurchaseItem)"/>), or null.</param>
+        public static List<T> OrderCoreFirst<T>(IList<T> items, Func<T, string> packageOf, Func<T, string> licenseOf, Func<T, string> purchaseCoreOf)
+        {
             var cores = new List<T>();
             var middle = new List<T>();
             var addons = new List<T>();
@@ -81,7 +117,7 @@ namespace OnAirDeck.UnityManager
             {
                 var package = packageOf(item) ?? "";
                 if (IsCore(package)) cores.Add(item);
-                else if (CoreOf(package, licenseOf(item)).Length > 0) addons.Add(item);
+                else if (CoreOf(package, licenseOf(item)).Length > 0 || (purchaseCoreOf != null && (purchaseCoreOf(item) ?? "").Length > 0)) addons.Add(item);
                 else middle.Add(item);
             }
             var result = new List<T>(cores);
