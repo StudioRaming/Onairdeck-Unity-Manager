@@ -27,7 +27,7 @@ Advanced, if you use VRChat Creator Companion (VCC): add the listing `https://st
 
 ## Use
 
-1. Open **Window ▸ Atelier Manager** and click **Sign in with browser**. Approve the request on onairdeck.com. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
+1. Open **Window ▸ Atelier Manager** and click **Sign in with browser**. Approve the request on atelier.io.kr. The sign-in is saved per computer, so it applies to every Unity project, and lasts 30 days unless you sign out.
 2. Your purchases are listed with the files the seller made available for Unity. Items the seller has not enabled for Unity say "Not available in Unity".
 3. Click **Download**. The first download of an item makes the purchase non-refundable (the same rule as the website), so Unity asks you to confirm.
    - `.unitypackage` files open Unity's normal import dialog and use the asset paths stored in the package.
@@ -35,7 +35,7 @@ Advanced, if you use VRChat Creator Companion (VCC): add the listing `https://st
 4. **Update available** appears when the seller replaced a file after your last download.
 5. Each download also saves a signed `onairdeck.license` in the product folder, and while you are signed in a small `OnAirDeck/session.json` marker lives in your local app-data folder (no token inside). Assets that check their license need both; the Manager refreshes the license file silently when it is about to expire.
 6. When a newer Manager is published, the window shows **Update**. Packages installed from a git URL update in place; a Manager installed from the unitypackage, the zip or VCC replaces its own folder (see below) and, under VCC, also sets its version in `Packages/vpm-manifest.json`; a copy added with **Add package from disk…** must be updated by hand. The banner stays for the whole Editor session, script reloads included.
-7. **Device limit.** A seller can limit a license to a number of computers (MingToon and its URP add-on: 3). A computer is one PC, whatever Unity version or project; the Manager sends a hash of the hardware id and the computer name with each signed-in request, never the id itself. On a computer over the limit, sign-in and the purchase list still work, but download, package install and license files for that license are refused until you release one of your other computers (in the Manager, or on the My Page of onairdeck.com). An OnAirDeck Unity Manager of 0.6.1 or older (the former name) cannot be used with a limited license and asks you to update.
+7. **Device limit.** A seller can limit a license to a number of computers (MingToon and its URP add-on: 3). A computer is one PC, whatever Unity version or project; the Manager sends a hash of the hardware id and the computer name with each signed-in request, never the id itself. On a computer over the limit, sign-in and the purchase list still work, but download, package install and license files for that license are refused until you release one of your other computers (in the Manager, or on your Atelier My Page: https://atelier.io.kr/my?tab=licenses). An OnAirDeck Unity Manager of 0.6.1 or older (the former name) cannot be used with a limited license and asks you to update.
 8. **Preview, beta and hotfix.** Install and Update use the newest release. A preview or beta (`0.1.15-preview.1`, `0.1.15-beta.1`) carries a chip in the Versions tab and is installed only when you pick it there; once a project runs one, newer previews and betas are offered as updates, and so is the next release. A hotfix is an ordinary newer version (for example 0.1.16) and is marked Hotfix when the seller's label says so.
 
 Downloads made before 0.2.1 stay in their existing folders. Download again to place loose files or ZIP contents in the new folder. The manager does not move existing assets or their `.meta` files.
@@ -53,7 +53,7 @@ A Manager installed this way (an *embedded* package) updates itself: when the re
 
 ## Packages
 
-When your account holds a license with installable package versions (an OnAirDeck purchase or an approved BOOTH claim give the same right), the window shows a **Packages** section above your purchases:
+When your account holds a license with installable package versions (an Atelier purchase or an approved BOOTH claim give the same right), the window shows a **Packages** section above your purchases:
 
 - per package: the version installed in this project (read from `Packages/<name>/package.json`), the newest available version, **Install** / **Update**, and a picker for older versions;
 - a **mismatch banner** when an installed package names exact dependency versions that disagree with what is installed (for example the Creator Companion moved the core package alone). One button installs the add-on version equal to your installed dependency when that version exists, otherwise the newest add-on with the dependency versions it requires. The button text names the versions.
@@ -62,7 +62,7 @@ Other packages can open the window on their own row: `OnAirDeck.UnityManager.OnA
 
 ### What an install does
 
-1. Asks OnAirDeck for the zip of the chosen version (Unity asks you to confirm first: for a license bought on onairdeck.com the first download makes that purchase non-refundable; a BOOTH claim is not affected) and downloads it over HTTPS.
+1. Asks OnAirDeck for the zip of the chosen version (Unity asks you to confirm first: for a license bought on Atelier the first download makes that purchase non-refundable; a BOOTH claim is not affected) and downloads it over HTTPS.
 2. Validates the zip. Every entry must be a plain relative path: a single `..`, rooted, drive or sanitised name fails the whole package (nothing is skipped). The root `package.json` must exist and its `name` and `version` must equal what OnAirDeck listed. `vpmDependencies` must pin exact versions, written `"X"` or `"=X"`; anything else (`^`, `~`, `>=`, ranges, wildcards, spaces) fails the install. The value is copied into `vpm-manifest.json` exactly as `package.json` spells it.
 3. Resolves each dependency that is not installed at exactly the named version from a fixed list of trusted VPM listings, searched in order (`https://studioraming.github.io/mingtoon-distribution/index.json`, then `https://studioraming.github.io/mingtoon-distribution/preview/index.json`, the only one that carries prerelease versions), never from a URL inside a zip. The download must match the listing's SHA-256.
 4. Before anything moves, matches the `.meta` GUIDs of every zip against `Assets/` and the embedded folders under `Packages/` (not the folders being replaced). Two assets with one GUID break materials and renderer features, which is what an old add-on `.unitypackage` import inside the core folder would cause. If the colliding files sit inside an installed package that the trusted listing has at its installed version, that package is **reinstalled at the same version in the same transaction** (the stray files leave with the swap and stay in the backup, and the result says so). Any other collision (`Assets/`, a package that cannot be restored from a trusted listing) refuses the install before any change and lists up to 10 colliding paths with the GUID.
@@ -137,13 +137,13 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 
 ### 사용
 
-1. **Window ▸ 아틀리에 매니저 ▸ Sign in with browser**를 누르고 onairdeck.com에서 로그인을 승인하세요. 로그인은 컴퓨터의 모든 Unity 프로젝트에서 공유되며, 로그아웃하지 않으면 30일 동안 유지됩니다.
+1. **Window ▸ 아틀리에 매니저 ▸ Sign in with browser**를 누르고 atelier.io.kr에서 로그인을 승인하세요. 로그인은 컴퓨터의 모든 Unity 프로젝트에서 공유되며, 로그아웃하지 않으면 30일 동안 유지됩니다.
 2. 구매 목록에서 **Download** 또는 **Download again**을 누르세요. 최초 다운로드 시 환불이 불가능해진다는 확인 창이 표시됩니다.
 3. 이미지 등 일반 파일과 ZIP 압축 해제 결과는 `Assets/StudioRaming_Onairdeck/<상품명>/`에 저장됩니다. `.unitypackage`는 Unity 가져오기 창을 열며 패키지에 저장된 경로를 사용합니다.
 4. 판매자가 파일을 변경하면 **Update available**이 표시됩니다. **Refresh**로 목록을 갱신하세요.
 5. 다운로드 시 상품 폴더에 서명된 `onairdeck.license` 파일이 함께 저장되고, 로그인 중에는 로컬 앱데이터 폴더에 `OnAirDeck/session.json` 표식(토큰은 포함되지 않음)이 유지됩니다. 라이선스를 확인하는 에셋은 이 두 파일이 필요하며, 만료가 가까워지면 매니저가 자동으로 갱신합니다.
 6. 새 버전의 매니저가 공개되면 창에 **Update** 버튼이 표시됩니다. git URL로 설치한 패키지는 그 자리에서 업데이트되고, unitypackage나 zip으로 설치한 매니저는 스스로 폴더를 교체하며(아래 참고), **Add package from disk…**로 추가한 복사본은 직접 갱신해야 합니다. 알림은 스크립트를 다시 불러와도 Editor를 끌 때까지 남습니다.
-7. **기기 제한.** 판매자는 라이선스를 쓸 수 있는 컴퓨터 수를 제한할 수 있습니다(MingToon과 URP 애드온은 3대). 기기는 Unity 버전이나 프로젝트와 무관하게 PC 한 대입니다. 매니저는 로그인된 요청마다 하드웨어 ID의 해시와 컴퓨터 이름만 보내고 ID 자체는 보내지 않습니다. 제한을 넘은 컴퓨터에서도 로그인과 구매 목록은 되지만, 그 라이선스의 다운로드·패키지 설치·라이선스 파일 발급은 다른 컴퓨터를 해제할 때까지 거부됩니다(매니저 또는 onairdeck.com 마이페이지에서 해제). 0.6.1 이하 OnAirDeck Unity Manager(이전 이름)는 제한된 라이선스를 쓸 수 없어 업데이트를 안내합니다.
+7. **기기 제한.** 판매자는 라이선스를 쓸 수 있는 컴퓨터 수를 제한할 수 있습니다(MingToon과 URP 애드온은 3대). 기기는 Unity 버전이나 프로젝트와 무관하게 PC 한 대입니다. 매니저는 로그인된 요청마다 하드웨어 ID의 해시와 컴퓨터 이름만 보내고 ID 자체는 보내지 않습니다. 제한을 넘은 컴퓨터에서도 로그인과 구매 목록은 되지만, 그 라이선스의 다운로드·패키지 설치·라이선스 파일 발급은 다른 컴퓨터를 해제할 때까지 거부됩니다(매니저 또는 아틀리에 마이페이지 https://atelier.io.kr/my?tab=licenses 에서 해제). 0.6.1 이하 OnAirDeck Unity Manager(이전 이름)는 제한된 라이선스를 쓸 수 없어 업데이트를 안내합니다.
 8. **프리뷰·베타·핫픽스.** 설치와 업데이트는 가장 새 정식판을 씁니다. 프리뷰나 베타(`0.1.15-preview.1`, `0.1.15-beta.1`)는 버전 탭에 표시가 붙고, 거기서 직접 골라야 설치됩니다. 프리뷰나 베타를 쓰는 프로젝트에는 더 새 프리뷰·베타와 다음 정식판이 업데이트로 표시됩니다. 핫픽스는 번호가 올라간 일반 버전(예: 0.1.16)이며, 판매자가 라벨에 핫픽스라고 적으면 표시가 붙습니다.
 
 판매자는 활성 Plus 멤버십이 있어야 Atelier 상품 편집기의 파일별 **Unity download**를 켤 수 있습니다. 구매자에게는 Plus가 필요하지 않습니다. 구매 옵션에 포함되지 않은 파일과 외부 링크는 Unity에서 다운로드할 수 없습니다. 이전 버전으로 받은 파일은 기존 폴더에 남습니다.
@@ -152,7 +152,7 @@ Package Manager 는 Git 으로 패키지를 받아오므로 Git 이 설치되어
 
 릴리스에는 Git이 없는 환경을 위한 파일이 함께 들어 있습니다. `Atelier-Manager.unitypackage`(항상 최신, 버전이 붙은 파일과 같은 내용)와 `Atelier-Manager-<버전>.unitypackage`는 **Assets ▸ Import Package ▸ Custom Package…**로 가져오고, `com.studioraming.manager-<버전>.zip`은 `Packages/com.studioraming.manager/`에 압축을 풀면 됩니다. 이렇게 설치한 매니저는 릴리스에 다운로드 주소가 있으면 **Update**로 스스로 폴더를 교체합니다.
 
-계정에 패키지 버전이 있는 라이선스(OnAirDeck 구매 또는 승인된 BOOTH 청구)가 있으면 구매 목록 위에 **Packages** 섹션이 표시됩니다. 설치된 버전(`Packages/<이름>/package.json`), 최신 버전, **Install/Update**, 이전 버전 선택기가 있습니다. 설치된 패키지가 요구하는 정확한 의존 버전이 실제 설치된 버전과 다르면(예: VCC가 코어만 올린 경우) 경고와 함께 맞출 버전을 적은 버튼이 표시됩니다.
+계정에 패키지 버전이 있는 라이선스(아틀리에 구매 또는 승인된 BOOTH 청구)가 있으면 구매 목록 위에 **Packages** 섹션이 표시됩니다. 설치된 버전(`Packages/<이름>/package.json`), 최신 버전, **Install/Update**, 이전 버전 선택기가 있습니다. 설치된 패키지가 요구하는 정확한 의존 버전이 실제 설치된 버전과 다르면(예: VCC가 코어만 올린 경우) 경고와 함께 맞출 버전을 적은 버튼이 표시됩니다.
 
 설치는 하나의 트랜잭션입니다. zip을 검증하고(경로가 하나라도 안전하지 않으면 전체 실패, `package.json`의 이름과 버전이 목록과 같아야 하고, 의존성은 정확한 버전이어야 함) 신뢰하는 VPM 목록에서 의존 패키지를 SHA-256 확인 후 받아, 기존 `Packages/<이름>`을 `Library/OnAirDeck/Backup/<이름>-<이전버전>-<시각>`으로 옮기고 새 폴더를 이동해 넣습니다. 실패하면 역순으로 되돌리고, 에디터가 중간에 꺼지면 다음 로드 때 자동으로 되돌립니다. 새 패키지에 없는 예전 파일은 가져오지 않고 결과에 목록으로 보여줍니다. `Packages/vpm-manifest.json`에 이미 있는 항목의 버전만 갱신하며(백업 후, 항목은 추가하지 않음), 마지막에 `Client.Resolve()`와 `AssetDatabase.Refresh()`를 한 번 호출합니다. `Assets/StudioRaming/MingToon`에 예전 방식으로 설치된 경우에는 먼저 그 설치를 정리하라는 안내와 함께 거부합니다.
 
@@ -174,13 +174,13 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 
 ### 使い方
 
-1. **Window ▸ アトリエマネージャー ▸ Sign in with browser** を押し、onairdeck.comでサインインを承認してください。サインインは同じコンピューターの全Unityプロジェクトで共有され、サインアウトしなければ30日間有効です。
+1. **Window ▸ アトリエマネージャー ▸ Sign in with browser** を押し、atelier.io.krでサインインを承認してください。サインインは同じコンピューターの全Unityプロジェクトで共有され、サインアウトしなければ30日間有効です。
 2. 購入一覧の **Download** または **Download again** を押してください。初回ダウンロード時は、購入が返金対象外になることを確認するダイアログが表示されます。
 3. 画像などの通常ファイルとZIPの展開結果は `Assets/StudioRaming_Onairdeck/<商品名>/` に保存されます。`.unitypackage` はUnityのインポート画面を開き、パッケージに保存されたパスを使用します。
 4. 出品者がファイルを変更すると **Update available** が表示されます。**Refresh** で一覧を更新してください。
 5. ダウンロード時に署名付きの `onairdeck.license` が商品フォルダーに保存され、サインイン中はローカルのアプリデータフォルダーに `OnAirDeck/session.json` のマーカー（トークンは含みません）が置かれます。ライセンスを確認するアセットにはこの2つのファイルが必要で、期限が近づくとマネージャーが自動的に更新します。
 6. 新しいバージョンのマネージャーが公開されると、ウィンドウに **Update** ボタンが表示されます。git URLでインストールしたパッケージはその場で更新され、unitypackageやzipで入れたマネージャーは自分のフォルダーを置き換えます（下記参照）。**Add package from disk…** で追加したコピーは手動で更新してください。通知はスクリプトを再読み込みしても、Editorを閉じるまで残ります。
-7. **台数制限。** 出品者はライセンスを使えるコンピューターの台数を制限できます（MingToonとURPアドオンは3台）。1台とは、Unityのバージョンやプロジェクトに関係なくPC 1台です。マネージャーはサインイン中のリクエストごとにハードウェアIDのハッシュとコンピューター名だけを送り、IDそのものは送りません。上限を超えたコンピューターでもサインインと購入一覧は使えますが、そのライセンスのダウンロード、パッケージのインストール、ライセンスファイルの発行は、別のコンピューターを解除するまで拒否されます（マネージャー、またはonairdeck.comのマイページで解除）。0.6.1以前のOnAirDeck Unity Manager（旧名称）は制限付きライセンスを使えず、更新を案内します。
+7. **台数制限。** 出品者はライセンスを使えるコンピューターの台数を制限できます（MingToonとURPアドオンは3台）。1台とは、Unityのバージョンやプロジェクトに関係なくPC 1台です。マネージャーはサインイン中のリクエストごとにハードウェアIDのハッシュとコンピューター名だけを送り、IDそのものは送りません。上限を超えたコンピューターでもサインインと購入一覧は使えますが、そのライセンスのダウンロード、パッケージのインストール、ライセンスファイルの発行は、別のコンピューターを解除するまで拒否されます（マネージャー、またはアトリエのマイページ https://atelier.io.kr/my?tab=licenses で解除）。0.6.1以前のOnAirDeck Unity Manager（旧名称）は制限付きライセンスを使えず、更新を案内します。
 8. **プレビュー・ベータ・ホットフィックス。** インストールと更新には最新の正式版が使われます。プレビューやベータ（`0.1.15-preview.1`、`0.1.15-beta.1`）はバージョンタブに表示が付き、そこで選んだときだけインストールされます。プレビューやベータを使っているプロジェクトには、より新しいプレビュー・ベータと次の正式版が更新として表示されます。ホットフィックスは番号が上がった通常のバージョン（例: 0.1.16）で、出品者がラベルにホットフィックスと書くと表示が付きます。
 
 出品者は有効なPlusメンバーシップで、Atelierの商品編集画面の各ファイルの **Unity download** を有効にできます。購入者にPlusは不要です。購入オプションに含まれないファイルや外部リンクはUnityからダウンロードできません。以前のバージョンで取得したファイルは元のフォルダーに残ります。
@@ -193,7 +193,7 @@ Package Manager は Git でパッケージを取得するため、Git のイン�
 
 リリースにはGitがない環境向けのファイルがあります。`Atelier-Manager.unitypackage`（常に最新、バージョン付きファイルと同一）と `Atelier-Manager-<バージョン>.unitypackage` は **Assets ▸ Import Package ▸ Custom Package…** でインポートし、`com.studioraming.manager-<バージョン>.zip` は `Packages/com.studioraming.manager/` に展開してください。この方法で入れたマネージャーは、リリースにダウンロードURLがあれば **Update** で自分のフォルダーを置き換えます。
 
-アカウントにパッケージ版を持つライセンス（OnAirDeckでの購入または承認済みのBOOTH申請）があると、購入一覧の上に **Packages** セクションが表示されます。インストール済みバージョン、最新バージョン、**Install/Update**、旧バージョンの選択ができます。インストール済みパッケージが要求する依存バージョンと実際のバージョンが違う場合（例: VCCがコアだけを更新した）は、警告と、入れるバージョンを書いたボタンが表示されます。
+アカウントにパッケージ版を持つライセンス（アトリエでの購入または承認済みのBOOTH申請）があると、購入一覧の上に **Packages** セクションが表示されます。インストール済みバージョン、最新バージョン、**Install/Update**、旧バージョンの選択ができます。インストール済みパッケージが要求する依存バージョンと実際のバージョンが違う場合（例: VCCがコアだけを更新した）は、警告と、入れるバージョンを書いたボタンが表示されます。
 
 インストールは1つのトランザクションです。zipを検証し（安全でないパスが1つでもあれば全体が失敗、`package.json` の名前とバージョンが一覧と一致、依存は正確なバージョンのみ）、信頼するVPM一覧から依存パッケージをSHA-256確認のうえ取得し、既存の `Packages/<名前>` を `Library/OnAirDeck/Backup/` に移して新しいフォルダーを移動します。失敗時は逆順で戻し、エディターが途中で終了した場合は次回起動時に自動で戻します。新しいパッケージにない旧ファイルは引き継がず、結果に一覧を表示します。`Packages/vpm-manifest.json` に既にある項目のバージョンだけを更新し（バックアップ後、項目は追加しない）、最後に `Client.Resolve()` と `AssetDatabase.Refresh()` を1回呼びます。`Assets/StudioRaming/MingToon` に旧方式で入っている場合は、先にそのインストールを整理するよう案内して拒否します。
 
