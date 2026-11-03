@@ -136,6 +136,32 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// The row that installs <paramref name="core"/> before an add-on, or null: the core package's license row
+        /// (<paramref name="offersPackage"/>), then a license row that ships a file core (<paramref name="offersFile"/>), then a purchase
+        /// row that carries the core with files to download. The last one is how most buyers hold VModular: the base license comes with
+        /// no version when the purchase already offers its file, so the list has no license row for it (G4 retest D1, 2026-11-04).
+        /// </summary>
+        public static CatalogEntry CoreEntryOf(IEnumerable<CatalogEntry> entries, string core, Func<CatalogEntry, bool> offersPackage, Func<CatalogEntry, bool> offersFile)
+        {
+            if (entries == null || string.IsNullOrEmpty(core)) return null;
+            CatalogEntry fileLicense = null, purchase = null;
+            foreach (var entry in entries)
+            {
+                if (entry == null) continue;
+                if (entry.IsLicense)
+                {
+                    if (entry.PackageName == core && offersPackage != null && offersPackage(entry)) return entry;
+                    if (fileLicense == null && entry.License != null && FileCoreOfLicense(entry.LicenseId) == core && offersFile != null && offersFile(entry)) fileLicense = entry;
+                }
+                else if (purchase == null && entry.Purchase != null && entry.Purchase.files != null && entry.Purchase.files.Length > 0 && CoreProvidedBy(entry) == core)
+                {
+                    purchase = entry;
+                }
+            }
+            return fileLicense ?? purchase;
+        }
+
+        /// <summary>
         /// True when one of <paramref name="paths"/> (project-relative) is a file of the file core: its marker or any file in its folders.
         /// A removal that moves even one of them leaves the core broken (review G4 R2: a kept marker does not mean a whole core).
         /// </summary>
@@ -266,7 +292,8 @@ namespace OnAirDeck.UnityManager
             var corePackages = new HashSet<string>(StringComparer.Ordinal);
             foreach (var row in rows)
             {
-                var provided = row.Entry != null && row.Entry.IsLicense ? CoreProvidedBy(row.Entry) : "";
+                // License rows and purchase rows that carry a core (a VModular base bought as a purchase) both hold their add-ons.
+                var provided = CoreProvidedBy(row.Entry);
                 if (provided.Length > 0) corePackages.Add(provided);
             }
             var children = new Dictionary<string, List<ListLine>>(StringComparer.Ordinal);
@@ -289,7 +316,7 @@ namespace OnAirDeck.UnityManager
             foreach (var row in kept)
             {
                 result.Add(row);
-                var package = row.Entry != null && row.Entry.IsLicense ? CoreProvidedBy(row.Entry) : "";
+                var package = CoreProvidedBy(row.Entry);
                 List<ListLine> list;
                 // Two rows of the same core (a free and a paid license that did not merge): the add-ons go under the first.
                 if (package.Length > 0 && placed.Add(package) && children.TryGetValue(package, out list)) result.AddRange(list);

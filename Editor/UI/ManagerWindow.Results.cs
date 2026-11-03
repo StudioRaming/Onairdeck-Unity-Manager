@@ -100,17 +100,12 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The list row that installs <paramref name="core"/>, or null: the core package's license, or a license that ships a file core
-        /// (VModular 1.0.0's .unitypackage) with a file version to install.
+        /// The list row that installs <paramref name="core"/>, or null (<see cref="CoreAddons.CoreEntryOf"/>): the core package's license,
+        /// a license that ships a file core with a file version, or a purchase row that carries the file core (most VModular buyers).
         /// </summary>
         private CatalogEntry CoreEntry(string core)
         {
-            if (_entries == null) return null;
-            foreach (var entry in _entries)
-                if (entry.IsLicense && entry.PackageName == core && OfferedPackage(entry) != null) return entry;
-            foreach (var entry in _entries)
-                if (entry.IsLicense && entry.License != null && CoreAddons.FileCoreOfLicense(entry.LicenseId) == core && OfferedFileVersion(entry) != null) return entry;
-            return null;
+            return CoreAddons.CoreEntryOf(_entries, core, e => OfferedPackage(e) != null, e => OfferedFileVersion(e) != null);
         }
 
         private AddonState AddonStateOf(CatalogEntry entry)
@@ -198,10 +193,12 @@ namespace OnAirDeck.UnityManager
         {
             var coreVersion = coreEntry != null ? OfferedPackage(coreEntry) : null;
             // A file core (VModular 1.0.0): its .unitypackage version, imported into Assets/.
-            var coreFile = coreEntry != null && coreVersion == null ? OfferedFileVersion(coreEntry) : null;
+            var coreFile = coreEntry != null && coreEntry.IsLicense && coreVersion == null ? OfferedFileVersion(coreEntry) : null;
+            // A file core that reaches the buyer as a purchase row (the VModular base bought with the product, G4 retest D1).
+            var corePurchase = coreEntry != null && !coreEntry.IsLicense && coreEntry.Purchase != null;
             var purchase = addon.Kind == FavoriteKind.Purchase;
             if (!purchase && file == null) file = OfferedFileVersion(addon);
-            if ((coreVersion == null && coreFile == null) || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
+            if ((coreVersion == null && coreFile == null && !corePurchase) || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
             // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
             // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
             // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.
@@ -212,9 +209,18 @@ namespace OnAirDeck.UnityManager
             EditorApplication.LockReloadAssemblies();
             try
             {
-                var outcome = coreVersion != null ? await DoInstallAsync(coreEntry, coreVersion, true, null) : await DoInstallFileAsync(coreEntry, coreFile, true);
+                ImportOutcome outcome;
+                if (coreVersion != null) outcome = await DoInstallAsync(coreEntry, coreVersion, true, null);
+                else if (coreFile != null) outcome = await DoInstallFileAsync(coreEntry, coreFile, true);
+                else
+                {
+                    // The purchase row's download asks its own refund question when it was never downloaded; its import is not
+                    // interactive, so the add-on can queue right behind it.
+                    outcome = await DoDownloadAsync(coreEntry, false, false);
+                    if (outcome.Report == ImportReport.Waiting) CoreImports.Note(core, CoreAddons.CorePackagesOf(core, coreEntry.Purchase, outcome.WaitImports));
+                }
                 // A file core's .unitypackage imports one tick later: the add-on queues behind it, and the queue imports both in order.
-                if (coreFile != null && outcome.Report == ImportReport.Waiting && CoreImports.Coming(core))
+                if ((coreFile != null || corePurchase) && outcome.Report == ImportReport.Waiting && CoreImports.Coming(core))
                 {
                     RemovePendingAddon(addon.Key);
                     return purchase ? await DoDownloadAsync(addon, true) : await DoInstallFileAsync(addon, file, true);

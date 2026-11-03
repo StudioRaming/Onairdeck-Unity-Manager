@@ -21,6 +21,31 @@ internal static class ListRowChecks
         check("file core (G4): the live ids map the Plus license to VModular, the base license and a base purchase row carry it, a mixed Plus row is no add-on", FileCoreIds);
         check("file core (G4): VModular is here by its marker in Assets/ or by a package in Packages/, not by an unrelated file", FileCoreHere);
         check("file core (G4): a run puts the base license before the Plus license, and the list nests Plus under the base license row", FileCoreOrderAndNest);
+        check("file core (G4 retest D1): the base that reaches a buyer only as a purchase row is the core to install first, and Plus nests under it", FileCoreFromPurchase);
+    }
+
+    // test1 on 2026-11-04: the base license came with 0 versions (the purchase offers the file), so the list had no base license row,
+    // only the purchase row "VModular / VModular Plus 1.0.0". Core-first must find that row, not report the core missing.
+    private static void FileCoreFromPurchase()
+    {
+        var basePurchase = new CatalogEntry { Key = "p:base", Name = "VModular / VModular Plus 1.0.0", Kind = FavoriteKind.Purchase, Purchase = Item(LiveProduct, BaseFile) };
+        var plus = LiveLicense("VModular Plus 1.0.0", PlusLicense);
+        var tool = LiveLicense("MaskMaker", "maskmaker");
+        Func<CatalogEntry, bool> offersPackage = e => false;
+        Func<CatalogEntry, bool> offersFile = e => e.IsLicense;
+        var entries = new List<CatalogEntry> { tool, basePurchase, plus };
+        Require(object.ReferenceEquals(basePurchase, CoreAddons.CoreEntryOf(entries, Vmodular, offersPackage, offersFile)), "purchase row carries the core");
+        // A base license row with a file wins over the purchase row (it installs the same file non-interactively by itself).
+        var baseLicense = LiveLicense("VModular", BaseLicense);
+        entries.Add(baseLicense);
+        Require(object.ReferenceEquals(baseLicense, CoreAddons.CoreEntryOf(entries, Vmodular, offersPackage, offersFile)), "license row first");
+        // A purchase row without files (past its download window) cannot install anything.
+        var expired = new CatalogEntry { Key = "p:old", Kind = FavoriteKind.Purchase, Purchase = new PurchaseItem { product_id = LiveProduct, item_id = "old", files = new PurchaseFile[0] } };
+        Require(CoreAddons.CoreEntryOf(new List<CatalogEntry> { expired, plus }, Vmodular, offersPackage, offersFile) == null, "no files, no core entry");
+        // The list nests Plus under the purchase row that carries the core.
+        var nested = CoreAddons.Nest(new List<ListLine> { new ListLine { Entry = plus }, new ListLine { Entry = tool }, new ListLine { Entry = basePurchase } });
+        Equal("MaskMaker|VModular / VModular Plus 1.0.0|VModular Plus 1.0.0", string.Join("|", nested.Select(l => l.Entry.Name)));
+        Equal("False|False|True", string.Join("|", nested.Select(l => l.Child.ToString())));
     }
 
     // The live ids (desk read 2026-11-04): product 7aac2c69, base license 0c873fc3 (VModular_1.0.0), Plus license 39a68f32
