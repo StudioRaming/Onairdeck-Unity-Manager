@@ -33,7 +33,6 @@ namespace OnAirDeck.UnityManager
                         // the core's own package counts, never the Plus package of the same row (review G4 R3).
                         var fileCore = CoreAddons.FileCoreOfPurchase(item, OnAirDeckConfig.FileCores);
                         CoreImports.Note(fileCore, CoreAddons.CorePackagesOf(fileCore, item, summary.QueuedPackages));
-                        CoreImports.DependIfComing(core, summary.QueuedPackages);
                     }
                     return (object)summary;
                 }

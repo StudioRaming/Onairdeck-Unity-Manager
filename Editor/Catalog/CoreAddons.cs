@@ -155,6 +155,23 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// The import queue's decision for the add-on package at its head: blocked when its core is not here and none of the core's
+        /// recorded imports (<paramref name="coreImports"/>: "core&lt;TAB&gt;path" lines) is still in <paramref name="queue"/>.
+        /// </summary>
+        public static bool AddonImportBlocked(string core, bool coreHere, string packagePath, string coreImports, IList<string> queue)
+        {
+            if (string.IsNullOrEmpty(core) || coreHere) return false;
+            foreach (var line in (coreImports ?? "").Split('\n'))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab <= 0 || line.Substring(0, tab) != core) continue;
+                var path = line.Substring(tab + 1);
+                if (path != packagePath && queue != null && queue.Contains(path)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// Of the packages a purchase row queued, the ones that are the file core's own files (by the row's file names of the core's
         /// file ids), never another file of the same row (the Plus package next to the base one).
         /// </summary>

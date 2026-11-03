@@ -154,10 +154,12 @@ namespace OnAirDeck.UnityManager
         {
             if (_importing) return;
             var list = Load();
-            while (list.Count > 0 && (!File.Exists(list[0]) || CoreImports.Blocked(list[0])))
+            var contexts = LoadContexts();
+            // The local list decides (review G4 R5): a core dropped just above in this loop is no longer "coming" for the add-on after it.
+            while (list.Count > 0 && (!File.Exists(list[0]) || CoreImports.AddonWithoutCore(list[0], contexts, list)))
             {
-                // An add-on queued behind its file core whose import did not go in (VModular Plus after a failed VModular import):
-                // importing it would only leave scripts that do not compile, so it fails too (review G4 R1).
+                // An add-on whose file core is not here and has no import left ahead of it (VModular Plus after a failed or missing
+                // VModular import): importing it would only leave scripts that do not compile, so it fails too (review G4 R1).
                 var blocked = File.Exists(list[0]);
                 if (blocked) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Not importing " + Path.GetFileName(list[0]) + ": the product it needs did not import.");
                 FinishRecord(list[0], false);

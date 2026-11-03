@@ -63,6 +63,18 @@ internal static class ListRowChecks
         var queued = new List<string> { "C:/cache/a/VModular_Plus_1.0.0.unitypackage", "C:/cache/b/VModular_1.0.0.unitypackage" };
         Equal("C:/cache/b/VModular_1.0.0.unitypackage", string.Join("|", CoreAddons.CorePackagesOf(Vmodular, mixed, queued)));
         Equal(0, CoreAddons.CorePackagesOf("", mixed, queued).Count);
+
+        // The queue at the Plus import (review r1 R1, r2 R1 and R5): blocked when VModular is not here and no VModular import is
+        // left in the queue; a core dropped earlier in the same pass is no longer in the local queue.
+        const string corePath = "C:/cache/b/VModular_1.0.0.unitypackage";
+        const string plusPath = "C:/cache/c/VModular_Plus_1.0.0.unitypackage";
+        var recorded = Vmodular + "\t" + corePath;
+        Require(!CoreAddons.AddonImportBlocked(Vmodular, true, plusPath, recorded, new List<string> { plusPath }), "core here");
+        Require(CoreAddons.AddonImportBlocked(Vmodular, false, plusPath, recorded, new List<string> { plusPath }), "core import failed or missing");
+        Require(CoreAddons.AddonImportBlocked(Vmodular, false, plusPath, "", new List<string> { plusPath }), "core never queued");
+        Require(!CoreAddons.AddonImportBlocked(Vmodular, false, plusPath, recorded, new List<string> { plusPath, corePath }), "core import still waiting");
+        Require(!CoreAddons.AddonImportBlocked("", false, plusPath, recorded, new List<string> { plusPath }), "not an add-on");
+        Require(CoreAddons.AddonImportBlocked(Vmodular, false, plusPath, "com.studioraming.mingtoon\t" + corePath, new List<string> { plusPath, corePath }), "another core's import");
     }
 
     private static void FileCoreHere()
