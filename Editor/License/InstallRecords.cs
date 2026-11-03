@@ -74,6 +74,23 @@ namespace OnAirDeck.UnityManager
             bool unreadable;
             var records = Load(projectRoot, out unreadable);
             records[record.LicenseId] = record;
+            Write(projectRoot, records, unreadable);
+        }
+
+        /// <summary>Drops the records of <paramref name="licenseIds"/> (a removal). An unreadable file is left as it is. Throws when it cannot be written.</summary>
+        public static void Remove(string projectRoot, IEnumerable<string> licenseIds)
+        {
+            if (string.IsNullOrEmpty(projectRoot) || licenseIds == null) return;
+            bool unreadable;
+            var records = Load(projectRoot, out unreadable);
+            if (unreadable) return;
+            var changed = false;
+            foreach (var id in licenseIds) if (!string.IsNullOrEmpty(id) && records.Remove(id)) changed = true;
+            if (changed) Write(projectRoot, records, false);
+        }
+
+        private static void Write(string projectRoot, Dictionary<string, InstallRecord> records, bool unreadable)
+        {
             var ids = new List<string>(records.Keys);
             ids.Sort(StringComparer.OrdinalIgnoreCase);
             var list = new List<object>();

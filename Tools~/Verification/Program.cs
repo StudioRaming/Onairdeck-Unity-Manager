@@ -54,6 +54,7 @@ internal static class Program
             OverwriteChecks.Run(Check, _project);
             AutoUpdateChecks.Run(Check, _project);
             ListRowChecks.Run(Check);
+            RemovalChecks.Run(Check, _project);
         }
         finally
         {

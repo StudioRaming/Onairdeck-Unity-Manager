@@ -92,7 +92,7 @@ namespace OnAirDeck.UnityManager
             // refreshes missing licenses the next time it opens. A device-limit refusal is already in DeviceLimitNotice (IssueAsync
             // reports it; its retry only issues the license).
             return await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport,
-                product: item.name, version: VersionOf(item), productId: ProductIdOf(item),
+                product: item.name, version: VersionOf(item), productId: ProductIdOf(item), placedKey: PlacedFiles.PurchaseKey(item),
                 beforeImports: async summary =>
                 {
                     try
@@ -118,8 +118,11 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         /// <param name="beforeImports">Runs once the loose files and zips are in place and before the first .unitypackage is queued
         /// (the license step: an import may reload the domain). It must not throw.</param>
+        /// <param name="placedKey">The removal record of this product (<see cref="PlacedFiles"/>): every file placed here, and every file a
+        /// .unitypackage lists, is added to it before the imports start. Null: nothing is recorded.</param>
         internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport,
-            InstallRecord record = null, string product = null, string version = null, string productId = null, Func<DownloadSummary, Task> beforeImports = null)
+            InstallRecord record = null, string product = null, string version = null, string productId = null, Func<DownloadSummary, Task> beforeImports = null,
+            string placedKey = null)
         {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
@@ -144,6 +147,7 @@ namespace OnAirDeck.UnityManager
 
                 var summary = new DownloadSummary { Downloaded = cached.Count, Folder = folder };
                 var packages = new List<string>();
+                var placed = new List<string>();
                 foreach (var pair in cached)
                 {
                     var path = pair.Key;
@@ -151,18 +155,27 @@ namespace OnAirDeck.UnityManager
                     if (Installer.IsUnityPackage(name))
                     {
                         packages.Add(path);
+                        // The files it lists (not its folders): what a removal may take away again.
+                        var assets = UnityPackageArchive.Assets(path);
+                        if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) placed.Add(asset.Path);
                     }
                     else if (Installer.IsZip(name))
                     {
                         int skipped;
-                        summary.Extracted += Installer.ExtractZip(path, summary.Folder, out skipped);
+                        summary.Extracted += Installer.ExtractZip(path, summary.Folder, out skipped, placed);
                         summary.SkippedUnsafe += skipped;
                     }
                     else
                     {
-                        Installer.CopyFile(path, summary.Folder, name);
+                        placed.Add(Installer.CopyFile(path, summary.Folder, name));
                         summary.Copied++;
                     }
+                }
+                if (!string.IsNullOrEmpty(placedKey) && placed.Count > 0)
+                {
+                    // Written before an import can reload the domain. A failure only means this install cannot be removed by record later.
+                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, placed); }
+                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the placed files (removal will ask to remove them by hand): " + e.Message); }
                 }
 
                 if (summary.Copied + summary.Extracted > 0) LegacyHandoffRunner.RefreshUnlessWaiting();
