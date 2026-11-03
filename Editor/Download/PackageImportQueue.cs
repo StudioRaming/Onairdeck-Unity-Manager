@@ -61,18 +61,30 @@ namespace OnAirDeck.UnityManager
         {
             if (SessionState.GetBool(HeldKey, false))
             {
-                // A reload ran although the queue held reloads, so Unity did not count the hold (it forced the reload): unlocking now
-                // would release a hold that is not there. The started head, if any, settles from disk in ProcessNext.
+                // The old domain ended without its before-reload release (a crash of the domain): Unity's lock count is unknown, so it
+                // is not touched. The started head, if any, settles from disk in ProcessNext.
                 SessionState.EraseBool(HeldKey);
                 Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A script reload ran during a package import; the import is checked against the project's files.");
             }
+            // A reload that runs anyway (Unity forced it past the hold) releases the hold in the old domain first, so Unity's lock
+            // count is balanced whatever it does with it across the reload (vdesk-1f review A). The new domain then settles the head.
+            AssemblyReloadEvents.beforeAssemblyReload += ReleaseBeforeReload;
             EditorApplication.update += WatchImport;
             EditorApplication.delayCall += ProcessNext;
+            if (ImportWindowType == null)
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Unity's import window type was not found; a package import that gets no answer ends after "
+                    + (int)(ImportWatch.NoCallbackSeconds / 60) + " minutes.");
+        }
+
+        private static void ReleaseBeforeReload()
+        {
+            if (Hold.Release())
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A script reload ran while a package was importing; the import is checked against the project's files.");
         }
 
         private static bool ImportWindowOpen()
         {
-            return ImportWindowType == null || Resources.FindObjectsOfTypeAll(ImportWindowType).Length > 0;
+            return ImportWatch.WindowOpen(ImportWindowType != null, ImportWindowType == null ? 0 : Resources.FindObjectsOfTypeAll(ImportWindowType).Length);
         }
 
         private static void StartWatch()
@@ -96,7 +108,55 @@ namespace OnAirDeck.UnityManager
             var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
             var busy = EditorApplication.isCompiling || EditorApplication.isUpdating;
             if (Watcher.Tick(now, interactive, interactive && ImportWindowOpen(), busy))
-                SettleFromDisk(list[0], interactive ? "its import window closed without an answer" : "no completion callback came");
+                SettleOrAbandon(list[0], interactive ? "its import window closed without an answer" : "no completion callback came");
+        }
+
+        /// <summary>
+        /// <see cref="SettleFromDisk"/>, and when it throws, the head still ends (vdesk-1f review B): failed through Finish, and in any
+        /// case the hold is released, a head still started is dropped, and the queue goes on.
+        /// </summary>
+        private static void SettleOrAbandon(string head, string why)
+        {
+            ImportWatch.SettleOrAbandon(
+                () => SettleFromDisk(head, why),
+                () =>
+                {
+                    if (SessionState.GetString(StartedKey, "") == head)
+                        Finish("Import of " + Path.GetFileName(head) + " did not finish (" + why + "); it could not be checked", true, ResultFailed);
+                },
+                () => AbandonHead(head),
+                e => Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Ending the import of " + Path.GetFileName(head) + " failed: " + e.Message));
+        }
+
+        /// <summary>The last resort after a failed settle: only SessionState and the hold, nothing that reads the disk.</summary>
+        private static void AbandonHead(string head)
+        {
+            AssetDatabase.importPackageCompleted -= OnCompleted;
+            AssetDatabase.importPackageCancelled -= OnCancelled;
+            AssetDatabase.importPackageFailed -= OnFailed;
+            Watcher.Stop();
+            _overwritten = null;
+            try
+            {
+                if (SessionState.GetString(StartedKey, "") == head)
+                {
+                    var list = Load();
+                    if (list.Count > 0 && list[0] == head)
+                    {
+                        list.RemoveAt(0);
+                        Save(list);
+                    }
+                    RememberResult(head, ResultFailed);
+                    SessionState.EraseString(StartedKey);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The import queue could not drop " + Path.GetFileName(head) + ": " + e.Message);
+            }
+            _importing = false;
+            Hold.Release();
+            EditorApplication.delayCall += ProcessNext;
         }
 
         /// <summary>
@@ -269,7 +329,7 @@ namespace OnAirDeck.UnityManager
                     StartWatch();
                     return;
                 }
-                SettleFromDisk(list[0], "a script reload cut it off");
+                SettleOrAbandon(list[0], "a script reload cut it off");
                 return;
             }
 

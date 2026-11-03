@@ -94,6 +94,42 @@ namespace OnAirDeck.UnityManager
             if (closedWindow) return sinceWindow >= ClosedGraceSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
             return sinceStart >= NoCallbackSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
         }
+
+        /// <summary>
+        /// Whether Unity's import window is open. A Unity where its type is not found (<paramref name="typeKnown"/> false) answers
+        /// "not open" (vdesk-1f review C): the import then ends by the long limit, so the hold always has an end.
+        /// </summary>
+        public static bool WindowOpen(bool typeKnown, int openWindows)
+        {
+            return typeKnown && openWindows > 0;
+        }
+
+        /// <summary>
+        /// Runs the settle; when it throws (vdesk-1f review B: the watch has already stopped, so nothing would end the import),
+        /// ends the import as failed and then abandons it: <paramref name="abandon"/> must release the hold and drop a head that is
+        /// still started, whatever state the throw left. Every error goes to <paramref name="log"/>.
+        /// </summary>
+        public static void SettleOrAbandon(Action settle, Action finishFailed, Action abandon, Action<Exception> log)
+        {
+            try
+            {
+                settle();
+                return;
+            }
+            catch (Exception e)
+            {
+                log(e);
+            }
+            try
+            {
+                finishFailed();
+            }
+            catch (Exception e)
+            {
+                log(e);
+            }
+            abandon();
+        }
     }
 
     /// <summary>

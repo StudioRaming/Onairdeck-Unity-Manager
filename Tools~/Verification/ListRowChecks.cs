@@ -26,6 +26,34 @@ internal static class ListRowChecks
         check("import queue (G4 retest review R1-R3): old content is not an import, a cut-off head settles at once, core-first does not mix import modes", RetestReviewRules);
         check("import queue (G4 design A): script reloads are held from before ImportPackage until the import ends, released once on completed, cancelled, failed or a throw", ReloadHeldDuringImport);
         check("import queue (G4 design A r1): an open import window always waits; a window gone for the grace, or a non-interactive import with no callback in time, settles from disk", ImportWatchRules);
+        check("import queue (G4 design A, 1f review B, C): a settle that throws still ends the import (failed, then abandoned); an unknown window type never counts as an open window", ImportSettleFailures);
+    }
+
+    // vdesk-1f review B: the watch stops before the settle runs, so a throw there must still end the import, or reloads stay locked and
+    // the queue stops for the session. C: where Unity's import window type is not found, the window is "not open", so the 600 s limit ends it.
+    private static void ImportSettleFailures()
+    {
+        var log = new List<string>();
+        var calls = new List<string>();
+        Action<Exception> note = e => log.Add(e.Message);
+
+        ImportWatch.SettleOrAbandon(() => calls.Add("settle"), () => calls.Add("fail"), () => calls.Add("abandon"), note);
+        Equal("settle", string.Join(",", calls));
+
+        calls.Clear();
+        ImportWatch.SettleOrAbandon(() => { throw new InvalidOperationException("disk"); }, () => calls.Add("fail"), () => calls.Add("abandon"), note);
+        Equal("fail,abandon", string.Join(",", calls));
+
+        calls.Clear();
+        ImportWatch.SettleOrAbandon(() => { throw new InvalidOperationException("disk"); }, () => { throw new InvalidOperationException("finish"); }, () => calls.Add("abandon"), note);
+        Equal("abandon", string.Join(",", calls));
+        Require(log.Contains("disk") && log.Contains("finish"), "both errors logged");
+
+        Require(!ImportWatch.WindowOpen(false, 3), "unknown window type: not open");
+        Require(!ImportWatch.WindowOpen(true, 0), "no window");
+        Require(ImportWatch.WindowOpen(true, 1), "a window");
+        // Never seen as open, so only the long limit ends it (the hold always has an end).
+        Equal(ImportWatchStep.Settle, ImportWatch.Next(true, ImportWatch.WindowOpen(false, 1), false, false, ImportWatch.NoCallbackSeconds, ImportWatch.NoCallbackSeconds));
     }
 
     // Design A (lead, 2026-11-04): the reload that dropped the completion callback (D2) cannot happen while the queue holds reloads.
