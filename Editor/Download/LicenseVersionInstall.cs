@@ -104,10 +104,10 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The queue is about to import <paramref name="packagePath"/> (the head of <paramref name="queue"/>): true when its license (the
-        /// queue context's product id) is an add-on of a core that is not here and has no import still waiting in <paramref name="queue"/>
-        /// (it failed, was cancelled or went missing, also earlier in the same pass). Decided from what the queue itself holds, so an
-        /// add-on whose core failed while the add-on was still downloading is caught as well (review G4 r2 R1, R5).
+        /// The queue is about to import <paramref name="packagePath"/> (its head): true when its license (the queue context's product id)
+        /// is an add-on of a core that is not here. A core import queued ahead has run by now (failed, cancelled or missing when the core
+        /// is still absent), and one behind cannot help. Decided from what the queue itself holds at the add-on's turn, so an add-on whose
+        /// core failed while the add-on was still downloading is caught as well (review G4 r2 R1, r3 R5).
         /// </summary>
         public static bool AddonWithoutCore(string packagePath, IDictionary<string, string[]> contexts, IList<string> queue)
         {
@@ -115,8 +115,7 @@ namespace OnAirDeck.UnityManager
             if (contexts == null || !contexts.TryGetValue(packagePath, out context) || context == null || context.Length < 3) return false;
             var core = CoreAddons.CoreOf("", context[2]);
             if (core.Length == 0) return false;
-            return CoreAddons.AddonImportBlocked(core, CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core), packagePath,
-                UnityEditor.SessionState.GetString(Key, ""), queue);
+            return CoreAddons.AddonImportBlocked(core, CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core));
         }
 
         /// <summary>A .unitypackage of <paramref name="core"/> is still waiting in the import queue.</summary>

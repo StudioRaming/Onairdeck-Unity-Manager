@@ -155,20 +155,13 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The import queue's decision for the add-on package at its head: blocked when its core is not here and none of the core's
-        /// recorded imports (<paramref name="coreImports"/>: "core&lt;TAB&gt;path" lines) is still in <paramref name="queue"/>.
+        /// The import queue's decision for the add-on package at its head: blocked when its core is not here. A core import queued
+        /// ahead of it has run by then (the queue imports in order), and one queued behind it cannot help: the add-on would import
+        /// first and not compile (review G4 r3 R5).
         /// </summary>
-        public static bool AddonImportBlocked(string core, bool coreHere, string packagePath, string coreImports, IList<string> queue)
+        public static bool AddonImportBlocked(string core, bool coreHere)
         {
-            if (string.IsNullOrEmpty(core) || coreHere) return false;
-            foreach (var line in (coreImports ?? "").Split('\n'))
-            {
-                var tab = line.IndexOf('\t');
-                if (tab <= 0 || line.Substring(0, tab) != core) continue;
-                var path = line.Substring(tab + 1);
-                if (path != packagePath && queue != null && queue.Contains(path)) return false;
-            }
-            return true;
+            return !string.IsNullOrEmpty(core) && !coreHere;
         }
 
         /// <summary>
