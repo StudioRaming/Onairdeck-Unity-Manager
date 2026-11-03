@@ -74,8 +74,10 @@ namespace OnAirDeck.UnityManager
                         Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Installed, but the license file could not be written: " + e.Message);
                     }
                 }, PlacedFiles.LicenseKey(license.license_id));
-            // A file core (VModular 1.0.0) is "here" only after its import ran; until then its add-on may follow it in the same queue.
+            // A file core (VModular 1.0.0) is "here" only after its import ran; until then its add-on may follow it in the same queue,
+            // and that add-on's import is dropped if the core's import does not go in (review G4 R1).
             CoreImports.Note(CoreAddons.FileCoreOfLicense(license.license_id), placed.QueuedPackages);
+            CoreImports.DependIfComing(CoreAddons.CoreOf("", license.license_id), placed.QueuedPackages);
             return placed;
         }
     }
@@ -88,16 +90,51 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class CoreImports
     {
+        // "core<TAB>package path" per queued import of a file core.
         private const string Key = "OnAirDeck.UnityManager.CoreImports";
+        // "core<TAB>package path" per queued import of an add-on that went into the queue behind its core's import.
+        private const string DependKey = "OnAirDeck.UnityManager.CoreImportDependents";
 
         public static void Note(string core, IList<string> packagePaths)
         {
+            Append(Key, core, packagePaths);
+        }
+
+        /// <summary>
+        /// An add-on of <paramref name="core"/> just queued <paramref name="packagePaths"/> while the core is not here yet but its import
+        /// is queued ahead: those imports wait for it, and are dropped when it does not go in (<see cref="Blocked"/>).
+        /// </summary>
+        public static void DependIfComing(string core, IList<string> packagePaths)
+        {
+            if (string.IsNullOrEmpty(core) || CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core) || !Coming(core)) return;
+            Append(DependKey, core, packagePaths);
+        }
+
+        /// <summary>
+        /// The queue is about to import <paramref name="packagePath"/>: true when it is an add-on queued behind its file core, the core
+        /// is still not here, and no import of the core is still waiting (it failed, was cancelled or went missing).
+        /// </summary>
+        public static bool Blocked(string packagePath)
+        {
+            foreach (var line in UnityEditor.SessionState.GetString(DependKey, "").Split('\n'))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab <= 0 || line.Substring(tab + 1) != packagePath) continue;
+                var core = line.Substring(0, tab);
+                return !CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core) && !Coming(core);
+            }
+            return false;
+        }
+
+        private static void Append(string key, string core, IList<string> packagePaths)
+        {
             if (string.IsNullOrEmpty(core) || packagePaths == null || packagePaths.Count == 0) return;
             var lines = new List<string>();
-            foreach (var line in UnityEditor.SessionState.GetString(Key, "").Split('\n'))
+            // Lines of imports that already ended are dropped: only waiting ones decide anything.
+            foreach (var line in UnityEditor.SessionState.GetString(key, "").Split('\n'))
                 if (line.IndexOf('\t') > 0 && PackageImportQueue.ResultOf(line.Substring(line.IndexOf('\t') + 1)) == PackageImportQueue.ResultPending) lines.Add(line);
             foreach (var path in packagePaths) lines.Add(core + "\t" + path);
-            UnityEditor.SessionState.SetString(Key, string.Join("\n", lines.ToArray()));
+            UnityEditor.SessionState.SetString(key, string.Join("\n", lines.ToArray()));
         }
 
         /// <summary>A .unitypackage of <paramref name="core"/> is still waiting in the import queue.</summary>

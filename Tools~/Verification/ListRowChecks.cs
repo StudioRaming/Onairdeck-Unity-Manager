@@ -47,10 +47,22 @@ internal static class ListRowChecks
         Equal("", CoreAddons.CoreOf(plusRow));                                    // carries its own core: never waits for it
         Equal("", CoreAddons.CoreProvidedBy(new CatalogEntry { Kind = FavoriteKind.Purchase, Purchase = Item("other-product", BaseFile) }));
         Equal(0, OnAirDeckConfig.CoreAddonsPending.Length);
-        Require(CoreAddons.MarkerAmong(Vmodular, new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
-        Require(CoreAddons.MarkerAmong(Vmodular, new[] { "Assets\\Editor\\VModularEditor\\VModularManager.cs" }));
-        Require(!CoreAddons.MarkerAmong(Vmodular, new[] { "Assets/VModualr_InAvartar/VModularOneBone.cs" }));
-        Require(!CoreAddons.MarkerAmong("com.studioraming.mingtoon", new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
+        // Removal: any file of the core counts, not only the marker (review R2: the marker kept as changed, the rest removed).
+        Require(CoreAddons.CoreFilesAmong(Vmodular, new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
+        Require(CoreAddons.CoreFilesAmong(Vmodular, new[] { "Assets\\Editor\\VModularEditor\\VModularManager.cs" }));
+        Require(CoreAddons.CoreFilesAmong(Vmodular, new[] { "Assets/VModualr_InAvartar/VModularOneBone.cs" }));
+        Require(CoreAddons.CoreFilesAmong(Vmodular, new[] { "Assets/Editor/VModularEditor/VModularMultiBoneEditor.cs" }));
+        Require(!CoreAddons.CoreFilesAmong(Vmodular, new[] { "Assets/Editor/VModularEditorPlus/X.cs", "Assets/StudioRaming_Onairdeck/VModular Plus/a.cs" }));
+        Require(!CoreAddons.CoreFilesAmong("com.studioraming.mingtoon", new[] { "Assets/Editor/VModularEditor/VModularManager.cs" }));
+        // A mixed Plus row queues both packages: only the base one is the core's import (review R3).
+        var mixed = new PurchaseItem
+        {
+            product_id = LiveProduct, item_id = "plus-item",
+            files = new[] { new PurchaseFile { file_id = BaseFile, file_name = "VModular_1.0.0.unitypackage" }, new PurchaseFile { file_id = PlusFile, file_name = "VModular_Plus_1.0.0.unitypackage" } }
+        };
+        var queued = new List<string> { "C:/cache/a/VModular_Plus_1.0.0.unitypackage", "C:/cache/b/VModular_1.0.0.unitypackage" };
+        Equal("C:/cache/b/VModular_1.0.0.unitypackage", string.Join("|", CoreAddons.CorePackagesOf(Vmodular, mixed, queued)));
+        Equal(0, CoreAddons.CorePackagesOf("", mixed, queued).Count);
     }
 
     private static void FileCoreHere()

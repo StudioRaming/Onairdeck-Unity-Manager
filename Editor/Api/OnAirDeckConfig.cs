@@ -92,6 +92,7 @@ namespace OnAirDeck.UnityManager
                 {
                     LicenseIds = new[] { "0c873fc3-af50-4a2c-987f-cce1b9949185" },
                     Markers = new[] { "Assets/Editor/VModularEditor/VModularManager.cs" },
+                    Folders = new[] { "Assets/Editor/VModularEditor", "Assets/VModualr_InAvartar" },
                     PurchaseProductId = "7aac2c69-e72e-46f9-a928-5a9779392165",
                     PurchaseFileIds = new[] { "2a0417aa-0f1f-43b8-a7e7-c53824bf4ff6" }
                 }

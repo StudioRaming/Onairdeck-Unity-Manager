@@ -99,14 +99,15 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// Removing <paramref name="entry"/> takes <paramref name="core"/> out of the project: always for a core package; for a file core
-        /// (VModular 1.0.0, review N2) only when the core's marker file is one this removal moves. Another row that installed the same
-        /// files (the base license and a base purchase) keeps them, and then the add-ons stay too.
+        /// (VModular 1.0.0, review N2) when this removal moves any file of the core (its marker or a file in its folders; review R2: a
+        /// marker kept as changed does not keep the rest). Another row that installed the same files (the base license and a base
+        /// purchase) keeps them, so nothing of the core moves and the add-ons stay too.
         /// </summary>
         private bool TakesCoreAway(string root, CatalogEntry entry, string core, PlacedRecords placed)
         {
             if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName)) return true;
             var dry = StepFor(root, entry, placed, new HashSet<string>(StringComparer.Ordinal), OtherOptionKeys(entry));
-            return dry.Plan.CanRun && CoreAddons.MarkerAmong(core, dry.Plan.Files);
+            return dry.Plan.CanRun && CoreAddons.CoreFilesAmong(core, dry.Plan.Files);
         }
 
         /// <summary>An add-on of a core is here: its package is installed, or files it recorded (or its marked state) are in the project.</summary>

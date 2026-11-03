@@ -34,6 +34,8 @@ namespace OnAirDeck.UnityManager
         public string[] LicenseIds = new string[0];
         /// <summary>Project-relative files the core's import writes: any of them present means the core is here.</summary>
         public string[] Markers = new string[0];
+        /// <summary>Project-relative folders the core's import writes into: removing any file in them takes the core apart.</summary>
+        public string[] Folders = new string[0];
         /// <summary>The product whose purchase rows can carry the core's file (a purchase of the base product).</summary>
         public string PurchaseProductId = "";
         /// <summary>The asset file ids of the core in that product (plugin-purchases files[].file_id).</summary>
@@ -133,15 +135,42 @@ namespace OnAirDeck.UnityManager
             return CoreOfPurchase(entry.Purchase).Length > 0 ? "" : FileCoreOfPurchase(entry.Purchase, OnAirDeckConfig.FileCores);
         }
 
-        /// <summary>True when the core is a file core whose marker is one of <paramref name="paths"/> (project-relative).</summary>
-        public static bool MarkerAmong(string core, ICollection<string> paths)
+        /// <summary>
+        /// True when one of <paramref name="paths"/> (project-relative) is a file of the file core: its marker or any file in its folders.
+        /// A removal that moves even one of them leaves the core broken (review G4 R2: a kept marker does not mean a whole core).
+        /// </summary>
+        public static bool CoreFilesAmong(string core, ICollection<string> paths)
         {
             FileCore fileCore;
             if (string.IsNullOrEmpty(core) || paths == null || !OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) || fileCore == null) return false;
-            foreach (var marker in fileCore.Markers ?? new string[0])
-                foreach (var path in paths)
-                    if (string.Equals((path ?? "").Replace('\\', '/'), marker, StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (var raw in paths)
+            {
+                var path = (raw ?? "").Replace('\\', '/');
+                foreach (var marker in fileCore.Markers ?? new string[0])
+                    if (string.Equals(path, marker, StringComparison.OrdinalIgnoreCase)) return true;
+                foreach (var folder in fileCore.Folders ?? new string[0])
+                    if (!string.IsNullOrEmpty(folder) && path.StartsWith(folder.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase)) return true;
+            }
             return false;
+        }
+
+        /// <summary>
+        /// Of the packages a purchase row queued, the ones that are the file core's own files (by the row's file names of the core's
+        /// file ids), never another file of the same row (the Plus package next to the base one).
+        /// </summary>
+        public static List<string> CorePackagesOf(string core, PurchaseItem item, IList<string> queuedPaths)
+        {
+            var result = new List<string>();
+            FileCore fileCore;
+            if (string.IsNullOrEmpty(core) || item == null || item.files == null || queuedPaths == null
+                || !OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) || fileCore == null || fileCore.PurchaseFileIds == null) return result;
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in item.files)
+                if (file != null && !string.IsNullOrEmpty(file.file_name) && Array.IndexOf(fileCore.PurchaseFileIds, file.file_id) >= 0)
+                    names.Add(PathSafety.SafeFileName(file.file_name));
+            foreach (var path in queuedPaths)
+                if (!string.IsNullOrEmpty(path) && names.Contains(Path.GetFileName(path))) result.Add(path);
+            return result;
         }
 
         /// <summary>The display name of a core package ("MingToon Core").</summary>
