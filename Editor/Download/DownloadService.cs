@@ -147,7 +147,8 @@ namespace OnAirDeck.UnityManager
 
                 var summary = new DownloadSummary { Downloaded = cached.Count, Folder = folder };
                 var packages = new List<string>();
-                var placed = new List<string>();
+                // What this install creates (never a file or folder that is already there): what a removal may take away again.
+                var tracker = new PlacementTracker(PackageInstallService.ProjectRoot);
                 foreach (var pair in cached)
                 {
                     var path = pair.Key;
@@ -155,26 +156,27 @@ namespace OnAirDeck.UnityManager
                     if (Installer.IsUnityPackage(name))
                     {
                         packages.Add(path);
-                        // The files it lists (not its folders): what a removal may take away again.
+                        // The files it lists (not its folders), checked now, before its import writes them.
                         var assets = UnityPackageArchive.Assets(path);
-                        if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) placed.Add(asset.Path);
+                        if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) tracker.BeforeWrite(asset.Path);
                     }
                     else if (Installer.IsZip(name))
                     {
                         int skipped;
-                        summary.Extracted += Installer.ExtractZip(path, summary.Folder, out skipped, placed);
+                        summary.Extracted += Installer.ExtractZip(path, summary.Folder, out skipped, tracker);
                         summary.SkippedUnsafe += skipped;
                     }
                     else
                     {
-                        placed.Add(Installer.CopyFile(path, summary.Folder, name));
+                        tracker.BeforeWrite(summary.Folder + "/" + name);
+                        Installer.CopyFile(path, summary.Folder, name);
                         summary.Copied++;
                     }
                 }
-                if (!string.IsNullOrEmpty(placedKey) && placed.Count > 0)
+                if (!string.IsNullOrEmpty(placedKey) && tracker.Paths.Count > 0)
                 {
                     // Written before an import can reload the domain. A failure only means this install cannot be removed by record later.
-                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, placed); }
+                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker.Paths, tracker.Folders); }
                     catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the placed files (removal will ask to remove them by hand): " + e.Message); }
                 }
 

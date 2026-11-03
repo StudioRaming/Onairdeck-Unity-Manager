@@ -12,6 +12,10 @@ namespace OnAirDeck.UnityManager
         public static string RmPkgLine { get { return Pick("패키지 {p} (Library/OnAirDeck/Backup으로 옮겨 둬요)", "Package {p} (moved to Library/OnAirDeck/Backup)", "パッケージ {p} (Library/OnAirDeck/Backup に移します)"); } }
         /// <summary>{n} files another product also installed.</summary>
         public static string RmShared { get { return Pick("다른 상품도 쓰는 파일 {n}개는 남겨요", "{n} files another product also uses stay", "他の商品も使うファイル{n}件は残します"); } }
+        /// <summary>{f} files, {d} folders.</summary>
+        public static string RmCounts { get { return Pick("파일 {f}개, 빈 폴더 {d}개", "{f} files, {d} empty folders", "ファイル{f}件、空のフォルダー{d}件"); } }
+        public static string RmListInConsole { get { return Pick("지울 파일 전체 목록은 Console에 있어요.", "The full list is in the Console.", "削除するファイルの全一覧は Console にあります。"); } }
+        public static string RmAddonsUnknown { get { return Pick("{n}의 애드온 정보가 아직 준비 중이라, 애드온보다 먼저 지워지지 않도록 지금은 자동으로 지우지 않아요. Packages 폴더에서 직접 지워 주세요.", "The add-ons of {n} are not known to the Manager yet, so it does not remove {n} (it could go before an add-on). Remove it by hand in the Packages folder.", "{n} のアドオン情報がまだ準備中のため、アドオンより先に消えないよう今は自動では削除しません。Packages フォルダーで手で削除してください。"); } }
         public static string RmMore { get { return Pick("외 {n}개", "and {n} more", "ほか{n}件"); } }
         /// <summary>{c} core, {a} its installed add-ons.</summary>
         public static string RmAddonsFirst { get { return Pick("{c}를 지우려면 먼저 애드온을 지워야 해요: {a}. 애드온부터 함께 지울까요?", "{a} need {c}, so they are removed first. Remove them together with {c}?", "{c} を削除するには先にアドオンを削除する必要があります: {a}。アドオンから一緒に削除しますか?"); } }

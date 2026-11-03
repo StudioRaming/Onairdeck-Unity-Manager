@@ -40,8 +40,9 @@ namespace OnAirDeck.UnityManager
             return ExtractZip(zipPath, productFolder, out skipped, null);
         }
 
-        /// <param name="placed">Gets the project-relative path of every file written (the removal record, PlacedFiles), or null.</param>
-        public static int ExtractZip(string zipPath, string productFolder, out int skipped, System.Collections.Generic.List<string> placed)
+        /// <param name="tracker">Told each file before it is written, so the removal record (PlacedFiles) holds only what this
+        /// extraction created; or null.</param>
+        public static int ExtractZip(string zipPath, string productFolder, out int skipped, PlacementTracker tracker)
         {
             var absoluteFolder = ToAbsolute(productFolder);
             Directory.CreateDirectory(absoluteFolder);
@@ -75,6 +76,7 @@ namespace OnAirDeck.UnityManager
                         continue;
                     }
 
+                    if (tracker != null) tracker.BeforeWrite(productFolder + "/" + relative);
                     Directory.CreateDirectory(Path.GetDirectoryName(destination));
                     using (var input = entry.Open())
                     using (var output = File.Create(destination))
@@ -82,7 +84,6 @@ namespace OnAirDeck.UnityManager
                         input.CopyTo(output);
                     }
                     written++;
-                    if (placed != null) placed.Add(productFolder + "/" + relative);
                 }
             }
 
