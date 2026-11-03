@@ -66,7 +66,15 @@ namespace OnAirDeck.UnityManager
                 if (Installer.IsUnityPackage(pair.Value))
                 {
                     var assets = UnityPackageArchive.Assets(pair.Key);
-                    if (assets != null) foreach (var asset in assets) if (!asset.IsFolder) incoming.Add(new IncomingFile { Path = asset.Path, Guid = asset.Guid });
+                    // The contents too: two options can ship one asset (same path and GUID) with other contents.
+                    var hashes = assets != null ? UnityPackageArchive.AssetSha256(pair.Key) : null;
+                    if (assets != null)
+                        foreach (var asset in assets)
+                        {
+                            if (asset.IsFolder) continue;
+                            string sha;
+                            incoming.Add(new IncomingFile { Path = asset.Path, Guid = asset.Guid, Sha256 = hashes != null && hashes.TryGetValue(asset.Guid, out sha) ? sha : "" });
+                        }
                 }
                 else if (Installer.IsZip(pair.Value)) incoming.AddRange(Installer.ZipTargets(pair.Key, folder));
                 else
@@ -173,7 +181,8 @@ namespace OnAirDeck.UnityManager
                 var packages = new List<string>();
                 // Another option of this product created some of these files with other contents: asked now, before anything is written.
                 // No: OptionOverwriteDeclinedException, and the cache goes below. Yes: those files pass to this option once written.
-                var handOver = OptionOverwrite.Check(PackageInstallService.ProjectRoot, otherOptionKeys, () => IncomingOf(cached, folder), confirmOverwrite);
+                var optionProduct = !string.IsNullOrEmpty(placedKey) && placedKey.StartsWith("purchase:", StringComparison.Ordinal) ? productId : null;
+                var claims = OptionOverwrite.Check(PackageInstallService.ProjectRoot, placedKey, optionProduct, otherOptionKeys, () => IncomingOf(cached, folder), confirmOverwrite);
                 // What this install creates (never a file or folder that is already there): what a removal may take away again.
                 var tracker = new PlacementTracker(PackageInstallService.ProjectRoot);
                 foreach (var pair in cached)
@@ -201,17 +210,17 @@ namespace OnAirDeck.UnityManager
                         summary.Copied++;
                     }
                 }
-                if (handOver.Count > 0)
-                {
-                    tracker.Adopt(handOver);
-                    try { PlacedFiles.HandOver(PackageInstallService.ProjectRoot, otherOptionKeys, handOver); }
-                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not hand the overwritten files over in the removal record: " + e.Message); }
-                }
                 if (!string.IsNullOrEmpty(placedKey) && tracker.Paths.Count + tracker.Touched.Count > 0)
                 {
                     // Written before an import can reload the domain. A failure only means this install cannot be removed by record later.
-                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker); }
+                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker, optionProduct); }
                     catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the placed files (removal will ask to remove them by hand): " + e.Message); }
+                }
+                if (!string.IsNullOrEmpty(placedKey) && claims.Count > 0)
+                {
+                    // "Overwrite": copied and extracted files pass over now; a .unitypackage asset once its import wrote it.
+                    try { PlacedFiles.Claim(PackageInstallService.ProjectRoot, placedKey, claims); }
+                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the files taken over from another option: " + e.Message); }
                 }
 
                 if (summary.Copied + summary.Extracted > 0) LegacyHandoffRunner.RefreshUnlessWaiting();

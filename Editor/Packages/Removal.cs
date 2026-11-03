@@ -20,6 +20,13 @@ namespace OnAirDeck.UnityManager
         public readonly Dictionary<string, string> Guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         /// <summary>Path to the SHA-256 of a copied or extracted file as it was written: a file at that path with other contents (the user's own, or one they changed) stays.</summary>
         public readonly Dictionary<string, string> Hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>A purchase: its product id, so the other options (line items) of the product are found by record ("" before 2026-11-04).</summary>
+        public string Product = "";
+        /// <summary>
+        /// Files another option created that this one wrote over after "overwrite" (OptionOverwrite): path to "&lt;guid&gt;|&lt;sha-256&gt;" of
+        /// what it wrote. The file passes to this option only once it is that (PlacedFiles.ResolveClaims): a cancelled import keeps it the other's.
+        /// </summary>
+        public readonly Dictionary<string, string> Claims = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The whole record: per product key what it placed, and the packages the Manager installed in Packages/.</summary>
@@ -88,6 +95,11 @@ namespace OnAirDeck.UnityManager
                         if (obj.TryGetValue("hashes", out hashes) && hashes is Dictionary<string, object>)
                             foreach (var pair in (Dictionary<string, object>)hashes)
                                 if (pair.Value is string && RemovalPlanner.IsSha256((string)pair.Value)) entry.Hashes[pair.Key] = (string)pair.Value;
+                        entry.Product = MiniJson.GetString(obj, "product") ?? "";
+                        object claims;
+                        if (obj.TryGetValue("claims", out claims) && claims is Dictionary<string, object>)
+                            foreach (var pair in (Dictionary<string, object>)claims)
+                                if (pair.Value is string && RemovalPlanner.IsAssetFile(pair.Key)) entry.Claims[pair.Key] = (string)pair.Value;
                         result.Products[key] = entry;
                     }
                 }
@@ -110,15 +122,19 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>Adds what one install did to <paramref name="key"/> (<see cref="PlacementTracker"/>). Throws when the file cannot be written.</summary>
-        public static void Add(string projectRoot, string key, PlacementTracker tracker)
+        /// <param name="product">A purchase's product id (<see cref="PlacedEntry.Product"/>), or null.</param>
+        public static void Add(string projectRoot, string key, PlacementTracker tracker, string product = null)
         {
             if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key) || tracker == null) return;
             var all = Load(projectRoot);
             PlacedEntry entry;
             if (!all.Products.TryGetValue(key, out entry)) all.Products[key] = entry = new PlacedEntry();
+            var productChanged = !string.IsNullOrEmpty(product) && entry.Product != product;
+            if (productChanged) entry.Product = product;
             var added = AddUnique(entry.Paths, tracker.Paths, RemovalPlanner.IsAssetFile, false);
             // A file this install created (or took over from another option, OptionOverwrite) is no longer one it only wrote over.
             added |= entry.Touched.RemoveAll(t => entry.Paths.Exists(p => string.Equals(p, t, StringComparison.OrdinalIgnoreCase))) > 0;
+            added |= productChanged;
             // A file this product created before stays created by it when a reinstall writes it again.
             var touched = new List<string>();
             foreach (var path in tracker.Touched) if (!entry.Paths.Exists(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) touched.Add(path);
@@ -182,30 +198,80 @@ namespace OnAirDeck.UnityManager
             Save(projectRoot, all);
         }
 
-        /// <summary>
-        /// The answer "overwrite" of <see cref="OptionOverwrite"/>: the other options of the product give these files up (the path and its
-        /// GUID and SHA-256 proofs), so the option that wrote over them now owns them and a removal of either option stays correct.
-        /// </summary>
-        public static void HandOver(string projectRoot, IEnumerable<string> fromKeys, ICollection<string> paths)
+        /// <summary>The records of the other options (line items) of a purchased product: purchase keys that name <paramref name="product"/>, except <paramref name="ownKey"/>.</summary>
+        public static List<string> OptionKeys(PlacedRecords placed, string product, string ownKey)
         {
-            if (string.IsNullOrEmpty(projectRoot) || fromKeys == null || paths == null || paths.Count == 0) return;
+            var keys = new List<string>();
+            if (placed == null || string.IsNullOrEmpty(product)) return keys;
+            foreach (var pair in placed.Products)
+                if (pair.Key != ownKey && pair.Key.StartsWith("purchase:", StringComparison.Ordinal) && pair.Value.Product == product) keys.Add(pair.Key);
+            keys.Sort(StringComparer.Ordinal);
+            return keys;
+        }
+
+        /// <summary>
+        /// The answer "overwrite" of <see cref="OptionOverwrite"/>: <paramref name="key"/> claims these files with what it writes. Each passes
+        /// to it as soon as the file on disk is that (<see cref="ResolveClaims"/>, run right away: a copied or extracted file already is; a
+        /// .unitypackage asset once its import wrote it). Until then, and for good when the import is cancelled, the other option keeps it.
+        /// </summary>
+        public static void Claim(string projectRoot, string key, IEnumerable<IncomingFile> files)
+        {
+            if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key) || files == null) return;
+            var all = Load(projectRoot);
+            PlacedEntry entry;
+            if (!all.Products.TryGetValue(key, out entry)) all.Products[key] = entry = new PlacedEntry();
+            var added = false;
+            foreach (var file in files)
+            {
+                var path = (file.Path ?? "").Replace('\\', '/');
+                if (!RemovalPlanner.IsAssetFile(path)) continue;
+                entry.Claims[path] = (file.Guid ?? "") + "|" + (file.Sha256 ?? "");
+                added = true;
+            }
+            if (added) Save(projectRoot, all);
+            ResolveClaims(projectRoot);
+        }
+
+        /// <summary>
+        /// Every claim whose file is now what it claims passes the file over: the other records give the path and its proofs up, the
+        /// claiming record has it as created with the claimed proofs. A claim whose file is gone is dropped; any other one waits.
+        /// True when something changed. Throws when the record cannot be written.
+        /// </summary>
+        public static bool ResolveClaims(string projectRoot)
+        {
+            if (string.IsNullOrEmpty(projectRoot)) return false;
             var all = Load(projectRoot);
             var changed = false;
-            foreach (var key in fromKeys)
+            foreach (var pair in all.Products)
             {
-                PlacedEntry entry;
-                if (string.IsNullOrEmpty(key) || !all.Products.TryGetValue(key, out entry)) continue;
-                foreach (var path in paths)
+                var entry = pair.Value;
+                foreach (var path in new List<string>(entry.Claims.Keys))
                 {
-                    var at = entry.Paths.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
-                    if (at < 0) continue;
-                    entry.Paths.RemoveAt(at);
-                    entry.Guids.Remove(path);
-                    entry.Hashes.Remove(path);
+                    var proof = entry.Claims[path];
+                    var bar = proof.IndexOf('|');
+                    var guid = bar < 0 ? "" : proof.Substring(0, bar);
+                    var sha = bar < 0 ? proof : proof.Substring(bar + 1);
+                    if (!File.Exists(RemovalPlanner.Absolute(projectRoot, path))) { entry.Claims.Remove(path); changed = true; continue; }
+                    if (!OptionOverwrite.Matches(projectRoot, path, guid, sha)) continue;
+                    foreach (var other in all.Products)
+                    {
+                        if (other.Value == entry) continue;
+                        var at = other.Value.Paths.FindIndex(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                        if (at < 0) continue;
+                        other.Value.Paths.RemoveAt(at);
+                        other.Value.Guids.Remove(path);
+                        other.Value.Hashes.Remove(path);
+                    }
+                    entry.Touched.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+                    if (!entry.Paths.Exists(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) entry.Paths.Add(path);
+                    if (RemovalPlanner.IsGuid(guid)) entry.Guids[path] = guid; else entry.Guids.Remove(path);
+                    if (RemovalPlanner.IsSha256(sha)) entry.Hashes[path] = sha; else entry.Hashes.Remove(path);
+                    entry.Claims.Remove(path);
                     changed = true;
                 }
             }
             if (changed) Save(projectRoot, all);
+            return changed;
         }
 
         private static bool AddUnique(List<string> list, IEnumerable<string> items, Func<string, bool> valid, bool folders)
@@ -245,10 +311,20 @@ namespace OnAirDeck.UnityManager
                 hashKeys.Sort(StringComparer.Ordinal);
                 var hashes = new Dictionary<string, object>();
                 foreach (var path in hashKeys) hashes[path] = entry.Hashes[path];
-                products.Add(new Dictionary<string, object>
+                var product = new Dictionary<string, object>
                 {
                     { "key", key }, { "paths", Sorted(entry.Paths) }, { "touched", Sorted(entry.Touched) }, { "folders", Sorted(entry.Folders) }, { "guids", guids }, { "hashes", hashes }
-                });
+                };
+                if (entry.Product.Length > 0) product["product"] = entry.Product;
+                if (entry.Claims.Count > 0)
+                {
+                    var claimKeys = new List<string>(entry.Claims.Keys);
+                    claimKeys.Sort(StringComparer.Ordinal);
+                    var claims = new Dictionary<string, object>();
+                    foreach (var path in claimKeys) claims[path] = entry.Claims[path];
+                    product["claims"] = claims;
+                }
+                products.Add(product);
             }
             var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
             AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
@@ -293,23 +369,6 @@ namespace OnAirDeck.UnityManager
             BeforeCreateFolder(clean.Substring(0, clean.LastIndexOf('/')));
         }
 
-        /// <summary>
-        /// The answer "overwrite" of <see cref="OptionOverwrite"/>: these files, which another option of the product created and this install
-        /// wrote over, count as created by this install (with the proof it wrote them with). Call after they were written.
-        /// </summary>
-        public void Adopt(IEnumerable<string> paths)
-        {
-            if (paths == null) return;
-            foreach (var raw in paths)
-            {
-                var clean = (raw ?? "").Replace('\\', '/');
-                var at = Touched.FindIndex(p => string.Equals(p, clean, StringComparison.OrdinalIgnoreCase));
-                if (at < 0) continue;
-                Touched.RemoveAt(at);
-                Paths.Add(clean);
-            }
-        }
-
         /// <summary>Call before a folder is created: it and every parent that does not exist yet are created by this install.</summary>
         public void BeforeCreateFolder(string folder)
         {
@@ -346,16 +405,19 @@ namespace OnAirDeck.UnityManager
     /// <summary>
     /// Two options (line items) of one product install into the same product folder, and a .unitypackage at its own paths. When an
     /// install would write other contents over a file another option created (its PlacedFiles record lists it as created, the file is
-    /// here, and its GUID or SHA-256 differs), it asks first (review R2, lead decision 2026-11-04): overwrite hands the files over
-    /// (<see cref="PlacedFiles.HandOver"/>, <see cref="PlacementTracker.Adopt"/>), cancel writes nothing of this option. Installs from
-    /// before the Manager kept records, other products and the user's files are never asked about. No UnityEngine.
+    /// here, and its GUID or SHA-256 differs), it asks first (review R2, lead decision 2026-11-04): overwrite claims the files
+    /// (<see cref="PlacedFiles.Claim"/>: each passes over once it is what this option wrote), cancel writes nothing of this option.
+    /// Installs from before the Manager kept records, other products and the user's files are never asked about. No UnityEngine.
     /// </summary>
     internal static class OptionOverwrite
     {
-        /// <summary>The paths of <paramref name="incoming"/> another option created, that are here, and that this install would change.</summary>
-        public static List<string> Conflicts(string projectRoot, PlacedRecords placed, IEnumerable<string> otherOptionKeys, IEnumerable<IncomingFile> incoming)
+        /// <summary>
+        /// The files of <paramref name="incoming"/> another option created, that are here, and that this install would change: every write
+        /// is compared (two zips can write one path), and each path is listed once with its last write, which is what stays.
+        /// </summary>
+        public static List<IncomingFile> Conflicts(string projectRoot, PlacedRecords placed, IEnumerable<string> otherOptionKeys, IEnumerable<IncomingFile> incoming)
         {
-            var result = new List<string>();
+            var result = new List<IncomingFile>();
             if (placed == null || otherOptionKeys == null || incoming == null) return result;
             var theirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var key in otherOptionKeys)
@@ -364,30 +426,57 @@ namespace OnAirDeck.UnityManager
                 if (!string.IsNullOrEmpty(key) && placed.Products.TryGetValue(key, out entry)) foreach (var path in entry.Paths) theirs.Add(path);
             }
             if (theirs.Count == 0) return result;
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var last = new Dictionary<string, IncomingFile>(StringComparer.OrdinalIgnoreCase);
+            var order = new List<string>();
+            var conflicting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in incoming)
             {
                 if (file == null) continue;
                 var path = (file.Path ?? "").Replace('\\', '/');
-                if (!theirs.Contains(path) || !seen.Add(path) || !File.Exists(RemovalPlanner.Absolute(projectRoot, path))) continue;
-                var differs = RemovalPlanner.IsGuid(file.Guid)
-                    ? !string.Equals(RemovalPlanner.MetaGuid(projectRoot, path), file.Guid, StringComparison.OrdinalIgnoreCase)
-                    : !string.IsNullOrEmpty(file.Sha256) && RemovalPlanner.FileSha256(projectRoot, path) != file.Sha256;
-                if (differs) result.Add(path);
+                if (!theirs.Contains(path) || !File.Exists(RemovalPlanner.Absolute(projectRoot, path))) continue;
+                if (!last.ContainsKey(path)) order.Add(path);
+                last[path] = new IncomingFile { Path = path, Guid = file.Guid ?? "", Sha256 = file.Sha256 ?? "" };
+                if (Differs(projectRoot, path, file.Guid, file.Sha256)) conflicting.Add(path);
             }
+            foreach (var path in order) if (conflicting.Contains(path)) result.Add(last[path]);
             return result;
         }
 
-        /// <summary>
-        /// Before an install writes anything: the files it would take over from another option, after <paramref name="confirm"/> said yes
-        /// (empty when there are none, and then nothing is asked). Throws <see cref="OptionOverwriteDeclinedException"/> when the answer is
-        /// no, or when there is no one to ask.
-        /// </summary>
-        public static List<string> Check(string projectRoot, ICollection<string> otherOptionKeys, Func<IEnumerable<IncomingFile>> incoming, Func<List<string>, bool> confirm)
+        /// <summary>The file at <paramref name="path"/> is not what <paramref name="guid"/> (its .meta) and <paramref name="sha256"/> (its contents) say; an empty proof is not compared.</summary>
+        public static bool Differs(string projectRoot, string path, string guid, string sha256)
         {
-            if (otherOptionKeys == null || otherOptionKeys.Count == 0 || incoming == null) return new List<string>();
-            var conflicts = Conflicts(projectRoot, PlacedFiles.Load(projectRoot), otherOptionKeys, incoming());
-            if (conflicts.Count == 0 || (confirm != null && confirm(conflicts))) return conflicts;
+            if (RemovalPlanner.IsGuid(guid) && !string.Equals(RemovalPlanner.MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase)) return true;
+            return !string.IsNullOrEmpty(sha256) && RemovalPlanner.FileSha256(projectRoot, path) != sha256;
+        }
+
+        /// <summary>The file is here and is what the proofs say (at least one of them).</summary>
+        public static bool Matches(string projectRoot, string path, string guid, string sha256)
+        {
+            if (!RemovalPlanner.IsGuid(guid) && !RemovalPlanner.IsSha256(sha256)) return false;
+            return File.Exists(RemovalPlanner.Absolute(projectRoot, path)) && !Differs(projectRoot, path, guid, sha256);
+        }
+
+        /// <summary>
+        /// Before an install of <paramref name="ownKey"/> writes anything: the files it would take over from another option (to claim once
+        /// written), after <paramref name="confirm"/> said yes; empty when there are none, and then nothing is asked. The other options are
+        /// <paramref name="otherOptionKeys"/> (the list's rows) and every record of <paramref name="product"/> (also an option the list no
+        /// longer shows). Throws <see cref="OptionOverwriteDeclinedException"/> when the answer is no, or when there is no one to ask.
+        /// </summary>
+        public static List<IncomingFile> Check(string projectRoot, string ownKey, string product, ICollection<string> otherOptionKeys,
+            Func<IEnumerable<IncomingFile>> incoming, Func<List<string>, bool> confirm)
+        {
+            var none = new List<IncomingFile>();
+            if (string.IsNullOrEmpty(projectRoot) || incoming == null || ((otherOptionKeys == null || otherOptionKeys.Count == 0) && string.IsNullOrEmpty(product))) return none;
+            // Claims an earlier option's import has since made true pass over first, so the files are checked against their real owner.
+            try { PlacedFiles.ResolveClaims(projectRoot); }
+            catch (Exception) { }
+            var placed = PlacedFiles.Load(projectRoot);
+            var keys = new List<string>();
+            if (otherOptionKeys != null) foreach (var key in otherOptionKeys) if (!string.IsNullOrEmpty(key) && key != ownKey && !keys.Contains(key)) keys.Add(key);
+            foreach (var key in PlacedFiles.OptionKeys(placed, product, ownKey)) if (!keys.Contains(key)) keys.Add(key);
+            if (keys.Count == 0) return none;
+            var conflicts = Conflicts(projectRoot, placed, keys, incoming());
+            if (conflicts.Count == 0 || (confirm != null && confirm(conflicts.ConvertAll(c => c.Path)))) return conflicts;
             throw new OptionOverwriteDeclinedException(conflicts.Count);
         }
     }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace OnAirDeck.UnityManager
@@ -96,6 +97,60 @@ namespace OnAirDeck.UnityManager
             var assets = new List<PackageAsset>();
             foreach (var guid in order) assets.Add(new PackageAsset { Path = paths[guid], IsFolder = folders.Contains(guid), Guid = guid });
             return assets;
+        }
+
+        /// <summary>
+        /// GUID to the SHA-256 (lowercase hex) of its &lt;guid&gt;/asset entry: what the import writes at the asset's path, read as a
+        /// stream (assets can be large). Null for a malformed archive.
+        /// </summary>
+        public static Dictionary<string, string> AssetSha256(string unityPackagePath)
+        {
+            var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (var file = File.OpenRead(unityPackagePath))
+            using (var gz = new GZipStream(file, CompressionMode.Decompress))
+            {
+                var header = new byte[512];
+                var buffer = new byte[65536];
+                while (ReadFully(gz, header, 512) == 512)
+                {
+                    var allZero = true;
+                    for (var i = 0; i < 512; i++) if (header[i] != 0) { allZero = false; break; }
+                    if (allZero) break;
+                    var name = Encoding.UTF8.GetString(header, 0, 100).TrimEnd('\0').Replace('\\', '/');
+                    if (name.StartsWith("./", StringComparison.Ordinal)) name = name.Substring(2);
+                    long size = 0;
+                    foreach (var ch in Encoding.ASCII.GetString(header, 124, 12).Trim('\0', ' '))
+                    {
+                        if (ch < '0' || ch > '7') { size = -1; break; }
+                        size = size * 8 + (ch - '0');
+                    }
+                    if (size < 0) return null;
+                    var typeFlag = (char)header[156];
+                    var padded = (size + 511) / 512 * 512;
+                    var slash = name.IndexOf('/');
+                    if ((typeFlag == '0' || typeFlag == '\0') && slash > 0 && name.Substring(slash + 1) == "asset")
+                    {
+                        using (var sha = SHA256.Create())
+                        {
+                            var left = size;
+                            while (left > 0)
+                            {
+                                var read = gz.Read(buffer, 0, (int)Math.Min(buffer.Length, left));
+                                if (read <= 0) return null;
+                                sha.TransformBlock(buffer, 0, read, null, 0);
+                                left -= read;
+                            }
+                            sha.TransformFinalBlock(new byte[0], 0, 0);
+                            var sb = new StringBuilder(64);
+                            foreach (var b in sha.Hash) sb.Append(b.ToString("x2"));
+                            hashes[name.Substring(0, slash)] = sb.ToString();
+                        }
+                        Skip(gz, padded - size);
+                    }
+                    else Skip(gz, padded);
+                }
+            }
+            return hashes;
         }
 
         /// <summary>The asset path a &lt;guid&gt;/pathname entry holds: its first line, trimmed, with forward slashes.</summary>

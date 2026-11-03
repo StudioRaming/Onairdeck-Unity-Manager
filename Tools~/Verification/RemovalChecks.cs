@@ -37,10 +37,13 @@ internal static class RemovalChecks
         check("removal record file: keeps only safe Assets/ paths, merges a reinstall, prunes what is gone, lists packages", Record);
         check("removal license file: the product's own onairdeck.license by the id inside it, never another product's", OwnLicenseFiles);
         check("removal license file: one option of a product keeps the shared license while another option still has a recorded file here", OtherOptionKeepsLicense);
-        check("option overwrite: asked only for a file another option of the product created, that is here, with other contents (SHA-256) or another GUID (.unitypackage)", OptionOverwriteRule);
+        check("option overwrite: asked only for a file another option of the product created, that is here, with other contents (SHA-256) or another GUID; every write is compared", OptionOverwriteRule);
         check("option overwrite 'overwrite': the file passes to this option, so removing it takes the file and removing the other option leaves it", OptionOverwriteYes);
         check("option overwrite 'cancel': nothing is written or handed over, and a batch skips that option and goes on with the next", OptionOverwriteNo);
         check("option overwrite: the zip entries it checks are exactly the files ExtractZip writes, with their SHA-256", ZipTargetsMatchExtract);
+        check("option overwrite: a .unitypackage asset is claimed before its import; the other option keeps the file until it is written, and for good when it is cancelled", OptionOverwritePendingImport);
+        check("option overwrite: an option the list no longer shows is found by its record's product; a record from before is not", OptionOverwriteByRecord);
+        check("option overwrite: the contents of every .unitypackage asset are hashed as a stream", PackageAssetHashes);
         check("removal install record: removed licenses lose their version record, the others keep theirs", InstallRecordRemoved);
     }
 
@@ -395,18 +398,21 @@ internal static class RemovalChecks
         Require(!tracker.Folders.Contains(Installer.InstallRoot));
     }
 
-    // ---------- option overwrite (review R2) ----------
+    // ---------- option overwrite (review R2, r3) ----------
 
     private const string Night = "purchase:item-night";
     private const string Day = "purchase:item-day";
     private const string Scene = "Assets/OnAirDeck/Sample Resort/Scene.unity";
+    private const string Product = "product-resort";
 
     private static string Sha(string text)
     {
         using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(text))) return RemovalPlanner.StreamSha256(stream);
     }
 
-    /// <summary>The night option installed Scene.unity (recorded as created, with its proof), as an install does.</summary>
+    private static string Meta(string guid) { return "fileFormatVersion: 2\nguid: " + guid + "\n"; }
+
+    /// <summary>The night option installed Scene.unity (recorded as created, with its proof and its product), as an install does.</summary>
     private static string NightInstalled()
     {
         var project = NewProject();
@@ -414,9 +420,11 @@ internal static class RemovalChecks
         tracker.BeforeWrite(Scene);
         Put(project, Scene, "night");
         tracker.AfterWrite(Scene);
-        PlacedFiles.Add(project, Night, tracker);
+        PlacedFiles.Add(project, Night, tracker, Product);
         return project;
     }
+
+    private static string Paths(IEnumerable<IncomingFile> files) { return string.Join(",", files.Select(f => f.Path)); }
 
     private static void OptionOverwriteRule()
     {
@@ -425,7 +433,7 @@ internal static class RemovalChecks
         var touched = "Assets/OnAirDeck/Sample Resort/Touched.png";
         var others = "Assets/Other/Shared.png";
         Put(project, prefab, "lamp");
-        Put(project, prefab + ".meta", "fileFormatVersion: 2\nguid: " + new string('a', 32) + "\n");
+        Put(project, prefab + ".meta", Meta(new string('a', 32)));
         Put(project, touched, "t");
         Put(project, others, "o");
         var placed = PlacedFiles.Load(project);
@@ -442,14 +450,25 @@ internal static class RemovalChecks
             new IncomingFile { Path = others, Sha256 = Sha("other") },               // another product's file: not an option
             new IncomingFile { Path = "Assets/OnAirDeck/Sample Resort/New.png", Sha256 = Sha("n") },
         };
-        Equal(Scene + "," + prefab, string.Join(",", OptionOverwrite.Conflicts(project, placed, new[] { Night }, incoming)));
-        // The same contents, the same GUID, or no other option: nothing to ask.
-        Equal(0, OptionOverwrite.Conflicts(project, placed, new[] { Night }, new[] { new IncomingFile { Path = Scene, Sha256 = Sha("night") }, new IncomingFile { Path = prefab, Guid = new string('a', 32) } }).Count);
+        Equal(Scene + "," + prefab, Paths(OptionOverwrite.Conflicts(project, placed, new[] { Night }, incoming)));
+        // The same contents, the same GUID and contents, or no other option: nothing to ask.
+        Equal(0, OptionOverwrite.Conflicts(project, placed, new[] { Night }, new[] { new IncomingFile { Path = Scene, Sha256 = Sha("night") }, new IncomingFile { Path = prefab, Guid = new string('a', 32), Sha256 = Sha("lamp") } }).Count);
         Equal(0, OptionOverwrite.Conflicts(project, placed, new string[0], incoming).Count);
         Equal(0, OptionOverwrite.Conflicts(project, placed, new[] { Day }, incoming).Count);
+        // R3-01: a .unitypackage asset with the same path and GUID but other contents is asked about.
+        Equal(prefab, Paths(OptionOverwrite.Conflicts(project, placed, new[] { Night }, new[] { new IncomingFile { Path = prefab, Guid = new string('a', 32), Sha256 = Sha("other lamp") } })));
+        // R3-02: two writes to one path (two zips): the first is the same, the second is not; asked, with the last write as the claim.
+        // The path's case does not matter (Windows).
+        var twice = OptionOverwrite.Conflicts(project, placed, new[] { Night }, new[]
+        {
+            new IncomingFile { Path = Scene, Sha256 = Sha("night") },
+            new IncomingFile { Path = Scene.ToLowerInvariant(), Sha256 = Sha("day") },
+        });
+        Equal(1, twice.Count);
+        Equal(Sha("day"), twice[0].Sha256);
         // A file the other option created but the person deleted since: nothing is overwritten.
         File.Delete(Path.Combine(project, Scene.Replace('/', Path.DirectorySeparatorChar)));
-        Equal(prefab, string.Join(",", OptionOverwrite.Conflicts(project, placed, new[] { Night }, incoming)));
+        Equal(prefab, Paths(OptionOverwrite.Conflicts(project, placed, new[] { Night }, incoming)));
     }
 
     private static void OptionOverwriteYes()
@@ -458,27 +477,97 @@ internal static class RemovalChecks
         // An earlier install of the day option wrote the same scene over it (no question then): day only touched it.
         var earlier = new PlacementTracker(project);
         earlier.BeforeWrite(Scene);
-        PlacedFiles.Add(project, Day, earlier);
+        PlacedFiles.Add(project, Day, earlier, Product);
         Require(PlacedFiles.Load(project).Products[Day].Touched.Contains(Scene));
         var asked = new List<string>();
-        var handOver = OptionOverwrite.Check(project, new[] { Night }, () => new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } },
+        var claims = OptionOverwrite.Check(project, Day, Product, new[] { Night }, () => new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } },
             paths => { asked.AddRange(paths); return true; });
         Equal(Scene, string.Join(",", asked));
-        Equal(Scene, string.Join(",", handOver));
-        // The day option's install, as PlaceFilesAsync runs it.
+        Equal(Scene, Paths(claims));
+        // The day option's install, as PlaceFilesAsync runs it: write, record, claim (a written file passes over at once).
         var tracker = new PlacementTracker(project);
         tracker.BeforeWrite(Scene);
         Put(project, Scene, "day");
         tracker.AfterWrite(Scene);
-        tracker.Adopt(handOver);
-        PlacedFiles.HandOver(project, new[] { Night }, handOver);
-        PlacedFiles.Add(project, Day, tracker);
+        PlacedFiles.Add(project, Day, tracker, Product);
+        PlacedFiles.Claim(project, Day, claims);
         var placed = PlacedFiles.Load(project);
         Require(!placed.Products[Night].Paths.Contains(Scene) && !placed.Products[Night].Hashes.ContainsKey(Scene), "night gave it up");
         Require(placed.Products[Day].Paths.Contains(Scene) && !placed.Products[Day].Touched.Contains(Scene), "day created it");
+        Require(placed.Products[Day].Claims.Count == 0, "the claim is settled");
         Equal(Sha("day"), placed.Products[Day].Hashes[Scene]);
         Require(RemovalPlanner.ForFiles(project, new[] { Day }, placed, null, "").Files.Contains(Scene), "removing day takes it");
         Require(!RemovalPlanner.ForFiles(project, new[] { Night }, placed, null, "").Files.Contains(Scene), "removing night leaves it");
+    }
+
+    private static void OptionOverwritePendingImport()
+    {
+        // R3-03: a .unitypackage asset is claimed before its import; until the import wrote it, and for good when it was cancelled,
+        // the other option keeps the file.
+        var project = NightInstalled();
+        Put(project, Scene + ".meta", Meta(new string('a', 32)));
+        var night = PlacedFiles.Load(project).Products[Night];
+        night.Guids[Scene] = new string('a', 32);
+        var claims = new[] { new IncomingFile { Path = Scene, Guid = new string('b', 32), Sha256 = Sha("day") } };
+        PlacedFiles.Claim(project, Day, claims);
+        var placed = PlacedFiles.Load(project);
+        Require(placed.Products[Night].Paths.Contains(Scene), "night keeps it before the import");
+        Require(placed.Products[Day].Claims.ContainsKey(Scene) && !placed.Products[Day].Paths.Contains(Scene), "day only claims it");
+        Require(RemovalPlanner.ForFiles(project, new[] { Night }, placed, null, "").Files.Contains(Scene), "removing night still takes its own file");
+        Require(!PlacedFiles.ResolveClaims(project), "a cancelled import changes nothing");
+        // The import wrote it: the next resolve passes it over.
+        Put(project, Scene, "day");
+        Put(project, Scene + ".meta", Meta(new string('b', 32)));
+        Require(PlacedFiles.ResolveClaims(project));
+        placed = PlacedFiles.Load(project);
+        Require(!placed.Products[Night].Paths.Contains(Scene) && placed.Products[Day].Paths.Contains(Scene));
+        Equal(new string('b', 32), placed.Products[Day].Guids[Scene]);
+        // A claimed file the person deleted is dropped.
+        PlacedFiles.Claim(project, Night, new[] { new IncomingFile { Path = Scene, Sha256 = Sha("night again") } });
+        File.Delete(Path.Combine(project, Scene.Replace('/', Path.DirectorySeparatorChar)));
+        Require(PlacedFiles.ResolveClaims(project));
+        Equal(0, PlacedFiles.Load(project).Products[Night].Claims.Count);
+    }
+
+    private static void OptionOverwriteByRecord()
+    {
+        // R3-04: the night option is no longer a row of the list (its files went), but its record names the product: still asked.
+        var project = NightInstalled();
+        var asked = 0;
+        var claims = OptionOverwrite.Check(project, Day, Product, new string[0], () => new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } }, paths => { asked++; return true; });
+        Equal(1, asked);
+        Equal(Scene, Paths(claims));
+        Equal(Night, string.Join(",", PlacedFiles.OptionKeys(PlacedFiles.Load(project), Product, Day)));
+        Equal(0, PlacedFiles.OptionKeys(PlacedFiles.Load(project), "another-product", Day).Count);
+        // A record from before the product was kept, and no row: not asked (existing installs are unaffected).
+        var old = NewProject();
+        var tracker = new PlacementTracker(old);
+        tracker.BeforeWrite(Scene);
+        Put(old, Scene, "night");
+        tracker.AfterWrite(Scene);
+        PlacedFiles.Add(old, Night, tracker);
+        Equal(0, OptionOverwrite.Check(old, Day, Product, new string[0], () => new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } }, paths => { asked++; return true; }).Count);
+        Equal(1, asked);
+    }
+
+    private static void PackageAssetHashes()
+    {
+        // R3-01: the contents of each .unitypackage asset, read without Unity.
+        var package = Path.Combine(_root, "assets-" + Guid.NewGuid().ToString("N") + ".unitypackage");
+        var big = new string('x', 200000);
+        using (var file = File.Create(package))
+        using (var gz = new GZipStream(file, CompressionMode.Compress))
+        {
+            var bytes = LegacyChecks.Tar(
+                new KeyValuePair<string, byte[]>(new string('a', 32) + "/pathname", Encoding.UTF8.GetBytes(Scene)),
+                new KeyValuePair<string, byte[]>(new string('a', 32) + "/asset", Encoding.UTF8.GetBytes("day")),
+                new KeyValuePair<string, byte[]>(new string('b', 32) + "/pathname", Encoding.UTF8.GetBytes("Assets/Big.bytes")),
+                new KeyValuePair<string, byte[]>(new string('b', 32) + "/asset", Encoding.UTF8.GetBytes(big)));
+            gz.Write(bytes, 0, bytes.Length);
+        }
+        var hashes = UnityPackageArchive.AssetSha256(package);
+        Equal(Sha("day"), hashes[new string('a', 32)]);
+        Equal(Sha(big), hashes[new string('b', 32)]);
     }
 
     private static void OptionOverwriteNo()
@@ -490,7 +579,7 @@ internal static class RemovalChecks
         var threw = false;
         try
         {
-            OptionOverwrite.Check(project, new[] { Night }, () => { listed = true; return new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } }; }, paths => false);
+            OptionOverwrite.Check(project, Day, Product, new[] { Night }, () => { listed = true; return new[] { new IncomingFile { Path = Scene, Sha256 = Sha("day") } }; }, paths => false);
         }
         catch (OptionOverwriteDeclinedException e) { threw = e.Files == 1; }
         Require(threw && listed, "declined before anything is written");
@@ -498,7 +587,7 @@ internal static class RemovalChecks
         Equal("night", File.ReadAllText(Path.Combine(project, Scene.Replace('/', Path.DirectorySeparatorChar))));
         // Without another option nothing is listed or asked.
         listed = false;
-        Equal(0, OptionOverwrite.Check(project, new string[0], () => { listed = true; return new IncomingFile[0]; }, paths => false).Count);
+        Equal(0, OptionOverwrite.Check(project, Day, null, new string[0], () => { listed = true; return new IncomingFile[0]; }, paths => false).Count);
         Require(!listed);
         // In a batch the declined option is skipped and the next one still runs.
         var ran = new List<string>();

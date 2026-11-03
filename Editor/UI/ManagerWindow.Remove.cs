@@ -36,6 +36,9 @@ namespace OnAirDeck.UnityManager
         {
             if (entry == null || Busy) return;
             var root = PackageInstallService.ProjectRoot;
+            // Files another option took over and has since written (an import that finished) are its own before anything is planned.
+            try { PlacedFiles.ResolveClaims(root); }
+            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
             var placed = PlacedFiles.Load(root);
 
             // Add-ons of this core that are here go first (the reverse of the install order).
@@ -141,7 +144,11 @@ namespace OnAirDeck.UnityManager
             }
             var own = RemovalPlanner.OwnLicenseFiles(root, step.LicenseIds, entry.IsLicense || entry.Purchase == null ? null : entry.Purchase.item_id);
             // Another option of this product is still here: the product folder's license is its license too (review R1, 2026-11-04).
-            if (RemovalPlanner.OtherOptionHere(root, placed, otherOptionKeys)) own.Clear();
+            // The other options are the list's rows and every record of the product (also an option the list no longer shows).
+            var options = new List<string>(otherOptionKeys);
+            if (!entry.IsLicense && entry.Purchase != null)
+                options.AddRange(PlacedFiles.OptionKeys(placed, entry.Purchase.product_id, PlacedFiles.PurchaseKey(entry.Purchase)));
+            if (RemovalPlanner.OtherOptionHere(root, placed, options)) own.Clear();
             if (entry.IsLicense && entry.HasPackageVersions && InstalledPackages.IsInstalled(root, entry.PackageName))
                 step.Plan = RemovalPlanner.ForPackage(root, entry.PackageName, placed, own, goingFirst);
             else
