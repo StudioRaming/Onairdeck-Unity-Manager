@@ -170,6 +170,7 @@ namespace OnAirDeck.UnityManager
                     {
                         tracker.BeforeWrite(summary.Folder + "/" + name);
                         Installer.CopyFile(path, summary.Folder, name);
+                        tracker.AfterWrite(summary.Folder + "/" + name);
                         summary.Copied++;
                     }
                 }

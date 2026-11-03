@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using OnAirDeck.License;
@@ -17,6 +18,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Folders = new List<string>();
         /// <summary>Path to the GUID a .unitypackage gave it: a file at that path whose .meta has another GUID is not this product's.</summary>
         public readonly Dictionary<string, string> Guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Path to the SHA-256 of a copied or extracted file as it was written: a file at that path with other contents (the user's own, or one they changed) stays.</summary>
+        public readonly Dictionary<string, string> Hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The whole record: per product key what it placed, and the packages the Manager installed in Packages/.</summary>
@@ -37,7 +40,8 @@ namespace OnAirDeck.UnityManager
     /// </summary>
     internal static class PlacedFiles
     {
-        private const long Format = 2;
+        /// <summary>3: every created file carries its proof (GUID or SHA-256). Older drafts (1, 2) were never released and read as empty.</summary>
+        private const long Format = 3;
 
         public static string PathFor(string projectRoot)
         {
@@ -80,6 +84,10 @@ namespace OnAirDeck.UnityManager
                         if (obj.TryGetValue("guids", out guids) && guids is Dictionary<string, object>)
                             foreach (var pair in (Dictionary<string, object>)guids)
                                 if (pair.Value is string && RemovalPlanner.IsGuid((string)pair.Value)) entry.Guids[pair.Key] = (string)pair.Value;
+                        object hashes;
+                        if (obj.TryGetValue("hashes", out hashes) && hashes is Dictionary<string, object>)
+                            foreach (var pair in (Dictionary<string, object>)hashes)
+                                if (pair.Value is string && RemovalPlanner.IsSha256((string)pair.Value)) entry.Hashes[pair.Key] = (string)pair.Value;
                         result.Products[key] = entry;
                     }
                 }
@@ -114,10 +122,17 @@ namespace OnAirDeck.UnityManager
             foreach (var path in tracker.Touched) if (!entry.Paths.Exists(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) touched.Add(path);
             added |= AddUnique(entry.Touched, touched, RemovalPlanner.IsAssetFile, false);
             added |= AddUnique(entry.Folders, tracker.Folders, RemovalPlanner.IsAssetFolder, true);
+            // Proofs only for files this product owns (created now or by an earlier install of it): a file it only wrote over gets none.
+            var owned = new HashSet<string>(entry.Paths, StringComparer.OrdinalIgnoreCase);
             foreach (var pair in tracker.Guids)
             {
                 string old;
-                if (!entry.Guids.TryGetValue(pair.Key, out old) || old != pair.Value) { entry.Guids[pair.Key] = pair.Value; added = true; }
+                if (owned.Contains(pair.Key) && (!entry.Guids.TryGetValue(pair.Key, out old) || old != pair.Value)) { entry.Guids[pair.Key] = pair.Value; added = true; }
+            }
+            foreach (var pair in tracker.Hashes)
+            {
+                string old;
+                if (owned.Contains(pair.Key) && (!entry.Hashes.TryGetValue(pair.Key, out old) || old != pair.Value)) { entry.Hashes[pair.Key] = pair.Value; added = true; }
             }
             if (added) Save(projectRoot, all);
         }
@@ -156,8 +171,9 @@ namespace OnAirDeck.UnityManager
                     if (at < 0) continue;
                     other.Touched.RemoveAt(at);
                     other.Paths.Add(path);
-                    string guid;
+                    string guid, hash;
                     if (entry.Guids.TryGetValue(path, out guid)) other.Guids[path] = guid;
+                    if (entry.Hashes.TryGetValue(path, out hash)) other.Hashes[path] = hash;
                     break;
                 }
             }
@@ -197,9 +213,13 @@ namespace OnAirDeck.UnityManager
                 guidKeys.Sort(StringComparer.Ordinal);
                 var guids = new Dictionary<string, object>();
                 foreach (var path in guidKeys) guids[path] = entry.Guids[path];
+                var hashKeys = new List<string>(entry.Hashes.Keys);
+                hashKeys.Sort(StringComparer.Ordinal);
+                var hashes = new Dictionary<string, object>();
+                foreach (var path in hashKeys) hashes[path] = entry.Hashes[path];
                 products.Add(new Dictionary<string, object>
                 {
-                    { "key", key }, { "paths", Sorted(entry.Paths) }, { "touched", Sorted(entry.Touched) }, { "folders", Sorted(entry.Folders) }, { "guids", guids }
+                    { "key", key }, { "paths", Sorted(entry.Paths) }, { "touched", Sorted(entry.Touched) }, { "folders", Sorted(entry.Folders) }, { "guids", guids }, { "hashes", hashes }
                 });
             }
             var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
@@ -220,17 +240,28 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Touched = new List<string>();
         public readonly List<string> Folders = new List<string>();
         public readonly Dictionary<string, string> Guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public readonly Dictionary<string, string> Hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public PlacementTracker(string projectRoot) { _projectRoot = projectRoot; }
+
+        /// <summary>Call right after a copied or extracted file was written: a file this install created keeps the SHA-256 it was written with.</summary>
+        public void AfterWrite(string assetPath)
+        {
+            var clean = (assetPath ?? "").Replace('\\', '/');
+            // A touched file too: when it is this product's own (a reinstall or an update), PlacedFiles.Add takes its new proof.
+            if (!_seen.Contains(clean)) return;
+            var hash = RemovalPlanner.FileSha256(_projectRoot, clean);
+            if (hash.Length > 0) Hashes[clean] = hash;
+        }
 
         /// <summary>Call before the file is written (a .unitypackage: before its import, with the asset's GUID).</summary>
         public void BeforeWrite(string assetPath, string guid = null)
         {
             var clean = (assetPath ?? "").Replace('\\', '/');
             if (!RemovalPlanner.IsAssetFile(clean) || string.IsNullOrEmpty(_projectRoot) || !_seen.Add(clean)) return;
+            if (RemovalPlanner.IsGuid(guid)) Guids[clean] = guid;
             if (File.Exists(RemovalPlanner.Absolute(_projectRoot, clean))) { Touched.Add(clean); return; }
             Paths.Add(clean);
-            if (RemovalPlanner.IsGuid(guid)) Guids[clean] = guid;
             BeforeCreateFolder(clean.Substring(0, clean.LastIndexOf('/')));
         }
 
@@ -271,6 +302,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Files = new List<string>();
         /// <summary>Files this product recorded that another product recorded too: they stay, and this product gives them up.</summary>
         public readonly List<string> Shared = new List<string>();
+        /// <summary>Files this product created that are no longer what it wrote (changed, or replaced by the user's own): they stay.</summary>
+        public readonly List<string> Changed = new List<string>();
         /// <summary>Folders this product created that are empty once <see cref="Files"/> are gone, deepest first: they go too.</summary>
         public readonly List<string> Folders = new List<string>();
         /// <summary>Every folder this product's installs created (the run checks again, after the files went, which of them are empty).</summary>
@@ -336,6 +369,7 @@ namespace OnAirDeck.UnityManager
             var mine = new List<string>();
             var myFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var others = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var recorded = false;
             foreach (var pair in placed.Products)
@@ -346,6 +380,7 @@ namespace OnAirDeck.UnityManager
                     mine.AddRange(pair.Value.Paths);
                     foreach (var f in pair.Value.Folders) myFolders.Add(f);
                     foreach (var g in pair.Value.Guids) guids[g.Key] = g.Value;
+                    foreach (var h in pair.Value.Hashes) hashes[h.Key] = h.Value;
                 }
                 else
                 {
@@ -370,8 +405,13 @@ namespace OnAirDeck.UnityManager
                 if (others.Contains(path)) { plan.Shared.Add(path); continue; }
                 // A .unitypackage file is this product's only while its .meta keeps the GUID the package gave it (an import that never
                 // ran, then a file of the user at the same path, has another one).
-                string guid;
-                if (guids.TryGetValue(path, out guid) && !string.Equals(MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase)) { plan.Shared.Add(path); continue; }
+                // The file must still be the one this product wrote: a .unitypackage file by the GUID in its .meta (an import that never
+                // ran, then a file of the user at the same path, has another one), a copied or extracted file by its contents (a file the
+                // user put there after deleting the product's, or changed, stays). A recorded file without a proof stays too.
+                string guid, hash;
+                if (guids.TryGetValue(path, out guid)) { if (!string.Equals(MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase)) { plan.Changed.Add(path); continue; } }
+                else if (hashes.TryGetValue(path, out hash)) { if (!string.Equals(FileSha256(projectRoot, path), hash, StringComparison.OrdinalIgnoreCase)) { plan.Changed.Add(path); continue; } }
+                else { plan.Changed.Add(path); continue; }
                 // A license file is someone's license: only the one issued for this product (by the id inside it) goes.
                 if (IsLicenseFile(path) && !own.Contains(path)) { plan.Shared.Add(path); continue; }
                 plan.Files.Add(path);
@@ -386,6 +426,32 @@ namespace OnAirDeck.UnityManager
         }
 
         private static readonly Regex GuidLine = new Regex(@"^guid:\s*([0-9a-fA-F]{32})\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        public static bool IsSha256(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length != 64) return false;
+            foreach (var c in text) if (!Uri.IsHexDigit(c)) return false;
+            return true;
+        }
+
+        /// <summary>The SHA-256 (lowercase hex) of a project file, or "" when it cannot be read.</summary>
+        public static string FileSha256(string projectRoot, string path)
+        {
+            try
+            {
+                using (var sha = SHA256.Create())
+                using (var stream = File.OpenRead(Absolute(projectRoot, path)))
+                {
+                    var sb = new StringBuilder(64);
+                    foreach (var b in sha.ComputeHash(stream)) sb.Append(b.ToString("x2"));
+                    return sb.ToString();
+                }
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+        }
 
         public static bool IsGuid(string text)
         {
@@ -522,17 +588,18 @@ namespace OnAirDeck.UnityManager
         /// The folders of <paramref name="created"/> (the ones this product's installs made) that are left empty once
         /// <paramref name="removed"/> are gone, deepest first: every file in one is a removed file or its .meta (or the .meta of an
         /// emptied subfolder) and every subfolder empties too. A folder that was there before the install never goes, nor Assets, the
-        /// install root or a special Unity folder.
+        /// install root or a special Unity folder. <paramref name="afterRemoval"/>: the files already went, so a file found at one of
+        /// their paths is a new one (saved meanwhile) and keeps its folder.
         /// </summary>
-        public static List<string> EmptiedFolders(string projectRoot, IEnumerable<string> removed, ICollection<string> created)
+        public static List<string> EmptiedFolders(string projectRoot, IEnumerable<string> removed, ICollection<string> created, bool afterRemoval = false)
         {
             var gone = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var candidates = new HashSet<string>(StringComparer.Ordinal);
             foreach (var path in removed)
             {
                 if (!IsAssetFile(path)) continue;
-                gone.Add(path);
-                gone.Add(path + ".meta");
+                if (!afterRemoval || !File.Exists(Absolute(projectRoot, path))) gone.Add(path);
+                if (!afterRemoval || !File.Exists(Absolute(projectRoot, path + ".meta"))) gone.Add(path + ".meta");
                 var folder = ParentOf(path);
                 while (folder.Length > 0 && IsAssetFolder(folder) && created != null && created.Contains(folder)) { candidates.Add(folder); folder = ParentOf(folder); }
             }

@@ -30,6 +30,8 @@ internal static class RemovalChecks
         check("removal folders: only folders the install created, once empty, deepest first; never Assets, the install root or a special folder (r1 R4)", EmptiedFolders);
         check("removal shared: a file two products installed stays with the first removal, passes to the other and goes with the last (r1 R6, r2 R9)", SharedReleased);
         check("removal GUID: a .unitypackage file goes only while its .meta keeps the package's GUID (an import cancelled, then a user's file at that path; r2 R1)", GuidProof);
+        check("removal proof: a copied file the user changed, or replaced after deleting the product's, stays; an update of the product takes the new contents; no proof, no removal (r3 R13)", HashProof);
+        check("removal after the files went: a file saved meanwhile at a path that just went keeps its folder (r3 R10)", FolderRecheckAfter);
         check("removal zip: a zip's folder entries and the product folder are recorded before they are made, so they go once empty (r2 R12)", ZipFolders);
         check("removal package: VCC lists it, VModular's add-ons not yet known (r1 R5), or not here: refused with its reason", PackageRefusals);
         check("removal record file: keeps only safe Assets/ paths, merges a reinstall, prunes what is gone, lists packages", Record);
@@ -80,7 +82,7 @@ internal static class RemovalChecks
         Equal(0, plan.Files.Count);
         Require(!plan.CanRun);
         Equal("Assets/StudioRaming/MaskMaker", plan.ManualFolder);
-        placed.Products[PlacedFiles.LicenseKey("other")] = Entry("Assets/StudioRaming/MaskMaker/MaskMaker.cs");
+        placed.Products[PlacedFiles.LicenseKey("other")] = Entry(project, "Assets/StudioRaming/MaskMaker/MaskMaker.cs");
         plan = RemovalPlanner.ForFiles(project, keys, placed, null, "Assets/Nowhere");
         Equal(RemovalRefusal.NoRecord, plan.Refusal);
         Equal("", plan.ManualFolder);
@@ -99,7 +101,7 @@ internal static class RemovalChecks
         Directory.CreateDirectory(Path.Combine(project, "Assets", "MyTools"));   // the user's own empty folder
         var tracker = new PlacementTracker(project);
         foreach (var path in new[] { "Assets/Editor/UserTool.cs", "Assets/MyTools/Product.cs", "Assets/Tool/Sub/New.cs", "Assets/Tool/Sub/New.cs", "../x.cs" })
-            tracker.BeforeWrite(path);
+            tracker.BeforeWrite(path, GuidOf(path));
         Equal("Assets/MyTools/Product.cs,Assets/Tool/Sub/New.cs", string.Join(",", tracker.Paths));
         Equal("Assets/Editor/UserTool.cs", string.Join(",", tracker.Touched));
         Equal("Assets/Tool/Sub,Assets/Tool", string.Join(",", tracker.Folders));
@@ -110,9 +112,11 @@ internal static class RemovalChecks
         Equal(RemovalRefusal.NothingHere, plan.Refusal);
         // After the import: its files go, the user's MyTools folder and Assets/Editor stay, the folders it created go.
         Put(project, "Assets/MyTools/Product.cs", "p");
+        Put(project, "Assets/MyTools/Product.cs.meta", "guid: " + GuidOf("Assets/MyTools/Product.cs") + "\n");
         Put(project, "Assets/Tool/Sub/New.cs", "n");
-        Put(project, "Assets/Tool/Sub/New.cs.meta", "m");
+        Put(project, "Assets/Tool/Sub/New.cs.meta", "guid: " + GuidOf("Assets/Tool/Sub/New.cs") + "\n");
         Put(project, "Assets/Tool/Sub.meta", "m");
+        Require(PlacedFiles.Load(project).Products[PlacedFiles.LicenseKey("tool")].Guids.Count == 2);   // none for the touched user file
         plan = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("tool") }, placed, null, "");
         Equal("Assets/MyTools/Product.cs,Assets/Tool/Sub/New.cs", string.Join(",", plan.Files));
         Equal("Assets/Tool/Sub,Assets/Tool", string.Join(",", plan.Folders));
@@ -128,16 +132,16 @@ internal static class RemovalChecks
         Put(project, "Assets/Tool/Mine.mat", "user");
         Put(project, Installer.InstallRoot + "/Other/onairdeck.license", License("{\"license_id\":\"lic-other\"}"));
         var placed = new PlacedRecords();
-        placed.Products[PlacedFiles.LicenseKey("tool")] = Entry("Assets/Tool/A.cs", "Assets/Tool/B.shader", "Assets/Tool/Shared.cginc", "Assets/Tool/Gone.cs",
+        placed.Products[PlacedFiles.LicenseKey("tool")] = Entry(project, "Assets/Tool/A.cs", "Assets/Tool/B.shader", "Assets/Tool/Shared.cginc", "Assets/Tool/Gone.cs",
             Installer.InstallRoot + "/Other/onairdeck.license");
-        placed.Products[PlacedFiles.LicenseKey("other")] = Entry("Assets/Tool/Shared.cginc");
+        placed.Products[PlacedFiles.LicenseKey("other")] = Entry(project, "Assets/Tool/Shared.cginc");
         var plan = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("tool") }, placed, null, "");
         Require(plan.CanRun);
         Equal("Assets/Tool/A.cs,Assets/Tool/B.shader", string.Join(",", plan.Files));
         Require(plan.Shared.Contains("Assets/Tool/Shared.cginc") && plan.Shared.Contains(Installer.InstallRoot + "/Other/onairdeck.license"), string.Join(",", plan.Shared));
         Require(!plan.Files.Contains("Assets/Tool/Mine.mat") && !plan.Files.Contains("Assets/Tool/Gone.cs"));
         var gone = new PlacedRecords();
-        gone.Products[PlacedFiles.LicenseKey("x")] = Entry("Assets/Tool/Gone.cs");
+        gone.Products[PlacedFiles.LicenseKey("x")] = Entry(project, "Assets/Tool/Gone.cs");
         Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("x") }, gone, null, "").Refusal);
     }
 
@@ -172,9 +176,11 @@ internal static class RemovalChecks
         var a = new PlacementTracker(project);
         a.BeforeWrite("Assets/Common/Lib.cginc");
         a.BeforeWrite("Assets/A/Only.cs");
-        PlacedFiles.Add(project, PlacedFiles.LicenseKey("a"), a);
         Put(project, "Assets/Common/Lib.cginc", "s");
         Put(project, "Assets/A/Only.cs", "a");
+        a.AfterWrite("Assets/Common/Lib.cginc");
+        a.AfterWrite("Assets/A/Only.cs");
+        PlacedFiles.Add(project, PlacedFiles.LicenseKey("a"), a);
         var b = new PlacementTracker(project);
         b.BeforeWrite("Assets/Common/Lib.cginc");
         PlacedFiles.Add(project, PlacedFiles.LicenseKey("b"), b);
@@ -293,10 +299,57 @@ internal static class RemovalChecks
         Put(project, "Assets/Pkg/Shader.shader.meta", "fileFormatVersion: 2\nguid: 99999999999999999999999999999999\n");
         var plan = RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("pkg") }, PlacedFiles.Load(project), null, "");
         Equal("Assets/Pkg/Tool.cs", string.Join(",", plan.Files));
-        Equal("Assets/Pkg/Shader.shader", string.Join(",", plan.Shared));
+        Equal("Assets/Pkg/Shader.shader", string.Join(",", plan.Changed));
         // No .meta at all (never imported): not removed either.
         File.Delete(Path.Combine(project, "Assets", "Pkg", "Tool.cs.meta"));
         Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { PlacedFiles.LicenseKey("pkg") }, PlacedFiles.Load(project), null, "").Refusal);
+    }
+
+    private static void HashProof()
+    {
+        var project = NewProject();
+        var key = PlacedFiles.LicenseKey("tool");
+        var first = new PlacementTracker(project);
+        foreach (var path in new[] { "Assets/Tool/A.txt", "Assets/Tool/B.txt", "Assets/Tool/C.txt" }) first.BeforeWrite(path);
+        Put(project, "Assets/Tool/A.txt", "a1");
+        Put(project, "Assets/Tool/B.txt", "b1");
+        Put(project, "Assets/Tool/C.txt", "c1");
+        foreach (var path in new[] { "Assets/Tool/A.txt", "Assets/Tool/B.txt", "Assets/Tool/C.txt" }) first.AfterWrite(path);
+        PlacedFiles.Add(project, key, first);
+        // An update of the same product rewrites C.txt: its new contents are its proof now, it stays the product's own.
+        var update = new PlacementTracker(project);
+        update.BeforeWrite("Assets/Tool/C.txt");
+        Put(project, "Assets/Tool/C.txt", "c2");
+        update.AfterWrite("Assets/Tool/C.txt");
+        PlacedFiles.Add(project, key, update);
+        // The user changed A.txt; B.txt was deleted and the user saved their own B.txt there.
+        Put(project, "Assets/Tool/A.txt", "edited by the user");
+        Put(project, "Assets/Tool/B.txt", "the user's own");
+        var plan = RemovalPlanner.ForFiles(project, new[] { key }, PlacedFiles.Load(project), null, "");
+        Equal("Assets/Tool/C.txt", string.Join(",", plan.Files));
+        Equal("Assets/Tool/A.txt,Assets/Tool/B.txt", string.Join(",", plan.Changed));
+        // A recorded file without any proof stays.
+        var bare = new PlacedRecords();
+        var entry = new PlacedEntry();
+        entry.Paths.Add("Assets/Tool/C.txt");
+        bare.Products[key] = entry;
+        Equal(RemovalRefusal.NothingHere, RemovalPlanner.ForFiles(project, new[] { key }, bare, null, "").Refusal);
+    }
+
+    private static void FolderRecheckAfter()
+    {
+        var project = NewProject();
+        Put(project, "Assets/Tool/Sub/New.cs", "saved after the removal");   // the removed New.cs is back at the same path
+        var created = new HashSet<string> { "Assets/Tool", "Assets/Tool/Sub" };
+        Equal(0, RemovalPlanner.EmptiedFolders(project, new[] { "Assets/Tool/Sub/New.cs" }, created, true).Count);
+        File.Delete(Path.Combine(project, "Assets", "Tool", "Sub", "New.cs"));
+        Equal("Assets/Tool/Sub,Assets/Tool", string.Join(",", RemovalPlanner.EmptiedFolders(project, new[] { "Assets/Tool/Sub/New.cs" }, created, true)));
+    }
+
+    private static string GuidOf(string path)
+    {
+        using (var md5 = System.Security.Cryptography.MD5.Create())
+            return BitConverter.ToString(md5.ComputeHash(Encoding.UTF8.GetBytes(path))).Replace("-", "").ToLowerInvariant();
     }
 
     private static void ZipFolders()
@@ -319,10 +372,15 @@ internal static class RemovalChecks
 
     // ---------- fixtures ----------
 
-    private static PlacedEntry Entry(params string[] paths)
+    private static PlacedEntry Entry(string project, params string[] paths)
     {
         var entry = new PlacedEntry();
         entry.Paths.AddRange(paths);
+        foreach (var path in paths)
+        {
+            var hash = RemovalPlanner.FileSha256(project, path);
+            if (hash.Length > 0) entry.Hashes[path] = hash;
+        }
         return entry;
     }
 

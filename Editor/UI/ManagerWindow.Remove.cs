@@ -46,10 +46,14 @@ namespace OnAirDeck.UnityManager
             addons = RemovalPlanner.RemovalOrder(addons, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => e.IsLicense ? "" : CoreAddons.CoreOf(e));
 
             var steps = new List<RemovalStep>();
+            var releaseOnly = new List<RemovalStep>();
             var goingFirst = new HashSet<string>(StringComparer.Ordinal);
             foreach (var addon in addons)
             {
                 var step = StepFor(root, addon, placed, goingFirst);
+                // Nothing of its own is left, only files another product also wrote: it gives them up when the run goes, and does not
+                // hold the core. One whose own files the user changed is still here, and does.
+                if (step.Plan.Refusal == RemovalRefusal.NothingHere && step.Plan.Changed.Count == 0) { releaseOnly.Add(step); continue; }
                 if (!step.Plan.CanRun)
                 {
                     // An add-on the Manager cannot remove keeps the core: never the core first.
@@ -79,6 +83,7 @@ namespace OnAirDeck.UnityManager
             // The whole list in the Console (a dialog shows only the first files), then the question.
             Debug.Log(OnAirDeckConfig.LogPrefix + "Removal of " + entry.Name + " would move:\n" + FullList(steps));
             if (!EditorUtility.DisplayDialog(ManagerText.RmAskT.Replace("{n}", entry.Name), ConfirmText(steps), ManagerText.BRemove, ManagerText.Cancel)) return;
+            foreach (var step in releaseOnly) foreach (var key in step.Keys) ReleaseRecord(root, key);
             RunRemoval(root, steps);
         }
 
@@ -179,6 +184,7 @@ namespace OnAirDeck.UnityManager
                 for (var i = 0; i < step.Plan.Files.Count && i < ShownPerStep; i++) sb.Append("\n  ").Append(step.Plan.Files[i]);
                 if (step.Plan.Files.Count > ShownPerStep) sb.Append("\n  ").Append(ManagerText.RmMore.Replace("{n}", (step.Plan.Files.Count - ShownPerStep).ToString()));
                 if (step.Plan.Shared.Count > 0) sb.Append("\n  ").Append(ManagerText.RmShared.Replace("{n}", step.Plan.Shared.Count.ToString()));
+                if (step.Plan.Changed.Count > 0) sb.Append("\n  ").Append(ManagerText.RmChanged.Replace("{n}", step.Plan.Changed.Count.ToString()));
             }
             sb.Append("\n\n").Append(ManagerText.RmListInConsole);
             return sb.ToString();
@@ -193,7 +199,8 @@ namespace OnAirDeck.UnityManager
                 if (step.Plan.PackageFolder.Length > 0) sb.Append("  package ").Append(step.Plan.PackageFolder).Append('\n');
                 foreach (var file in step.Plan.Files) sb.Append("  file ").Append(file).Append('\n');
                 foreach (var folder in step.Plan.Folders) sb.Append("  folder ").Append(folder).Append('\n');
-                foreach (var shared in step.Plan.Shared) sb.Append("  stays ").Append(shared).Append('\n');
+                foreach (var shared in step.Plan.Shared) sb.Append("  stays (another product's) ").Append(shared).Append('\n');
+                foreach (var changed in step.Plan.Changed) sb.Append("  stays (changed) ").Append(changed).Append('\n');
             }
             return sb.ToString();
         }
@@ -214,15 +221,16 @@ namespace OnAirDeck.UnityManager
                 foreach (var step in steps)
                 {
                     var stepFailed = new List<string>();
+                    var trashed = new List<string>();
                     foreach (var file in step.Plan.Files)
                     {
-                        if (AssetDatabase.MoveAssetToTrash(file)) removed++;
+                        if (AssetDatabase.MoveAssetToTrash(file) && !File.Exists(RemovalPlanner.Absolute(root, file))) { removed++; trashed.Add(file); }
                         else stepFailed.Add(file);
                     }
-                    // A folder is taken away only when every file went, and only if it is still empty now (checked again after the
-                    // files went: something saved into it while the question was open keeps it).
+                    // A folder is taken away only when every file went, and only if it is still empty now: checked again with the files
+                    // that really left, so anything saved into it meanwhile (also at a path that just went) keeps it.
                     if (stepFailed.Count == 0)
-                        foreach (var folder in RemovalPlanner.EmptiedFolders(root, step.Plan.Files, new HashSet<string>(step.Plan.CreatedFolders, StringComparer.OrdinalIgnoreCase)))
+                        foreach (var folder in RemovalPlanner.EmptiedFolders(root, trashed, new HashSet<string>(step.Plan.CreatedFolders, StringComparer.OrdinalIgnoreCase), true))
                             if (Directory.Exists(RemovalPlanner.Absolute(root, folder))) AssetDatabase.MoveAssetToTrash(folder);
                     if (step.Plan.PackageFolder.Length > 0 && stepFailed.Count == 0)
                     {

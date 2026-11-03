@@ -12,6 +12,8 @@ namespace OnAirDeck.UnityManager
         public static string RmPkgLine { get { return Pick("패키지 {p} (Library/OnAirDeck/Backup으로 옮겨 둬요)", "Package {p} (moved to Library/OnAirDeck/Backup)", "パッケージ {p} (Library/OnAirDeck/Backup に移します)"); } }
         /// <summary>{n} files another product also installed.</summary>
         public static string RmShared { get { return Pick("다른 상품도 쓰는 파일 {n}개는 남겨요", "{n} files another product also uses stay", "他の商品も使うファイル{n}件は残します"); } }
+        /// <summary>{n} files that are no longer what the product installed.</summary>
+        public static string RmChanged { get { return Pick("설치한 뒤 바뀐 파일 {n}개는 남겨요", "{n} files changed since the install stay", "インストール後に変わったファイル{n}件は残します"); } }
         /// <summary>{f} files, {d} folders.</summary>
         public static string RmCounts { get { return Pick("파일 {f}개, 빈 폴더 {d}개", "{f} files, {d} empty folders", "ファイル{f}件、空のフォルダー{d}件"); } }
         public static string RmListInConsole { get { return Pick("지울 파일 전체 목록은 Console에 있어요.", "The full list is in the Console.", "削除するファイルの全一覧は Console にあります。"); } }

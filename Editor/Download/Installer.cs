@@ -85,6 +85,7 @@ namespace OnAirDeck.UnityManager
                     {
                         input.CopyTo(output);
                     }
+                    if (tracker != null) tracker.AfterWrite(productFolder + "/" + relative);
                     written++;
                 }
             }
