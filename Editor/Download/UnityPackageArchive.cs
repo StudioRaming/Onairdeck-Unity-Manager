@@ -11,7 +11,6 @@ namespace OnAirDeck.UnityManager
     internal enum ImportSettle
     {
         Imported,
-        WaitForWindow,
         Failed
     }
 
@@ -200,14 +199,14 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// What the import queue does with a head a script reload cut off (review R1): imported when the package is on disk; an
-        /// interactive import that is not may still have Unity's import window open, so the queue re-arms its callbacks and waits for
-        /// the person; a non-interactive one that is not on disk failed.
+        /// What the import queue does with a head a script reload cut off: imported when the package is on disk, else failed, so the
+        /// person can retry. Only a safety net since the queue holds reloads during an import (<see cref="ImportReloadHold"/>): the
+        /// editor restarted or Unity forced a reload. It never waits for an import window (review r2 R6: a window that is gone would
+        /// stop every later import of the session); <paramref name="interactive"/> no longer changes the answer.
         /// </summary>
         public static ImportSettle SettleAfterReload(bool onDisk, bool interactive)
         {
-            if (onDisk) return ImportSettle.Imported;
-            return interactive ? ImportSettle.WaitForWindow : ImportSettle.Failed;
+            return onDisk ? ImportSettle.Imported : ImportSettle.Failed;
         }
 
         private static string FileSha256(string path)

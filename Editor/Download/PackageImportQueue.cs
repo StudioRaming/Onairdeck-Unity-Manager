@@ -24,6 +24,8 @@ namespace OnAirDeck.UnityManager
         // The package path whose ImportPackage call has started; erased when it ends (Finish). Still set after a domain reload means
         // the reload cut the import off before its completion callback (G4 retest D2).
         private const string StartedKey = "OnAirDeck.UnityManager.ImportStarted";
+        // Set while the queue holds script reloads (design A); still set in a new domain means a reload ran despite the hold.
+        private const string HeldKey = "OnAirDeck.UnityManager.ImportHoldsReloads";
         private const int MaxResults = 50;
         public const string ResultPending = "pending";
         public const string ResultImported = "imported";
@@ -42,9 +44,32 @@ namespace OnAirDeck.UnityManager
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
 
+        // Script reloads wait while a package imports (G4 design A, 2026-11-04): the reload a package's scripts cause would otherwise
+        // drop the completion callbacks below (retest D2). Released in Finish, on a throw from ImportPackage, or after the timeout.
+        private static readonly ImportReloadHold Hold = new ImportReloadHold(
+            () => { SessionState.SetBool(HeldKey, true); EditorApplication.LockReloadAssemblies(); },
+            () => { EditorApplication.UnlockReloadAssemblies(); SessionState.EraseBool(HeldKey); },
+            () => EditorApplication.timeSinceStartup);
+
         static PackageImportQueue()
         {
+            if (SessionState.GetBool(HeldKey, false))
+            {
+                // A reload ran although the queue held reloads, so Unity did not count the hold (it forced the reload): unlocking now
+                // would release a hold that is not there. The started head, if any, settles from disk in ProcessNext.
+                SessionState.EraseBool(HeldKey);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A script reload ran during a package import; the import is checked against the project's files.");
+            }
+            EditorApplication.update += TickHold;
             EditorApplication.delayCall += ProcessNext;
+        }
+
+        private static void TickHold()
+        {
+            if (!Hold.Tick()) return;
+            var list = Load();
+            Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Script reloads were held for " + (int)(ImportReloadHold.TimeoutSeconds / 60) + " minutes while importing "
+                + (list.Count > 0 ? Path.GetFileName(list[0]) : "a package") + "; they may run again now. If Unity's import window is still open, finish it there.");
         }
 
         /// <summary>Queues the packages; <paramref name="record"/>, when given, is saved after all of them imported (none if one fails).</summary>
@@ -178,10 +203,10 @@ namespace OnAirDeck.UnityManager
             Save(list);
             if (list.Count == 0) return;
 
-            // The head was already started by an earlier domain (G4 retest D2, 2026-11-04): a package with scripts compiles and reloads
-            // the domain during its import, which drops the completion callbacks above, so the head would be imported again and the
-            // queue would never empty. It is settled from what is on disk instead: imported when every file of the package is there
-            // with its GUID, else failed (a partial or cancelled import), so the person can retry.
+            // The head was already started by an earlier domain: the queue holds reloads during an import, so only a forced reload gets
+            // here (G4 retest D2, 2026-11-04, before the hold). Its completion callbacks are gone, and importing it again would never
+            // empty the queue, so it settles from what is on disk: imported when every file of the package is there with its GUID and
+            // content, else failed (a partial or cancelled import), so the person can retry.
             if (SessionState.GetString(StartedKey, "") == list[0])
             {
                 _importing = true;
@@ -191,17 +216,7 @@ namespace OnAirDeck.UnityManager
                 try { hashes = UnityPackageArchive.AssetSha256(head); }
                 catch (Exception) { hashes = null; }
                 var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
-                var settle = UnityPackageArchive.SettleAfterReload(UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head), hashes), interactive);
-                if (settle == ImportSettle.WaitForWindow)
-                {
-                    // Unity's import window may still be open across the reload (review R1): the person's Import or Cancel there decides.
-                    // Only the callbacks come back; the package is not imported a second time.
-                    AssetDatabase.importPackageCompleted += OnCompleted;
-                    AssetDatabase.importPackageCancelled += OnCancelled;
-                    AssetDatabase.importPackageFailed += OnFailed;
-                    return;
-                }
-                var imported = settle == ImportSettle.Imported;
+                var imported = UnityPackageArchive.SettleAfterReload(UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head), hashes), interactive) == ImportSettle.Imported;
                 string[] started;
                 if (LoadContexts().TryGetValue(head, out started))
                 {
@@ -230,7 +245,10 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
-            AssetDatabase.ImportPackage(list[0], SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode);
+            var path = list[0];
+            var thrown = Hold.Run(() => AssetDatabase.ImportPackage(path, SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode));
+            // A throw before any callback ended it: fail the head so the queue goes on (a callback that already ran erased StartedKey).
+            if (thrown != null && SessionState.GetString(StartedKey, "") == path) OnFailed(Path.GetFileName(path), thrown.Message);
         }
 
         private static void OnCompleted(string packageName)
@@ -333,6 +351,8 @@ namespace OnAirDeck.UnityManager
             if (warn) Debug.LogWarning(OnAirDeckConfig.LogPrefix + message);
             else Debug.Log(OnAirDeckConfig.LogPrefix + message);
 
+            // Last: the queue's state is saved, so the reload the import's scripts asked for may run now (it runs on a later tick).
+            Hold.Release();
             EditorApplication.delayCall += ProcessNext;
         }
 

@@ -23,7 +23,51 @@ internal static class ListRowChecks
         check("file core (G4): a run puts the base license before the Plus license, and the list nests Plus under the base license row", FileCoreOrderAndNest);
         check("file core (G4 retest D1): the base that reaches a buyer only as a purchase row is the core to install first, and Plus nests under it", FileCoreFromPurchase);
         check("import queue (G4 retest D2): an import a script reload cut off counts as imported only when every file of the package is on disk with its GUID", ImportSettledAfterReload);
-        check("import queue (G4 retest review R1-R3): old content is not an import, an open import window waits, core-first does not mix import modes", RetestReviewRules);
+        check("import queue (G4 retest review R1-R3): old content is not an import, a cut-off head settles at once, core-first does not mix import modes", RetestReviewRules);
+        check("import queue (G4 design A): script reloads are held from before ImportPackage until the import ends, released once on completed, cancelled, failed, a throw or the timeout", ReloadHeldDuringImport);
+    }
+
+    // Design A (lead, 2026-11-04): the reload that dropped the completion callback (D2) cannot happen while the queue holds reloads.
+    private static void ReloadHeldDuringImport()
+    {
+        var locks = 0;
+        var now = 0.0;
+        var hold = new ImportReloadHold(() => locks++, () => locks--, () => now);
+
+        // Normal path: held before the import call runs, still held after it returns (an interactive window is open), released once
+        // by the completion callback. A second release (a late callback) does not unlock someone else's hold.
+        var heldDuringImport = -1;
+        Require(hold.Run(() => heldDuringImport = locks) == null, "import ran");
+        Equal(1, heldDuringImport);
+        Require(hold.Held && locks == 1, "held while the window is open");
+        Require(hold.Release(), "completion releases");
+        Equal(0, locks);
+        Require(!hold.Release(), "a second release is a no-op");
+        Equal(0, locks);
+
+        // Cancelled and failed end the same way (Finish releases); holding twice locks once.
+        hold.Hold();
+        hold.Hold();
+        Equal(1, locks);
+        hold.Release();
+        Equal(0, locks);
+
+        // A throw from ImportPackage releases at once and hands the error back, so the queue can fail the head.
+        var thrown = hold.Run(() => { throw new InvalidOperationException("locked file"); });
+        Require(thrown is InvalidOperationException, "error handed back");
+        Require(!hold.Held && locks == 0, "released after a throw");
+
+        // Timeout backstop: a callback that never comes does not hold reloads forever.
+        now = 100;
+        hold.Run(() => { });
+        now = 100 + ImportReloadHold.TimeoutSeconds - 1;
+        Require(!hold.Tick(), "not yet");
+        Equal(1, locks);
+        now = 100 + ImportReloadHold.TimeoutSeconds;
+        Require(hold.Tick(), "timed out");
+        Equal(0, locks);
+        Require(!hold.Tick() && !hold.Release(), "nothing left to release");
+        Equal(0, locks);
     }
 
     private static void RetestReviewRules()
@@ -51,11 +95,12 @@ internal static class ListRowChecks
             try { System.IO.Directory.Delete(project, true); } catch (Exception) { }
         }
 
-        // R1: after a reload, a started head that is on disk is done; an interactive one that is not may still have its window open,
-        // so it waits for the window (callbacks re-armed); a non-interactive one that is not on disk failed.
+        // Safety net only (design A, review r2 R6): reloads are held during a queued import, so a started head in a new domain means
+        // the editor restarted or Unity forced a reload. It settles at once from disk: waiting for a window that may never come back
+        // would stop every later import of the session.
         Equal(ImportSettle.Imported, UnityPackageArchive.SettleAfterReload(true, true));
         Equal(ImportSettle.Imported, UnityPackageArchive.SettleAfterReload(true, false));
-        Equal(ImportSettle.WaitForWindow, UnityPackageArchive.SettleAfterReload(false, true));
+        Equal(ImportSettle.Failed, UnityPackageArchive.SettleAfterReload(false, true));
         Equal(ImportSettle.Failed, UnityPackageArchive.SettleAfterReload(false, false));
 
         // R3: a non-interactive core download may not join a queue that holds an interactive import (Enqueue would throw).
