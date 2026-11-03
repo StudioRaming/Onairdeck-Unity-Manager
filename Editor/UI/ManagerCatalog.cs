@@ -11,6 +11,12 @@ namespace OnAirDeck.UnityManager
 
     internal enum FilterMode { All, New, None, Installed, Favorites, Own }
 
+    /// <summary>The state word of a list row (ManagerWindow.RowChip turns it into text and a tone).</summary>
+    internal enum RowChipKind { None, New, NotGot, Got, Installed, Unknown }
+
+    /// <summary>Why a row's checkbox is off: nothing (a batch can take it), no file to install, or no newer version than the one installed.</summary>
+    internal enum BatchBlock { None, NothingToInstall, UpToDate }
+
     /// <summary>One line of a product's version history (a file version of a purchase or a package version of a license).</summary>
     internal sealed class VersionRow
     {
@@ -403,7 +409,46 @@ namespace OnAirDeck.UnityManager
             return offeredAt > recordedAt ? EntryState.New : EntryState.Installed;
         }
 
-        /// <summary>Not installed: None. Older than the newest: New. The newest: Latest (no chip). Newer than any version offered: Installed.</summary>
+        /// <summary>
+        /// The row chip of a state. Installed at the newest version (Latest) and installed at another one (Installed) both say "installed":
+        /// a row without a chip read as "not installed" next to the "to get" rows (owner report 2026-11-03).
+        /// </summary>
+        public static RowChipKind RowChipOf(EntryState state)
+        {
+            switch (state)
+            {
+                case EntryState.New: return RowChipKind.New;
+                case EntryState.None: return RowChipKind.NotGot;
+                case EntryState.Got: return RowChipKind.Got;
+                case EntryState.Installed:
+                case EntryState.Latest: return RowChipKind.Installed;
+                case EntryState.Unknown: return RowChipKind.Unknown;
+                default: return RowChipKind.None;
+            }
+        }
+
+        /// <summary>
+        /// Whether a batch can take this row: a downloadable purchase, or a license that offers a package or a file version. A file version
+        /// (.unitypackage, zip) goes through the same install as its single install button (LicenseVersionInstall), after every package
+        /// of the run; before 2026-11-03 only a file add-on of a core (Ming Light Controller) could, which left most file products without a
+        /// checkbox (owner report). A license that offers nothing (installed another way, or kept for its device limit) cannot, and neither
+        /// can one this project already has at the offered version or newer (Latest, Installed): a batch would only reinstall or step it
+        /// back. Its single install button still reinstalls. A purchase keeps its box once downloaded: the server cannot tell whether
+        /// this project has its files.
+        /// </summary>
+        public static BatchBlock BatchBlockOf(CatalogEntry entry)
+        {
+            if (entry == null) return BatchBlock.NothingToInstall;
+            if (entry.Kind == FavoriteKind.Purchase) return entry.Purchase != null && entry.Purchase.CanDownload ? BatchBlock.None : BatchBlock.NothingToInstall;
+            if (entry.License == null) return BatchBlock.NothingToInstall;
+            var offered = false;
+            foreach (var row in entry.Versions)
+                if (row.Latest && row.License != null) offered = true;
+            if (!offered) return BatchBlock.NothingToInstall;
+            return entry.State == EntryState.Latest || entry.State == EntryState.Installed ? BatchBlock.UpToDate : BatchBlock.None;
+        }
+
+        /// <summary>Not installed: None. Older than the newest: New. The newest: Latest. Newer than any version offered: Installed.</summary>
         public static EntryState StateOfPackage(string installed, string latest)
         {
             if (string.IsNullOrEmpty(installed)) return EntryState.None;

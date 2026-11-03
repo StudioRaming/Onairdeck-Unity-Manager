@@ -163,6 +163,9 @@ namespace OnAirDeck.UnityManager
         public static string RcNone { get { return Pick("받기 전", "To get", "未取得"); } }
         public static string RcGot { get { return Pick("받음", "Got", "取得済"); } }
         public static string RcInst { get { return Pick("설치됨", "Installed", "導入済"); } }
+        public static string NoBatchNone { get { return Pick("설치할 파일이 없어서 한 번에 받기에서 빠져요.", "Nothing to install here, so batch install skips it.", "インストールするファイルがないため、一括取得の対象外です。"); } }
+        public static string NoBatchLatest { get { return Pick("설치할 새 버전이 없어요.", "No newer version to install.", "インストールする新しいバージョンはありません。"); } }
+        public static string DlgBatchFiles { get { return Pick(" 이미 설치한 파일 상품은 같은 파일을 새 버전으로 덮어쓰고, 따로 백업하지 않아요.", " Files of products already installed are overwritten by the new version. No backup is made.", " インストール済みのファイル商品は同じファイルを新しいバージョンで上書きします。バックアップは作りません。"); } }
         public static string RcDling { get { return Pick("받는 중", "Getting", "取得中"); } }
         public static string RcWait { get { return Pick("대기 중", "Waiting", "待機中"); } }
         public static string RcNewBuy { get { return Pick("새로 산 상품", "New Purchase", "新規購入"); } }

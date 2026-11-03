@@ -143,6 +143,33 @@ namespace OnAirDeck.UnityManager
             return true;
         }
 
+        /// <summary>
+        /// Every way in to a file or purchase add-on (the row, a version in the history, the one-button import) waits for the core: an
+        /// add-on without it does not compile. The core goes first when this account has it, else the reason shows and nothing is
+        /// downloaded. Null when the core is here, or the product is no add-on.
+        /// </summary>
+        private async Task<ImportOutcome> CoreFirstOrNullAsync(CatalogEntry entry, LicenseVersionEntry file)
+        {
+            var core = CoreAddons.CoreOf(entry);
+            if (core.Length == 0 || CoreInstalled(core)) return null;
+            var coreName = CoreAddons.CoreName(core);
+            var coreEntry = CoreEntry(core);
+            if (coreEntry == null)
+            {
+                var missing = ManagerText.CoreMissing.Replace("{a}", entry.Name).Replace("{c}", coreName);
+                _lastFailure[entry.Key] = missing;
+                SetMessage(missing, MessageType.Warning);
+                return ImportOutcome.Failed("dependency_missing");
+            }
+            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+                ManagerText.BInst, ManagerText.Cancel))
+            {
+                SetMessage(ManagerText.Declined, MessageType.None);
+                return ImportOutcome.Declined();
+            }
+            return await InstallCoreThenAddonAsync(entry, coreEntry, file);
+        }
+
         private async void InstallCoreThenAddon(CatalogEntry addon, CatalogEntry coreEntry)
         {
             var package = OfferedPackage(addon);
@@ -155,12 +182,16 @@ namespace OnAirDeck.UnityManager
             await InstallCoreThenAddonAsync(addon, coreEntry, null);
         }
 
-        /// <summary>The core, then the file add-on (<paramref name="file"/>, or the one it offers). Returns how the add-on (or the core) ended.</summary>
+        /// <summary>
+        /// The core, then the file add-on (<paramref name="file"/>, or the one it offers) or the purchase add-on (its download). Returns how
+        /// the add-on (or the core) ended.
+        /// </summary>
         private async Task<ImportOutcome> InstallCoreThenAddonAsync(CatalogEntry addon, CatalogEntry coreEntry, LicenseVersionEntry file)
         {
             var coreVersion = coreEntry != null ? OfferedPackage(coreEntry) : null;
-            if (file == null) file = OfferedFileVersion(addon);
-            if (coreVersion == null || file == null) return ImportOutcome.Failed("not_available");
+            var purchase = addon.Kind == FavoriteKind.Purchase;
+            if (!purchase && file == null) file = OfferedFileVersion(addon);
+            if (coreVersion == null || (!purchase && file == null)) return ImportOutcome.Failed("not_available");
             // Reloads wait until the add-on is in (as in a batch and the one-button import): the core's refresh would end this method
             // before the add-on. The record covers what holding reloads cannot: a core that comes in by its product installer after a
             // reload, or a reload Unity forces anyway; the window then installs the add-on once the core is there.
@@ -186,7 +217,8 @@ namespace OnAirDeck.UnityManager
                     _lastFailure[addon.Key] = ManagerText.CoreNotIn.Replace("{a}", addon.Name).Replace("{c}", CoreAddons.CoreName(core));
                     return ImportOutcome.Failed("dependency_missing");
                 }
-                return await DoInstallFileAsync(addon, file, true);
+                // The person already answered: the core-first question, and for a purchase the refund question before it.
+                return purchase ? await DoDownloadAsync(addon, true) : await DoInstallFileAsync(addon, file, true);
             }
             finally
             {
@@ -247,7 +279,16 @@ namespace OnAirDeck.UnityManager
             {
                 RemovePendingAddon(record.AddonKey);
                 var entry = FindEntry(record.AddonKey) ?? (_entries.Find(e => e.IsLicense && e.HoldsLicense(record.LicenseId)));
-                var file = entry != null ? OfferedFileVersion(entry) : null;
+                if (entry == null) continue;
+                // A purchase add-on (VModular Plus): its download, asked for before the reload.
+                if (entry.Kind == FavoriteKind.Purchase)
+                {
+                    if (entry.Purchase == null || !entry.Purchase.CanDownload) continue;
+                    Debug.Log(OnAirDeckConfig.LogPrefix + ManagerText.AddonResume.Replace("{a}", entry.Name).Replace("{c}", CoreAddons.CoreName(record.Core)));
+                    ResumePurchaseAddon(entry);
+                    return;
+                }
+                var file = OfferedFileVersion(entry);
                 if (file == null) continue;
                 Debug.Log(OnAirDeckConfig.LogPrefix + ManagerText.AddonResume.Replace("{a}", entry.Name).Replace("{c}", CoreAddons.CoreName(record.Core)));
                 ResumeAddonInstall(entry, file);
@@ -258,6 +299,11 @@ namespace OnAirDeck.UnityManager
         private async void ResumeAddonInstall(CatalogEntry entry, LicenseVersionEntry file)
         {
             await DoInstallFileAsync(entry, file, true);
+        }
+
+        private async void ResumePurchaseAddon(CatalogEntry entry)
+        {
+            await DoDownloadAsync(entry, true);
         }
 
         /// <summary>The row reasons and retry selection of the batch that ended just before this reload.</summary>

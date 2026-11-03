@@ -124,6 +124,9 @@ namespace OnAirDeck.UnityManager
             var item = entry.Purchase;
             // The first download makes the purchase non-refundable (same rule as the website).
             if (!confirmed && !item.downloaded && !EditorUtility.DisplayDialog(ManagerText.DlgDlT, ManagerText.DlgDl, ManagerText.BGet, ManagerText.Cancel)) return ImportOutcome.Declined();
+            // A purchase add-on (VModular Plus) waits for its core like a file add-on; the refund question above comes first.
+            var coreFirst = await CoreFirstOrNullAsync(entry, null);
+            if (coreFirst != null) return coreFirst;
 
             BeginWork(entry.Key);
             _doneFolder.Remove(entry.Key);
@@ -273,28 +276,8 @@ namespace OnAirDeck.UnityManager
                 SetMessage(ManagerText.BusyNotStarted.Replace("{n}", entry.Name), MessageType.Warning);
                 return ImportOutcome.Release();
             }
-            // Every way in (the row, a version in the history, the one-button import) waits for the core: an add-on without it does not
-            // compile. The core goes first when this account has it, else the reason shows and nothing is downloaded.
-            var core = CoreAddons.CoreOf(entry);
-            if (core.Length > 0 && !CoreInstalled(core))
-            {
-                var coreName = CoreAddons.CoreName(core);
-                var coreEntry = CoreEntry(core);
-                if (coreEntry == null)
-                {
-                    var missing = ManagerText.CoreMissing.Replace("{a}", entry.Name).Replace("{c}", coreName);
-                    _lastFailure[entry.Key] = missing;
-                    SetMessage(missing, MessageType.Warning);
-                    return ImportOutcome.Failed("dependency_missing");
-                }
-                if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
-                    ManagerText.BInst, ManagerText.Cancel))
-                {
-                    SetMessage(ManagerText.Declined, MessageType.None);
-                    return ImportOutcome.Declined();
-                }
-                return await InstallCoreThenAddonAsync(entry, coreEntry, version);
-            }
+            var coreFirst = await CoreFirstOrNullAsync(entry, version);
+            if (coreFirst != null) return coreFirst;
             var label = string.IsNullOrEmpty(version.version_label) ? version.file_name : version.version_label;
             var title = ManagerText.DlgInT.Replace("{n}", entry.Name).Replace("{v}", label);
             // A .unitypackage or loose files overwrite in place; nothing is backed up either way.

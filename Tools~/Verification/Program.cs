@@ -53,6 +53,7 @@ internal static class Program
             MingToonMoveChecks.Run(Check, _project);
             OverwriteChecks.Run(Check, _project);
             AutoUpdateChecks.Run(Check, _project);
+            ListRowChecks.Run(Check);
         }
         finally
         {

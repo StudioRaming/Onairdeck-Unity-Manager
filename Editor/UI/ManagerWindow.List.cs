@@ -174,11 +174,11 @@ namespace OnAirDeck.UnityManager
                 x += ManagerLayout.ChildIndent;
             }
 
-            // checkbox (only for what a batch can handle)
-            var batchable = CanBatch(entry);
-            if (batchable)
+            // checkbox on every row; one a batch cannot take is off and says why (a missing box read as a broken row)
+            var box = new Rect(x, centerY - ManagerLayout.Checkbox * 0.5f, ManagerLayout.Checkbox, ManagerLayout.Checkbox);
+            var block = ManagerCatalog.BatchBlockOf(entry);
+            if (block == BatchBlock.None)
             {
-                var box = new Rect(x, centerY - ManagerLayout.Checkbox * 0.5f, ManagerLayout.Checkbox, ManagerLayout.Checkbox);
                 var was = _selected.Contains(entry.Key);
                 var now = SRGui.Toggle(box, GUIContent.none, was);
                 if (now != was)
@@ -186,6 +186,13 @@ namespace OnAirDeck.UnityManager
                     var key = entry.Key;
                     Defer(() => { if (now) _selected.Add(key); else _selected.Remove(key); });
                 }
+            }
+            else
+            {
+                // A row that turned up to date while selected (its single install ran) leaves the selection, so the bar counts what will run.
+                if (_selected.Contains(entry.Key)) { var stale = entry.Key; Defer(() => _selected.Remove(stale)); }
+                using (new GUIEnabledScope(false)) SRGui.Toggle(box, GUIContent.none, false);
+                GUI.Label(box, new GUIContent("", block == BatchBlock.UpToDate ? ManagerText.NoBatchLatest : ManagerText.NoBatchNone));
             }
             x += ManagerLayout.Checkbox + SRMetrics.Space6;
 
@@ -233,7 +240,7 @@ namespace OnAirDeck.UnityManager
             return _listViewport.position + inScroll - _listScroll;
         }
 
-        /// <summary>The short word of a row, or none: work in progress, a new purchase, or the state. "Latest" has no chip.</summary>
+        /// <summary>The short word of a row: work in progress, a new purchase, or the state (ManagerCatalog.RowChipOf; installed at the newest version says "installed").</summary>
         private bool RowChip(CatalogEntry entry, out string text, out SRTone tone)
         {
             text = "";
@@ -242,13 +249,13 @@ namespace OnAirDeck.UnityManager
             if (work == 1) { text = ManagerText.RcDling; tone = SRTone.Info; return true; }
             if (work == 2) { text = ManagerText.RcWait; tone = SRTone.Neutral; return true; }
             if (IsUnseen(entry)) { text = ManagerText.RcNewBuy; tone = SRTone.Brand; return true; }
-            switch (entry.State)
+            switch (ManagerCatalog.RowChipOf(entry.State))
             {
-                case EntryState.New: text = ManagerText.RcNew; tone = SRTone.Warning; return true;
-                case EntryState.None: text = ManagerText.RcNone; tone = SRTone.Neutral; return true;
-                case EntryState.Got: text = ManagerText.RcGot; tone = SRTone.Success; return true;
-                case EntryState.Installed: text = ManagerText.RcInst; tone = SRTone.Success; return true;
-                case EntryState.Unknown: text = ManagerText.RcUnknown; tone = SRTone.Info; return true;
+                case RowChipKind.New: text = ManagerText.RcNew; tone = SRTone.Warning; return true;
+                case RowChipKind.NotGot: text = ManagerText.RcNone; tone = SRTone.Neutral; return true;
+                case RowChipKind.Got: text = ManagerText.RcGot; tone = SRTone.Success; return true;
+                case RowChipKind.Installed: text = ManagerText.RcInst; tone = SRTone.Success; return true;
+                case RowChipKind.Unknown: text = ManagerText.RcUnknown; tone = SRTone.Info; return true;
                 default: return false;
             }
         }

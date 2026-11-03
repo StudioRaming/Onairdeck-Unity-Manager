@@ -62,10 +62,21 @@ namespace OnAirDeck.UnityManager
             { "73f4e203-ffd0-4e88-9b78-dc116fd74057", "com.studioraming.mingtoon" }   // Ming Light Controller
         };
 
+        /// <summary>
+        /// Purchases that are add-ons of a core package (owner report 2026-11-03: VModular Plus needs VModular, like MingToon Core and its URP
+        /// add-on). VModular Plus is sold as an option of the VModular product, so it reaches the Manager as that product's purchase row, not
+        /// as a license: product id to the core and the asset files of the add-on option. A row is the add-on only when every file it lists
+        /// is one of them, so a purchase of the base product alone never is (CoreAddons.CoreOfPurchase).
+        /// </summary>
+        public static readonly Dictionary<string, PurchaseAddon> CoreAddonPurchases = new Dictionary<string, PurchaseAddon>
+        {
+        };
+
         /// <summary>Packages that other products are add-ons of: the display name used in "install X first".</summary>
         public static readonly Dictionary<string, string> CorePackages = new Dictionary<string, string>
         {
-            { "com.studioraming.mingtoon", "MingToon Core" }
+            { "com.studioraming.mingtoon", "MingToon Core" },
+            { "com.studioraming.vmodular", "VModular" }
         };
 
         /// <summary>
