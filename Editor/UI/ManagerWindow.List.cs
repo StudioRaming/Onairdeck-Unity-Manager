@@ -223,7 +223,7 @@ namespace OnAirDeck.UnityManager
             {
                 var name = new Rect(x, r.y + 3f, textWidth, SRMetrics.Line);
                 var seller = new Rect(x, name.yMax - 1f, textWidth, 14f);
-                SRGui.Ink(name, SRGui.Fit(entry.Name, SRStyles.Body, textWidth), SRStyles.Body);
+                SRGui.Ink(name, SRGui.Fit(entry.DisplayName, SRStyles.Body, textWidth), SRStyles.Body);
                 SRGui.Ink(seller, SRGui.Fit(entry.IsOwn ? ManagerText.OwnChip : entry.SellerName, SRStyles.Mini, textWidth), SRStyles.Mini);
             }
 

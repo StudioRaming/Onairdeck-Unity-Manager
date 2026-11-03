@@ -57,6 +57,33 @@ namespace OnAirDeck.UnityManager
             return all.ToArray();
         }
 
+        /// <summary>What the cached files would write, before anything is: .unitypackage assets by GUID, zip entries and copied files by SHA-256.</summary>
+        private static List<IncomingFile> IncomingOf(List<KeyValuePair<string, string>> cached, string folder)
+        {
+            var incoming = new List<IncomingFile>();
+            foreach (var pair in cached)
+            {
+                if (Installer.IsUnityPackage(pair.Value))
+                {
+                    var assets = UnityPackageArchive.Assets(pair.Key);
+                    // The contents too: two options can ship one asset (same path and GUID) with other contents.
+                    var hashes = assets != null ? UnityPackageArchive.AssetSha256(pair.Key) : null;
+                    if (assets != null)
+                        foreach (var asset in assets)
+                        {
+                            if (asset.IsFolder) continue;
+                            string sha;
+                            incoming.Add(new IncomingFile { Path = asset.Path, Guid = asset.Guid, Sha256 = hashes != null && hashes.TryGetValue(asset.Guid, out sha) ? sha : "" });
+                        }
+                }
+                else if (Installer.IsZip(pair.Value)) incoming.AddRange(Installer.ZipTargets(pair.Key, folder));
+                else
+                    using (var stream = File.OpenRead(pair.Key))
+                        incoming.Add(new IncomingFile { Path = folder + "/" + pair.Value, Sha256 = RemovalPlanner.StreamSha256(stream) });
+            }
+            return incoming;
+        }
+
         /// <summary>The id the error report signature is keyed on: the product id, else the line item id.</summary>
         public static string ProductIdOf(PurchaseItem item)
         {
@@ -71,9 +98,11 @@ namespace OnAirDeck.UnityManager
 
         /// <param name="interactiveImport">false: .unitypackage files import without the Unity import window (batch runs).</param>
         /// <param name="userInitiated">true (default): a user click started this, so the request may take back a released seat (X-Atelier-Reactivate).</param>
+        /// <param name="otherOptionKeys">The PlacedFiles keys of the other options (line items) of this product, for <see cref="OptionOverwrite"/>.</param>
+        /// <param name="confirmOverwrite">Asked with the paths when this option would write over another option's files; false cancels this option.</param>
         public static async Task<DownloadSummary> DownloadItemAsync(
             string sessionToken, PurchaseItem item, Action<string, float> onProgress, CancellationToken cancel,
-            bool interactiveImport = true, bool userInitiated = true)
+            bool interactiveImport = true, bool userInitiated = true, ICollection<string> otherOptionKeys = null, Func<List<string>, bool> confirmOverwrite = null)
         {
             LegacyHandoff.ThrowIfWaiting();
             DownloadFile[] files;
@@ -84,7 +113,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception e)
             {
                 // A device-limit or update-required refusal reaches the window; retrying runs the whole download again.
-                DeviceLimitNotice.Report(e, item.name, async () => (object)await DownloadItemAsync(sessionToken, item, onProgress, cancel, interactiveImport, true), "download:" + item.name);
+                DeviceLimitNotice.Report(e, item.name, async () => (object)await DownloadItemAsync(sessionToken, item, onProgress, cancel, interactiveImport, true, otherOptionKeys, confirmOverwrite), "download:" + item.name);
                 throw;
             }
             // Signed license next to the product, written before any .unitypackage import starts: an import with scripts reloads
@@ -93,6 +122,7 @@ namespace OnAirDeck.UnityManager
             // reports it; its retry only issues the license).
             return await PlaceFilesAsync(files, Installer.ProductFolder(item.name), onProgress, cancel, interactiveImport,
                 product: item.name, version: VersionOf(item), productId: ProductIdOf(item), placedKey: PlacedFiles.PurchaseKey(item),
+                otherOptionKeys: otherOptionKeys, confirmOverwrite: confirmOverwrite,
                 beforeImports: async summary =>
                 {
                     try
@@ -120,9 +150,11 @@ namespace OnAirDeck.UnityManager
         /// (the license step: an import may reload the domain). It must not throw.</param>
         /// <param name="placedKey">The removal record of this product (<see cref="PlacedFiles"/>): every file placed here, and every file a
         /// .unitypackage lists, is added to it before the imports start. Null: nothing is recorded.</param>
+        /// <param name="otherOptionKeys">Other options of the same product (<see cref="OptionOverwrite"/>): before anything is written, a file one of
+        /// them created that this install would change is asked about with <paramref name="confirmOverwrite"/>.</param>
         internal static async Task<DownloadSummary> PlaceFilesAsync(DownloadFile[] files, string folder, Action<string, float> onProgress, CancellationToken cancel, bool interactiveImport,
             InstallRecord record = null, string product = null, string version = null, string productId = null, Func<DownloadSummary, Task> beforeImports = null,
-            string placedKey = null)
+            string placedKey = null, ICollection<string> otherOptionKeys = null, Func<List<string>, bool> confirmOverwrite = null)
         {
             if (files.Length == 0) throw new Exception("The server returned no downloadable files for this item.");
 
@@ -147,6 +179,10 @@ namespace OnAirDeck.UnityManager
 
                 var summary = new DownloadSummary { Downloaded = cached.Count, Folder = folder };
                 var packages = new List<string>();
+                // Another option of this product created some of these files with other contents: asked now, before anything is written.
+                // No: OptionOverwriteDeclinedException, and the cache goes below. Yes: those files pass to this option once written.
+                var optionProduct = !string.IsNullOrEmpty(placedKey) && placedKey.StartsWith("purchase:", StringComparison.Ordinal) ? productId : null;
+                var claims = OptionOverwrite.Check(PackageInstallService.ProjectRoot, placedKey, optionProduct, otherOptionKeys, () => IncomingOf(cached, folder), confirmOverwrite);
                 // What this install creates (never a file or folder that is already there): what a removal may take away again.
                 var tracker = new PlacementTracker(PackageInstallService.ProjectRoot);
                 foreach (var pair in cached)
@@ -177,8 +213,14 @@ namespace OnAirDeck.UnityManager
                 if (!string.IsNullOrEmpty(placedKey) && tracker.Paths.Count + tracker.Touched.Count > 0)
                 {
                     // Written before an import can reload the domain. A failure only means this install cannot be removed by record later.
-                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker); }
+                    try { PlacedFiles.Add(PackageInstallService.ProjectRoot, placedKey, tracker, optionProduct); }
                     catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the placed files (removal will ask to remove them by hand): " + e.Message); }
+                }
+                if (!string.IsNullOrEmpty(placedKey) && claims.Count > 0)
+                {
+                    // "Overwrite": copied and extracted files pass over now; a .unitypackage asset once its import wrote it.
+                    try { PlacedFiles.Claim(PackageInstallService.ProjectRoot, placedKey, claims); }
+                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not record the files taken over from another option: " + e.Message); }
                 }
 
                 if (summary.Copied + summary.Extracted > 0) LegacyHandoffRunner.RefreshUnlessWaiting();

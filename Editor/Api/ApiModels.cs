@@ -104,6 +104,7 @@ namespace OnAirDeck.UnityManager
         public string source = "";         // "purchase" or "own" (the sellers own product); "" from an older server
         public string description = "";    // plain text, at most 4000 chars; "" when none
         public string product_url = "";    // public product page; "" when the product is not public
+        public string option_label = "";   // the options this line item bought ("PRO", "Set: Red, Blue"); "" when none or from an older server
         public PurchaseVersion[] versions = new PurchaseVersion[0]; // file history, newest first (one entry when there is no history)
 
         public bool IsOwn { get { return source == "own"; } }

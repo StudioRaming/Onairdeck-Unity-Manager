@@ -216,6 +216,8 @@ namespace OnAirDeck.UnityManager
             var star = GUILayoutUtility.GetRect(ManagerLayout.Star + 4f, ManagerLayout.Star + 4f, GUILayout.ExpandWidth(false));
             DrawStarButton(new Rect(star.x + 2f, star.y + 2f, ManagerLayout.Star, ManagerLayout.Star), entry);
             GUILayout.EndHorizontal();
+            // Which option this row is, when its product is listed more than once (CatalogEntry.Variant).
+            if (entry.Variant.Length > 0) GUILayout.Label(entry.Variant, SRStyles.Strong);
             if (entry.SellerName.Length > 0) GUILayout.Label(entry.SellerName, SRStyles.Muted);
             GUILayout.Space(SRMetrics.Space4);
             GUILayout.BeginHorizontal();

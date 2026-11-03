@@ -133,7 +133,8 @@ namespace OnAirDeck.UnityManager
             var token = _session.token;
             try
             {
-                var summary = await DownloadService.DownloadItemAsync(token, item, OnWorkProgress, _workCancel.Token, true, true);
+                var summary = await DownloadService.DownloadItemAsync(token, item, OnWorkProgress, _workCancel.Token, true, true,
+                    OtherOptionKeys(entry), paths => ConfirmOptionOverwrite(entry, paths, false));
                 if (summary.LicenseRefused) return ImportOutcome.Failed("device_limit");   // the device-limit or update-required screen explains it
                 item.downloaded = true;
                 if (summary.PackagesQueued > 0) SetMessage(ManagerText.DonePkg, MessageType.Info);
@@ -145,6 +146,11 @@ namespace OnAirDeck.UnityManager
                 MarkDirty();
                 // A .unitypackage is only queued here; its import (Unity's import window) ends later.
                 return summary.QueuedPackages.Count > 0 ? ImportOutcome.WaitForImports(summary.QueuedPackages) : ImportOutcome.Done();
+            }
+            catch (OptionOverwriteDeclinedException)
+            {
+                SetMessage(ManagerText.OwCancelled.Replace("{n}", entry.DisplayName), MessageType.Info);
+                return ImportOutcome.Failed("cancelled");
             }
             catch (OperationCanceledException)
             {
@@ -166,6 +172,20 @@ namespace OnAirDeck.UnityManager
             {
                 EndWork();
             }
+        }
+
+        /// <summary>
+        /// This option would write over files another option of its product installed (OptionOverwrite): overwrite, or cancel this option.
+        /// The first 6 paths are shown, all of them go to the Console.
+        /// </summary>
+        private static bool ConfirmOptionOverwrite(CatalogEntry entry, List<string> paths, bool batch)
+        {
+            Debug.Log(OnAirDeckConfig.LogPrefix + entry.DisplayName + " would overwrite files of another option:\n" + string.Join("\n", paths.ToArray()));
+            var shown = paths.Count > 6 ? paths.GetRange(0, 6) : paths;
+            var text = ManagerText.OwAsk.Replace("{n}", entry.DisplayName).Replace("{c}", paths.Count.ToString()) + "\n\n" + string.Join("\n", shown.ToArray());
+            if (paths.Count > shown.Count) text += "\n" + ManagerText.RmMore.Replace("{n}", (paths.Count - shown.Count).ToString());
+            if (batch) text += "\n\n" + ManagerText.OwAskBatch;
+            return EditorUtility.DisplayDialog(ManagerText.OwTitle, text, ManagerText.OwOverwrite, ManagerText.OwCancelOption);
         }
 
         private async void DoInstall(CatalogEntry entry, LicenseVersionEntry version)

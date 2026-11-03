@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace OnAirDeck.UnityManager
 {
@@ -39,6 +41,12 @@ namespace OnAirDeck.UnityManager
         public PurchaseItem Purchase;
         public LicenseEntry License;
         public string Name = "";
+        /// <summary>
+        /// Purchase: which option this row is when its product is listed more than once (one line item per bought option):
+        /// the server's option label, else the option part of its file names, plus the date when two rows still read the same.
+        /// "" for a product listed once (ManagerCatalog.LabelVariants).
+        /// </summary>
+        public string Variant = "";
         public string SellerName = "";
         public string ThumbUrl = "";
         public string Description = "";
@@ -57,6 +65,9 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> AlsoLicenseIds = new List<string>();
 
         public bool IsLicense { get { return Kind == FavoriteKind.License; } }
+
+        /// <summary>The name with its option after a middle dot ("Sample Resort &#183; PRO Night"), for the list, the hover card and the batch.</summary>
+        public string DisplayName { get { return Variant.Length > 0 ? Name + " \u00B7 " + Variant : Name; } }
 
         /// <summary>The favorites and new-purchase keys of this row: its own, and those of the licenses it stands for.</summary>
         public List<string> Keys
@@ -108,17 +119,13 @@ namespace OnAirDeck.UnityManager
         {
             var list = new List<CatalogEntry>();
             var keys = new HashSet<string>(StringComparer.Ordinal);
-            if (purchases != null)
+            // One row per line item: a product bought in several options lists each (FavoritesLogic.PurchaseRows).
+            foreach (var row in FavoritesLogic.PurchaseRows(purchases))
             {
-                foreach (var item in purchases)
-                {
-                    if (item == null || !item.ShownInUnity) continue;
-                    var id = !string.IsNullOrEmpty(item.product_id) ? item.product_id : item.item_id;
-                    var key = FavoritesLogic.EntryKey(FavoriteKind.Purchase, id);
-                    if (key == null || !keys.Add(key)) continue;
-                    list.Add(FromPurchase(key, item));
-                }
+                if (!keys.Add(row.Value)) continue;
+                list.Add(FromPurchase(row.Value, row.Key));
             }
+            LabelVariants(list);
             if (licenses != null)
             {
                 var also = new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -231,6 +238,116 @@ namespace OnAirDeck.UnityManager
             var n = 0;
             if (license.versions != null) foreach (var v in license.versions) if (v != null && v.IsPackage) n++;
             return n;
+        }
+
+        /// <summary>
+        /// Several purchase rows of one product (an option each) get a <see cref="CatalogEntry.Variant"/> so they can be told apart:
+        /// the server's option label, else the option part of the row's file names (<see cref="FileVariant"/>); rows that still read
+        /// the same get their purchase date, and rows that still read the same after that (bought the same day, file names that differed
+        /// only in letters the storage name turned into "_") get a number in list order. A product listed once gets none. The same rule
+        /// as the WARUDO Atelier Manager.
+        /// </summary>
+        internal static void LabelVariants(List<CatalogEntry> entries)
+        {
+            var byProduct = new Dictionary<string, List<CatalogEntry>>(StringComparer.Ordinal);
+            foreach (var e in entries)
+            {
+                if (e.Kind != FavoriteKind.Purchase || e.Purchase == null || string.IsNullOrEmpty(e.Purchase.product_id)) continue;
+                List<CatalogEntry> group;
+                if (!byProduct.TryGetValue(e.Purchase.product_id, out group)) byProduct[e.Purchase.product_id] = group = new List<CatalogEntry>();
+                group.Add(e);
+            }
+            foreach (var group in byProduct.Values)
+            {
+                if (group.Count < 2) continue;
+                foreach (var e in group)
+                {
+                    e.Variant = (e.Purchase.option_label ?? "").Trim();
+                    if (e.Variant.Length > 0 || e.Purchase.files == null) continue;
+                    var parts = new List<string>();
+                    foreach (var f in e.Purchase.files)
+                    {
+                        var part = f != null ? FileVariant(f.file_name, e.Name) : "";
+                        if (part.Length > 0 && !parts.Contains(part)) parts.Add(part);
+                    }
+                    e.Variant = string.Join(", ", parts.ToArray());
+                }
+                var dated = Repeated(group);
+                foreach (var e in group)
+                {
+                    if (!dated.Contains(e.Variant) || e.BoughtDate.Length == 0) continue;
+                    e.Variant = e.Variant.Length > 0 ? e.Variant + " \u00B7 " + e.BoughtDate : e.BoughtDate;
+                }
+                var numbered = Repeated(group);
+                var next = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var e in group)
+                {
+                    if (!numbered.Contains(e.Variant)) continue;
+                    int n;
+                    n = next.TryGetValue(e.Variant, out n) ? n + 1 : 1;
+                    next[e.Variant] = n;
+                    var number = n.ToString(CultureInfo.InvariantCulture);
+                    e.Variant = e.Variant.Length > 0 ? e.Variant + " \u00B7 " + number : number;
+                }
+            }
+        }
+
+        /// <summary>The labels more than one row of the group has.</summary>
+        private static HashSet<string> Repeated(List<CatalogEntry> group)
+        {
+            var count = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var e in group) { int n; count[e.Variant] = count.TryGetValue(e.Variant, out n) ? n + 1 : 1; }
+            var repeated = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var pair in count) if (pair.Value > 1) repeated.Add(pair.Key);
+            return repeated;
+        }
+
+        private static readonly Regex StoragePrefix = new Regex("^sr-[0-9a-f]{8}-", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex Extension = new Regex(@"\.[^.\\/]+$");
+        private static readonly Regex Parenthesized = new Regex("[(\\[\uFF08]([^()\\[\\]\uFF08\uFF09]+)[)\\]\uFF09]\\s*$");
+        private static readonly Regex Separators = new Regex("^[\\s\\-\u2013\u2014.\u00B7]+|[\\s\\-\u2013\u2014.\u00B7]+$");
+        private static readonly Regex Spaces = new Regex(@"\s+");
+
+        /// <summary>
+        /// The part of a file name that tells one option apart: "Lamp(URP).unitypackage" -> "URP" (the last parenthesized part),
+        /// "sr-a79261c3-SampleResort_PRO_Night_.zip" of "Sample Resort" -> "PRO Night" (no storage prefix, no product name, "_" read
+        /// as a space). A name that is only the product name gives that name, tidied.
+        /// </summary>
+        internal static string FileVariant(string fileName, string productName)
+        {
+            var stem = StoragePrefix.Replace(Extension.Replace(fileName ?? "", "").Trim(), "");
+            var m = Parenthesized.Match(stem);
+            if (m.Success) return Tidy(m.Groups[1].Value);
+            var without = Tidy(WithoutProductName(stem, productName ?? ""));
+            return without.Length > 0 ? without : Tidy(stem);
+        }
+
+        /// <summary>Storage names turn every non-ASCII letter and space into "_": read "_" as a space and trim separators at the ends.</summary>
+        private static string Tidy(string text)
+        {
+            return Separators.Replace(Spaces.Replace(text.Replace('_', ' '), " "), "");
+        }
+
+        /// <summary><paramref name="stem"/> without a leading whole-word copy of the product name (letters and digits compared, case ignored).</summary>
+        private static string WithoutProductName(string stem, string productName)
+        {
+            var key = new StringBuilder();
+            foreach (var c in productName) if (char.IsLetterOrDigit(c)) key.Append(char.ToLowerInvariant(c));
+            if (key.Length == 0) return stem;
+            var i = 0;
+            var matched = 0;
+            while (i < stem.Length && matched < key.Length)
+            {
+                var c = stem[i];
+                if (char.IsLetterOrDigit(c))
+                {
+                    if (char.ToLowerInvariant(c) != key[matched]) return stem;
+                    matched++;
+                }
+                i++;
+            }
+            // Only a whole-word match: "SampleResorts" is not "Sample Resort" plus "s".
+            return matched == key.Length && (i == stem.Length || !char.IsLetterOrDigit(stem[i])) ? stem.Substring(i) : stem;
         }
 
         private static CatalogEntry FromPurchase(string key, PurchaseItem item)
@@ -505,6 +622,7 @@ namespace OnAirDeck.UnityManager
             var text = (search ?? "").Trim();
             if (text.Length == 0) return true;
             return (e.Name ?? "").IndexOf(text, StringComparison.CurrentCultureIgnoreCase) >= 0
+                || (e.Variant ?? "").IndexOf(text, StringComparison.CurrentCultureIgnoreCase) >= 0
                 || (e.SellerName ?? "").IndexOf(text, StringComparison.CurrentCultureIgnoreCase) >= 0;
         }
 

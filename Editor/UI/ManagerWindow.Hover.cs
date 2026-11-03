@@ -85,7 +85,7 @@ namespace OnAirDeck.UnityManager
             DrawThumbnailImage(imageRect, entry);
             var name = new Rect(imageRect.x, imageRect.yMax + SRMetrics.Space6, image, SRMetrics.Line);
             var seller = new Rect(imageRect.x, name.yMax, image, 14f);
-            SRGui.Ink(name, SRGui.Fit(entry.Name, SRStyles.Strong, image), SRStyles.Strong);
+            SRGui.Ink(name, SRGui.Fit(entry.DisplayName, SRStyles.Strong, image), SRStyles.Strong);
             SRGui.Ink(seller, SRGui.Fit(entry.IsOwn ? ManagerText.OwnChip : entry.SellerName, SRStyles.Mini, image), SRStyles.Mini);
         }
     }

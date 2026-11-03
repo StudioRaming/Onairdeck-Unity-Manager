@@ -139,6 +139,14 @@ namespace OnAirDeck.UnityManager
                     RaiseChanged();
                     return true;
                 }
+                catch (OptionOverwriteDeclinedException e)
+                {
+                    // The person kept another option's files: this item wrote nothing, the rest of the run goes on.
+                    result.Status = BatchStatus.Skipped;
+                    result.Message = e.Message;
+                    RaiseChanged();
+                    return true;
+                }
                 catch (SessionExpiredException e)
                 {
                     SessionExpired = true;
