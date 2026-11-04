@@ -118,7 +118,9 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <param name="confirmed">The import confirm already asked (and warned about the refund): no second dialog.</param>
-        private async Task<ImportOutcome> DoDownloadAsync(CatalogEntry entry, bool confirmed)
+        /// <param name="interactiveImport">False when the download installs a core before its add-on: the add-on queues behind it, and the
+        /// queue cannot mix interactive and non-interactive imports (G4 retest D1).</param>
+        private async Task<ImportOutcome> DoDownloadAsync(CatalogEntry entry, bool confirmed, bool interactiveImport = true)
         {
             if (_session == null || Busy || entry.Purchase == null) return ImportOutcome.Release();
             var item = entry.Purchase;
@@ -133,7 +135,7 @@ namespace OnAirDeck.UnityManager
             var token = _session.token;
             try
             {
-                var summary = await DownloadService.DownloadItemAsync(token, item, OnWorkProgress, _workCancel.Token, true, true,
+                var summary = await DownloadService.DownloadItemAsync(token, item, OnWorkProgress, _workCancel.Token, interactiveImport, true,
                     OtherOptionKeys(entry), paths => ConfirmOptionOverwrite(entry, paths, false));
                 if (summary.LicenseRefused) return ImportOutcome.Failed("device_limit");   // the device-limit or update-required screen explains it
                 item.downloaded = true;

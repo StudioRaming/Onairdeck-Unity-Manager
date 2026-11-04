@@ -29,11 +29,28 @@ namespace OnAirDeck.UnityManager
         public readonly Dictionary<string, string> Claims = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Files of an add-on that stayed after the add-on was removed on its own (the user changed them, or it wrote over them and nobody
+    /// else owns them), with the core they need (G4-R6/R7): the core is not removed while one of them is here.
+    /// </summary>
+    internal sealed class PlacedRemnant
+    {
+        public string Core = "";
+        public readonly List<string> Paths = new List<string>();
+    }
+
     /// <summary>The whole record: per product key what it placed, and the packages the Manager installed in Packages/.</summary>
     internal sealed class PlacedRecords
     {
         public readonly Dictionary<string, PlacedEntry> Products = new Dictionary<string, PlacedEntry>(StringComparer.Ordinal);
         public readonly HashSet<string> Packages = new HashSet<string>(StringComparer.Ordinal);
+        /// <summary>Per removed add-on key, what of it stayed (<see cref="PlacedRemnant"/>).</summary>
+        public readonly Dictionary<string, PlacedRemnant> Remnants = new Dictionary<string, PlacedRemnant>(StringComparer.Ordinal);
+        /// <summary>
+        /// The remnant file exists but cannot be read (cut, empty, not a list): what it held is unknown, so a core is not removed and
+        /// the file is not overwritten (review r2 R7 of the remnant records).
+        /// </summary>
+        public bool RemnantsUnreadable;
     }
 
     /// <summary>
@@ -69,6 +86,7 @@ namespace OnAirDeck.UnityManager
         public static PlacedRecords Load(string projectRoot)
         {
             var result = new PlacedRecords();
+            LoadRemnants(projectRoot, result);
             try
             {
                 var path = PathFor(projectRoot);
@@ -109,9 +127,46 @@ namespace OnAirDeck.UnityManager
             }
             catch (Exception)
             {
-                return new PlacedRecords();
+                var empty = new PlacedRecords();
+                LoadRemnants(projectRoot, empty);
+                return empty;
             }
             return result;
+        }
+
+        /// <summary>
+        /// The remnants live in their own file, ProjectSettings/OnAirDeck/placed-remnants.json: a Manager from before them rewrites
+        /// placed-files.json with products and packages only, and would drop them there (review R2 of option A).
+        /// </summary>
+        public static string RemnantsPathFor(string projectRoot)
+        {
+            return Path.Combine(Path.Combine(Path.Combine(projectRoot, "ProjectSettings"), "OnAirDeck"), "placed-remnants.json");
+        }
+
+        private static void LoadRemnants(string projectRoot, PlacedRecords result)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(projectRoot) || !File.Exists(RemnantsPathFor(projectRoot))) return;
+                var root = MiniJson.ParseObject(File.ReadAllText(RemnantsPathFor(projectRoot), Encoding.UTF8).TrimStart('﻿'));
+                object raw;
+                if (root == null || !root.TryGetValue("remnants", out raw) || !(raw is List<object>)) { result.RemnantsUnreadable = true; return; }
+                foreach (var item in (List<object>)raw)
+                {
+                    var obj = item as Dictionary<string, object>;
+                    var key = obj != null ? (MiniJson.GetString(obj, "key") ?? "") : "";
+                    var core = obj != null ? (MiniJson.GetString(obj, "core") ?? "") : "";
+                    if (key.Length == 0 || core.Length == 0) continue;
+                    var remnant = new PlacedRemnant { Core = core };
+                    foreach (var p in Strings(obj, "paths")) if (RemovalPlanner.IsAssetFile(p)) remnant.Paths.Add(p);
+                    if (remnant.Paths.Count > 0) result.Remnants[key] = remnant;
+                }
+            }
+            catch (Exception)
+            {
+                result.Remnants.Clear();
+                result.RemnantsUnreadable = true;
+            }
         }
 
         private static IEnumerable<string> Strings(Dictionary<string, object> obj, string field)
@@ -295,7 +350,51 @@ namespace OnAirDeck.UnityManager
             return list.ConvertAll(p => (object)p);
         }
 
-        private static void Save(string projectRoot, PlacedRecords all)
+        /// <summary>
+        /// After an add-on was removed on its own: remembers its files that stayed (<see cref="RemovalPlanner.RemnantPaths"/>) with the
+        /// core they need, so the core is not removed while they are here (G4-R7). Nothing to remember: nothing is written.
+        /// </summary>
+        public static void KeepRemnant(string projectRoot, string key, string core, IEnumerable<string> paths)
+        {
+            if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key) || string.IsNullOrEmpty(core) || paths == null) return;
+            var all = Load(projectRoot);
+            if (all.RemnantsUnreadable) throw new InvalidOperationException("The remnant record cannot be read: " + RemnantsPathFor(projectRoot));
+            PlacedRemnant remnant;
+            if (!all.Remnants.TryGetValue(key, out remnant)) remnant = new PlacedRemnant { Core = core };
+            remnant.Core = core;
+            AddUnique(remnant.Paths, paths, RemovalPlanner.IsAssetFile, false);
+            if (remnant.Paths.Count == 0) return;
+            all.Remnants[key] = remnant;
+            Save(projectRoot, all);
+        }
+
+        /// <summary>
+        /// After a removal of an add-on that went through: keeps what of it stays (<paramref name="paths"/>, may be empty) with its core,
+        /// then gives up its records. The records go only once the remnant is written: a failed write throws and keeps them, so nothing
+        /// that still needs the core is forgotten (review r2 R1 of the remnant records).
+        /// </summary>
+        public static void ReleaseKeepingRemnant(string projectRoot, IList<string> keys, string core, ICollection<string> paths)
+        {
+            if (keys == null || keys.Count == 0) return;
+            if (!string.IsNullOrEmpty(core) && paths != null && paths.Count > 0) KeepRemnant(projectRoot, keys[0], core, paths);
+            foreach (var key in keys) Release(projectRoot, key);
+        }
+
+        /// <summary>Drops the remnant files that are gone, and a remnant with none left.</summary>
+        public static void PruneRemnants(string projectRoot)
+        {
+            var all = Load(projectRoot);
+            var changed = false;
+            foreach (var key in new List<string>(all.Remnants.Keys))
+            {
+                var remnant = all.Remnants[key];
+                changed |= remnant.Paths.RemoveAll(p => !File.Exists(RemovalPlanner.Absolute(projectRoot, p))) > 0;
+                if (remnant.Paths.Count == 0) { all.Remnants.Remove(key); changed = true; }
+            }
+            if (changed) Save(projectRoot, all);
+        }
+
+        public static void Save(string projectRoot, PlacedRecords all)
         {
             var keys = new List<string>(all.Products.Keys);
             keys.Sort(StringComparer.Ordinal);
@@ -328,6 +427,16 @@ namespace OnAirDeck.UnityManager
             }
             var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
             AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
+            // The remnants in their own file (an older Manager never touches it); none left: an empty list once the file exists.
+            if (!all.RemnantsUnreadable && (all.Remnants.Count > 0 || File.Exists(RemnantsPathFor(projectRoot))))
+            {
+                var remnantKeys = new List<string>(all.Remnants.Keys);
+                remnantKeys.Sort(StringComparer.Ordinal);
+                var remnants = new List<object>();
+                foreach (var key in remnantKeys)
+                    remnants.Add(new Dictionary<string, object> { { "key", key }, { "core", all.Remnants[key].Core }, { "paths", Sorted(all.Remnants[key].Paths) } });
+                AtomicFile.Write(RemnantsPathFor(projectRoot), JsonWriter.Write(new Dictionary<string, object> { { "remnants", remnants } }, "\n") + "\n");
+            }
         }
     }
 
@@ -507,6 +616,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Shared = new List<string>();
         /// <summary>Files this product created that are no longer what it wrote (changed, or replaced by the user's own): they stay.</summary>
         public readonly List<string> Changed = new List<string>();
+        /// <summary>Files this product only wrote over (they were there before its install) that are here: never removed with it.</summary>
+        public readonly List<string> Touched = new List<string>();
         /// <summary>Folders this product created that are empty once <see cref="Files"/> are gone, deepest first: they go too.</summary>
         public readonly List<string> Folders = new List<string>();
         /// <summary>Every folder this product's installs created (the run checks again, after the files went, which of them are empty).</summary>
@@ -565,8 +676,11 @@ namespace OnAirDeck.UnityManager
         /// plus <paramref name="ownFiles"/> (the product's own onairdeck.license, found by the id inside it), and the recorded folders
         /// they leave empty. A recorded onairdeck.license goes only when it is one of <paramref name="ownFiles"/>. No record at all:
         /// NoRecord, with <paramref name="manualFolder"/> to open when it exists.
+        /// <paramref name="goingFirstKeys"/>: the keys removed earlier in the same run (a core's add-ons). What only they also recorded is
+        /// not kept for them, so it goes with this row (G4 retest 3.3: VModular Plus carries the base's files, recorded under both).
         /// </summary>
-        public static RemovalPlan ForFiles(string projectRoot, ICollection<string> keys, PlacedRecords placed, IEnumerable<string> ownFiles, string manualFolder)
+        public static RemovalPlan ForFiles(string projectRoot, ICollection<string> keys, PlacedRecords placed, IEnumerable<string> ownFiles, string manualFolder,
+            ICollection<string> goingFirstKeys = null)
         {
             var plan = new RemovalPlan();
             var mine = new List<string>();
@@ -574,6 +688,7 @@ namespace OnAirDeck.UnityManager
             var guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var others = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var touchedMine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var recorded = false;
             foreach (var pair in placed.Products)
             {
@@ -581,11 +696,12 @@ namespace OnAirDeck.UnityManager
                 {
                     recorded = true;
                     mine.AddRange(pair.Value.Paths);
+                    foreach (var p in pair.Value.Touched) touchedMine.Add(p);
                     foreach (var f in pair.Value.Folders) myFolders.Add(f);
                     foreach (var g in pair.Value.Guids) guids[g.Key] = g.Value;
                     foreach (var h in pair.Value.Hashes) hashes[h.Key] = h.Value;
                 }
-                else
+                else if (goingFirstKeys == null || !goingFirstKeys.Contains(pair.Key))
                 {
                     // Another product created it, or wrote over it: it stays.
                     foreach (var p in pair.Value.Paths) others.Add(p);
@@ -621,6 +737,10 @@ namespace OnAirDeck.UnityManager
             }
             foreach (var path in own)
                 if (!others.Contains(path) && seen.Add(path) && File.Exists(Absolute(projectRoot, path))) plan.Files.Add(path);
+            // What it only wrote over stays; listed so a core's removal can see an add-on's file that stays (review r2 R4).
+            foreach (var path in touchedMine)
+                if (IsAssetFile(path) && !seen.Contains(path) && File.Exists(Absolute(projectRoot, path))) plan.Touched.Add(path);
+            plan.Touched.Sort(StringComparer.Ordinal);
             plan.Files.Sort(StringComparer.Ordinal);
             if (plan.Files.Count == 0) { plan.Refusal = RemovalRefusal.NothingHere; return plan; }
             plan.CreatedFolders.AddRange(myFolders);
@@ -693,6 +813,79 @@ namespace OnAirDeck.UnityManager
         private static bool IsLicenseFile(string path)
         {
             return path.EndsWith("/" + LicenseFile.FileName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// The files of the add-ons going first that would stay after the run and that the core's step does not take: kept as shared
+        /// (another product holds them, review R1), changed by the user (review r2 R3) or only written over (review r2 R4). A core
+        /// that goes while one stays leaves that add-on's code without its core, so the window refuses it. Another product's license
+        /// file is not a leftover.
+        /// </summary>
+        public static List<string> AddonLeftovers(IEnumerable<RemovalPlan> addonPlans, RemovalPlan corePlan)
+        {
+            var taken = new HashSet<string>(corePlan == null ? new List<string>() : corePlan.Files, StringComparer.OrdinalIgnoreCase);
+            var left = new List<string>();
+            if (addonPlans == null) return left;
+            foreach (var plan in addonPlans)
+            {
+                if (plan == null) continue;
+                var staying = new List<string>(plan.Shared);
+                staying.AddRange(plan.Changed);
+                staying.AddRange(plan.Touched);
+                foreach (var path in staying)
+                    if (!IsLicenseFile(path) && !taken.Contains(path) && !left.Contains(path)) left.Add(path);
+            }
+            left.Sort(StringComparer.Ordinal);
+            return left;
+        }
+
+        /// <summary>
+        /// The files of a row's plan that stay after it goes and that no other row owns: its own files the user changed, and files it
+        /// only wrote over that no other row created. For an add-on removed on its own these still need its core (G4-R7). A file
+        /// another row also recorded is that row's (it passes to it on release), and another product's license file is not code.
+        /// </summary>
+        public static List<string> RemnantPaths(RemovalPlan plan, PlacedRecords placed, ICollection<string> ownKeys)
+        {
+            var stays = new List<string>();
+            if (plan == null || placed == null) return stays;
+            var ownedElsewhere = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in placed.Products)
+                if (ownKeys == null || !ownKeys.Contains(pair.Key))
+                    foreach (var p in pair.Value.Paths) ownedElsewhere.Add(p);
+            var candidates = new List<string>(plan.Changed);
+            candidates.AddRange(plan.Touched);
+            foreach (var path in candidates)
+                if (!IsLicenseFile(path) && !ownedElsewhere.Contains(path) && !stays.Contains(path)) stays.Add(path);
+            stays.Sort(StringComparer.Ordinal);
+            return stays;
+        }
+
+        /// <summary>The remnant files (<see cref="PlacedRemnant"/>) that need <paramref name="core"/> and are still here.</summary>
+        public static List<string> RemnantsBlocking(string projectRoot, PlacedRecords placed, string core)
+        {
+            var here = new List<string>();
+            if (placed == null || string.IsNullOrEmpty(core)) return here;
+            foreach (var remnant in placed.Remnants.Values)
+            {
+                if (remnant.Core != core) continue;
+                foreach (var path in remnant.Paths)
+                    if (File.Exists(Absolute(projectRoot, path)) && !here.Contains(path)) here.Add(path);
+            }
+            here.Sort(StringComparer.Ordinal);
+            return here;
+        }
+
+        /// <summary>
+        /// Whether a recorded file is still the one the install wrote: its .meta keeps the package's GUID, or its contents keep the
+        /// recorded SHA-256. No proof recorded: false.
+        /// </summary>
+        public static bool IsRecordedFileHere(string projectRoot, PlacedEntry entry, string path)
+        {
+            if (entry == null || !IsAssetFile(path) || !File.Exists(Absolute(projectRoot, path))) return false;
+            string guid, hash;
+            if (entry.Guids.TryGetValue(path, out guid)) return string.Equals(MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase);
+            if (entry.Hashes.TryGetValue(path, out hash)) return string.Equals(FileSha256(projectRoot, path), hash, StringComparison.OrdinalIgnoreCase);
+            return false;
         }
 
         /// <summary>

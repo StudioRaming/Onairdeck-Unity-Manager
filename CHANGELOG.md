@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.7]
+
+- **A queued import is never lost to a script reload.** While the Manager imports one `.unitypackage` after another (a core, then its add-on), script reloads are held until the queue is done (`ImportReloadHold`), so Unity's completion callback of each import arrives. An import whose window was closed with X (Unity sends no callback then), or that gets no callback in time, is ended by checking its files on disk (`ImportWatcher`); any failure in that check still releases the hold and moves the queue on. G4 real-editor check 2026-11-04: VModular, then VModular Plus, each through its own callback, one reload after both.
+- **A file core and its add-on show as installed by their records.** A license whose product has no marker file (VModular, VModular Plus) counts as installed when its install record and its own placed files are here (`CoreAddons.InstalledByRecord`); an add-on counts only by files of its own. VModular Plus now shows 설치됨 after its install, and removing VModular asks to remove VModular Plus first ("애드온부터 함께 지울까요?"), then moves both.
+- **Removing an add-on on its own keeps what its core still needs to know.** The files that stay and that no other row owns (a file the user replaced after the install, and a file the add-on wrote over that nobody else created) are recorded with the core they need in `ProjectSettings/OnAirDeck/placed-remnants.json`; older Managers never touch that file. The add-on's record goes only once that is written. While such a file is here, removing the core is refused with "<core>를 쓰는 애드온 파일 N개가 남아 있어서 <core>를 지우지 않았어요. 파일 목록은 Console에 있어요."; an unreadable remnant file counts as unknown and keeps the core. An add-on with a record but nothing of its own here still joins its core's removal. Generic for every core and add-on.
+- Verification: headless checks for the reload hold, the watcher (callback, X-close, timeout, failure), the record-based installed state and the remnant records (written, refused, unreadable, released); real-editor check on Unity 2021.3 with test1 (G4 3.1-3.3, G33-1/2/3).
+- Known, not fixed (review scores below the bar): a remnant entry is not pruned after its file is deleted by hand, so after the add-on is installed again, removing the core is refused once instead of removing the add-on first (remove the add-on first, then the core); a purchase row keeps "받음" after its removal; empty product folders can stay after a removal.
 
 - **Sign-in opens Atelier.** The browser sign-in page and the Manager's own links (the website from the account menu and the empty list) now open https://atelier.io.kr instead of onairdeck.com (owner 2026-11-04, `OnAirDeckConfig.WebsiteUrl`). A product page link the server sends keeps its own address.
 

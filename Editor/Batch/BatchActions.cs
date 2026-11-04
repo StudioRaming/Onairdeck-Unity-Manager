@@ -24,9 +24,17 @@ namespace OnAirDeck.UnityManager
                 Version = DownloadService.VersionOf(item),
                 Run = async progress =>
                 {
-                    if (!string.IsNullOrEmpty(core) && !CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core))
+                    if (!string.IsNullOrEmpty(core) && !CoreImports.HereOrComing(PackageInstallService.ProjectRoot, core))
                         throw new AddonNeedsCoreException(core, "Needs " + CoreAddons.CoreName(core) + ", which is not installed in this project; nothing was installed.");
-                    return (object)await DownloadService.DownloadItemAsync(sessionToken, item, progress, cancel, false, true, otherOptionKeys, confirmOverwrite);
+                    var summary = await DownloadService.DownloadItemAsync(sessionToken, item, progress, cancel, false, true, otherOptionKeys, confirmOverwrite);
+                    if (summary != null)
+                    {
+                        // A purchase that carries a file core (VModular 1.0.0): a file add-on later in this run may queue behind it. Only
+                        // the core's own package counts, never the Plus package of the same row (review G4 R3).
+                        var fileCore = CoreAddons.FileCoreOfPurchase(item, OnAirDeckConfig.FileCores);
+                        CoreImports.Note(fileCore, CoreAddons.CorePackagesOf(fileCore, item, summary.QueuedPackages));
+                    }
+                    return (object)summary;
                 }
             };
         }
@@ -58,7 +66,7 @@ namespace OnAirDeck.UnityManager
                 Run = async progress =>
                 {
                     var core = CoreAddons.CoreOf("", license != null ? license.license_id : "");
-                    if (core.Length > 0 && !CoreAddons.CoreIsHere(PackageInstallService.ProjectRoot, core))
+                    if (core.Length > 0 && !CoreImports.HereOrComing(PackageInstallService.ProjectRoot, core))
                         throw new AddonNeedsCoreException(core, "Needs " + CoreAddons.CoreName(core) + ", which is not installed in this project; nothing was installed.");
                     return (object)await LicenseVersionInstall.InstallAsync(sessionToken, license, version, licenses, progress, cancel, false, true);
                 }

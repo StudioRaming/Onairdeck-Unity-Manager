@@ -1,0 +1,173 @@
+using System;
+
+namespace OnAirDeck.UnityManager
+{
+    /// <summary>
+    /// Holds script reloads while the import queue imports one package (G4 design A, 2026-11-04). A package with scripts compiles
+    /// during its import; a reload then would drop the queue's completion callbacks (retest D2). Held, the reload waits until the
+    /// import ended, and the callback runs. One hold at a time, released exactly once: when the import ends (its callback, or
+    /// <see cref="ImportWatch"/> settling it) or on a throw from the import call. No UnityEditor: the queue passes the lock calls in.
+    /// </summary>
+    internal sealed class ImportReloadHold
+    {
+        private readonly Action _lockReloads;
+        private readonly Action _unlockReloads;
+
+        public ImportReloadHold(Action lockReloads, Action unlockReloads)
+        {
+            _lockReloads = lockReloads;
+            _unlockReloads = unlockReloads;
+        }
+
+        public bool Held { get; private set; }
+
+        public void Hold()
+        {
+            if (Held) return;
+            _lockReloads();
+            Held = true;
+        }
+
+        /// <summary>False when nothing was held (a late or second callback), so it never unlocks another holder's lock.</summary>
+        public bool Release()
+        {
+            if (!Held) return false;
+            Held = false;
+            _unlockReloads();
+            return true;
+        }
+
+        /// <summary>Holds, then runs the import call. A throw releases at once and is handed back (null when the call returned).</summary>
+        public Exception Run(Action import)
+        {
+            Hold();
+            try
+            {
+                import();
+                return null;
+            }
+            catch (Exception e)
+            {
+                Release();
+                return e;
+            }
+        }
+    }
+
+    internal enum ImportWatchStep
+    {
+        Wait,
+        Settle
+    }
+
+    /// <summary>
+    /// When the queue stops waiting for an import's callback and settles it from disk (design A review r1). Unity 2021.3 raises no
+    /// callback when its import window is closed with X (PackageImport has no close hook), and none when the window never opens, so a
+    /// held import must end without one (R1); but never while the window is open, where the person's Import or Cancel is still to
+    /// come and a reload would drop it (R2).
+    /// </summary>
+    internal static class ImportWatch
+    {
+        /// <summary>How long an interactive import's window must be gone (and Unity idle) before it settles.</summary>
+        public const double ClosedGraceSeconds = 5;
+
+        /// <summary>
+        /// How long an import may go without its callback when there is no closed window to go by: a non-interactive import (its
+        /// callback normally comes within the import call) or a window never shown (Unity may still be unpacking a large package, or
+        /// refused the package with its own dialog).
+        /// </summary>
+        public const double NoCallbackSeconds = 600;
+
+        /// <param name="interactive">The import shows Unity's import window.</param>
+        /// <param name="windowOpen">An import window is open now.</param>
+        /// <param name="windowSeen">An import window was seen open since the import started.</param>
+        /// <param name="editorBusy">Unity is compiling or updating assets: a callback may still come.</param>
+        /// <param name="sinceStart">Seconds since the import started (or was picked up again after a reload).</param>
+        /// <param name="sinceWindow">Seconds since an import window was last seen open.</param>
+        public static ImportWatchStep Next(bool interactive, bool windowOpen, bool windowSeen, bool editorBusy, double sinceStart, double sinceWindow)
+        {
+            if (windowOpen) return ImportWatchStep.Wait;
+            var closedWindow = interactive && windowSeen;
+            // Busy waits only up to the long limit (review r2 R5): with reloads held, Unity can report "compiling" until the reload
+            // that waits for this very hold, so busy alone must not hold it forever.
+            if (editorBusy) return (closedWindow ? sinceWindow : sinceStart) >= NoCallbackSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+            if (closedWindow) return sinceWindow >= ClosedGraceSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+            return sinceStart >= NoCallbackSeconds ? ImportWatchStep.Settle : ImportWatchStep.Wait;
+        }
+
+        /// <summary>
+        /// Whether Unity's import window is open. A Unity where its type is not found (<paramref name="typeKnown"/> false) answers
+        /// "not open" (vdesk-1f review C): the import then ends by the long limit, so the hold always has an end.
+        /// </summary>
+        public static bool WindowOpen(bool typeKnown, int openWindows)
+        {
+            return typeKnown && openWindows > 0;
+        }
+
+        /// <summary>
+        /// Runs the settle; when it throws (vdesk-1f review B: the watch has already stopped, so nothing would end the import),
+        /// ends the import as failed and then abandons it: <paramref name="abandon"/> must release the hold and drop a head that is
+        /// still started, whatever state the throw left. Every error goes to <paramref name="log"/>.
+        /// </summary>
+        public static void SettleOrAbandon(Action settle, Action finishFailed, Action abandon, Action<Exception> log)
+        {
+            try
+            {
+                settle();
+                return;
+            }
+            catch (Exception e)
+            {
+                log(e);
+            }
+            try
+            {
+                finishFailed();
+            }
+            catch (Exception e)
+            {
+                log(e);
+            }
+            abandon();
+        }
+    }
+
+    /// <summary>
+    /// The watch of one started import (review r2 R3): its clock, whether its window was seen and when last. The queue starts it
+    /// with the import, stops it in Finish, and settles the import when <see cref="Tick"/> says so (once).
+    /// </summary>
+    internal sealed class ImportWatcher
+    {
+        private double _startedAt;
+        private double _windowSeenAt;
+        private bool _windowSeen;
+
+        public bool Active { get; private set; }
+
+        public void Start(double now)
+        {
+            Active = true;
+            _startedAt = _windowSeenAt = now;
+            _windowSeen = false;
+        }
+
+        public void Stop()
+        {
+            Active = false;
+        }
+
+        /// <summary>True once, when the import should settle from disk; the watch then stops.</summary>
+        public bool Tick(double now, bool interactive, bool windowOpen, bool editorBusy)
+        {
+            if (!Active) return false;
+            if (windowOpen)
+            {
+                _windowSeen = true;
+                _windowSeenAt = now;
+            }
+            if (ImportWatch.Next(interactive, windowOpen, _windowSeen, editorBusy, now - _startedAt, now - _windowSeenAt) != ImportWatchStep.Settle) return false;
+            Active = false;
+            return true;
+        }
+    }
+}

@@ -25,6 +25,24 @@ namespace OnAirDeck.UnityManager
     }
 
     /// <summary>
+    /// A core sold as a .unitypackage instead of a package (<see cref="OnAirDeckConfig.FileCores"/>, VModular 1.0.0): it never has a
+    /// Packages/ folder, so a file it imports tells that it is here, and the license rows that ship it install it before an add-on.
+    /// </summary>
+    internal sealed class FileCore
+    {
+        /// <summary>Licenses whose file versions are the core (an add-on's "install the core first" installs one of them).</summary>
+        public string[] LicenseIds = new string[0];
+        /// <summary>Project-relative files the core's import writes: any of them present means the core is here.</summary>
+        public string[] Markers = new string[0];
+        /// <summary>Project-relative folders the core's import writes into: removing any file in them takes the core apart.</summary>
+        public string[] Folders = new string[0];
+        /// <summary>The product whose purchase rows can carry the core's file (a purchase of the base product).</summary>
+        public string PurchaseProductId = "";
+        /// <summary>The asset file ids of the core in that product (plugin-purchases files[].file_id).</summary>
+        public string[] PurchaseFileIds = new string[0];
+    }
+
+    /// <summary>
     /// Owner rule 2026-11-01: MingToon add-ons (URP add-on, Ming Light Controller) work only with MingToon Core, so they install only when the
     /// core is installed or goes first in the same run, the list shows them under the core, and a run orders the core first. Sources, in
     /// order: a package named "&lt;core&gt;.&lt;suffix&gt;" (the URP add-on also pins its core in vpmDependencies, which the install follows), then
@@ -74,6 +92,185 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(packageName) && OnAirDeckConfig.CorePackages.ContainsKey(packageName);
         }
 
+        /// <summary>
+        /// The licenses whose install state may come from the Manager's own records (<see cref="InstalledByRecord"/>): the licenses of
+        /// the file cores and the add-on licenses of the config, whatever product they are.
+        /// </summary>
+        public static List<string> RecordScopeLicenseIds()
+        {
+            var ids = new List<string>();
+            foreach (var core in OnAirDeckConfig.FileCores.Values)
+                if (core != null && core.LicenseIds != null)
+                    foreach (var id in core.LicenseIds) if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+            foreach (var id in OnAirDeckConfig.CoreAddonLicenses.Keys) if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+            return ids;
+        }
+
+        /// <summary>
+        /// The licenses of <paramref name="scope"/> that are installed by the Manager's own records (G4 retest 3.2): an install record
+        /// exists and a file the install placed under that license is still here as written (its GUID or contents). For a file license
+        /// whose product ships no atelier.product.json marker (VModular Plus): without this its row said "to get" and its core's removal
+        /// never asked it to go first. A record alone, or files alone (another row may have placed them), is not enough. An add-on
+        /// (<paramref name="addonIds"/>) counts only by a file no other row recorded: the core's files it also carries prove the core,
+        /// not the add-on (review R2).
+        /// </summary>
+        public static List<string> InstalledByRecord(IEnumerable<string> scope, ICollection<string> addonIds, IDictionary<string, InstallRecord> records,
+            PlacedRecords placed, string projectRoot)
+        {
+            var ids = new List<string>();
+            if (scope == null || records == null || placed == null || string.IsNullOrEmpty(projectRoot)) return ids;
+            foreach (var id in scope)
+            {
+                PlacedEntry entry;
+                var key = PlacedFiles.LicenseKey(id);
+                if (string.IsNullOrEmpty(id) || !records.ContainsKey(id) || !placed.Products.TryGetValue(key, out entry)) continue;
+                var addon = addonIds != null && addonIds.Contains(id);
+                foreach (var path in entry.Paths)
+                {
+                    if (addon && RecordedElsewhere(placed, key, path)) continue;
+                    if (RemovalPlanner.IsRecordedFileHere(projectRoot, entry, path)) { ids.Add(id); break; }
+                }
+            }
+            return ids;
+        }
+
+        private static bool RecordedElsewhere(PlacedRecords placed, string key, string path)
+        {
+            foreach (var pair in placed.Products)
+            {
+                if (pair.Key == key) continue;
+                foreach (var other in pair.Value.Paths)
+                    if (string.Equals(other, path, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The file core (<see cref="OnAirDeckConfig.FileCores"/>) a license ships, or "".</summary>
+        public static string FileCoreOfLicense(string licenseId)
+        {
+            return FileCoreOfLicense(licenseId, OnAirDeckConfig.FileCores);
+        }
+
+        public static string FileCoreOfLicense(string licenseId, IDictionary<string, FileCore> fileCores)
+        {
+            if (string.IsNullOrEmpty(licenseId) || fileCores == null) return "";
+            foreach (var pair in fileCores)
+                if (pair.Value != null && pair.Value.LicenseIds != null && Array.IndexOf(pair.Value.LicenseIds, licenseId) >= 0) return pair.Key;
+            return "";
+        }
+
+        /// <summary>The file core a purchase row carries (it lists one of the core's files in the core's product), or "".</summary>
+        public static string FileCoreOfPurchase(PurchaseItem item, IDictionary<string, FileCore> fileCores)
+        {
+            if (item == null || item.files == null || string.IsNullOrEmpty(item.product_id) || fileCores == null) return "";
+            foreach (var pair in fileCores)
+            {
+                var core = pair.Value;
+                if (core == null || core.PurchaseFileIds == null || core.PurchaseProductId != item.product_id) continue;
+                foreach (var file in item.files)
+                    if (file != null && !string.IsNullOrEmpty(file.file_id) && Array.IndexOf(core.PurchaseFileIds, file.file_id) >= 0) return pair.Key;
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// The core this row installs, or "": a core package, a license of a file core, or a purchase row that carries a file core's file
+        /// (and is no add-on itself).
+        /// </summary>
+        public static string CoreProvidedBy(CatalogEntry entry)
+        {
+            if (entry == null) return "";
+            if (entry.IsLicense)
+            {
+                if (IsCore(entry.PackageName)) return entry.PackageName;
+                return FileCoreOfLicense(entry.LicenseId);
+            }
+            return CoreOfPurchase(entry.Purchase).Length > 0 ? "" : FileCoreOfPurchase(entry.Purchase, OnAirDeckConfig.FileCores);
+        }
+
+        /// <summary>
+        /// True when an import of mode <paramref name="interactive"/> may join the import queue: it is empty, or what waits there runs in
+        /// the same mode (the queue cannot mix them). Core-first refuses with the "busy" text otherwise (review R3).
+        /// </summary>
+        public static bool CanJoinImportQueue(int queued, bool queuedInteractive, bool interactive)
+        {
+            return queued <= 0 || queuedInteractive == interactive;
+        }
+
+        /// <summary>
+        /// The row that installs <paramref name="core"/> before an add-on, or null: the core package's license row
+        /// (<paramref name="offersPackage"/>), then a license row that ships a file core (<paramref name="offersFile"/>), then a purchase
+        /// row that carries the core with files to download. The last one is how most buyers hold VModular: the base license comes with
+        /// no version when the purchase already offers its file, so the list has no license row for it (G4 retest D1, 2026-11-04).
+        /// </summary>
+        public static CatalogEntry CoreEntryOf(IEnumerable<CatalogEntry> entries, string core, Func<CatalogEntry, bool> offersPackage, Func<CatalogEntry, bool> offersFile)
+        {
+            if (entries == null || string.IsNullOrEmpty(core)) return null;
+            CatalogEntry fileLicense = null, purchase = null;
+            foreach (var entry in entries)
+            {
+                if (entry == null) continue;
+                if (entry.IsLicense)
+                {
+                    if (entry.PackageName == core && offersPackage != null && offersPackage(entry)) return entry;
+                    if (fileLicense == null && entry.License != null && FileCoreOfLicense(entry.LicenseId) == core && offersFile != null && offersFile(entry)) fileLicense = entry;
+                }
+                else if (purchase == null && entry.Purchase != null && entry.Purchase.files != null && entry.Purchase.files.Length > 0 && CoreProvidedBy(entry) == core)
+                {
+                    purchase = entry;
+                }
+            }
+            return fileLicense ?? purchase;
+        }
+
+        /// <summary>
+        /// True when one of <paramref name="paths"/> (project-relative) is a file of the file core: its marker or any file in its folders.
+        /// A removal that moves even one of them leaves the core broken (review G4 R2: a kept marker does not mean a whole core).
+        /// </summary>
+        public static bool CoreFilesAmong(string core, ICollection<string> paths)
+        {
+            FileCore fileCore;
+            if (string.IsNullOrEmpty(core) || paths == null || !OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) || fileCore == null) return false;
+            foreach (var raw in paths)
+            {
+                var path = (raw ?? "").Replace('\\', '/');
+                foreach (var marker in fileCore.Markers ?? new string[0])
+                    if (string.Equals(path, marker, StringComparison.OrdinalIgnoreCase)) return true;
+                foreach (var folder in fileCore.Folders ?? new string[0])
+                    if (!string.IsNullOrEmpty(folder) && path.StartsWith(folder.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The import queue's decision for the add-on package at its head: blocked when its core is not here. A core import queued
+        /// ahead of it has run by then (the queue imports in order), and one queued behind it cannot help: the add-on would import
+        /// first and not compile (review G4 r3 R5).
+        /// </summary>
+        public static bool AddonImportBlocked(string core, bool coreHere)
+        {
+            return !string.IsNullOrEmpty(core) && !coreHere;
+        }
+
+        /// <summary>
+        /// Of the packages a purchase row queued, the ones that are the file core's own files (by the row's file names of the core's
+        /// file ids), never another file of the same row (the Plus package next to the base one).
+        /// </summary>
+        public static List<string> CorePackagesOf(string core, PurchaseItem item, IList<string> queuedPaths)
+        {
+            var result = new List<string>();
+            FileCore fileCore;
+            if (string.IsNullOrEmpty(core) || item == null || item.files == null || queuedPaths == null
+                || !OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) || fileCore == null || fileCore.PurchaseFileIds == null) return result;
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in item.files)
+                if (file != null && !string.IsNullOrEmpty(file.file_name) && Array.IndexOf(fileCore.PurchaseFileIds, file.file_id) >= 0)
+                    names.Add(PathSafety.SafeFileName(file.file_name));
+            foreach (var path in queuedPaths)
+                if (!string.IsNullOrEmpty(path) && names.Contains(Path.GetFileName(path))) result.Add(path);
+            return result;
+        }
+
         /// <summary>The display name of a core package ("MingToon Core").</summary>
         public static string CoreName(string core)
         {
@@ -81,11 +278,18 @@ namespace OnAirDeck.UnityManager
             return core != null && OnAirDeckConfig.CorePackages.TryGetValue(core, out name) ? name : core ?? "";
         }
 
-        /// <summary>The core is in Packages/, or its old Assets folder is there (an old install the add-on also works with).</summary>
+        /// <summary>
+        /// The core is in Packages/, its old Assets folder is there (an old install the add-on also works with), or a file core's marker
+        /// file is (VModular 1.0.0 imports into Assets/; a later package form in Packages/ counts through the first check).
+        /// </summary>
         public static bool CoreIsHere(string projectRoot, string core)
         {
             if (string.IsNullOrEmpty(core)) return true;
             if (!string.IsNullOrEmpty(InstalledPackages.InstalledVersion(projectRoot, core))) return true;
+            FileCore fileCore;
+            if (OnAirDeckConfig.FileCores.TryGetValue(core, out fileCore) && fileCore != null)
+                foreach (var marker in fileCore.Markers ?? new string[0])
+                    if (!string.IsNullOrEmpty(marker) && File.Exists(Path.Combine(projectRoot, marker.Replace('/', Path.DirectorySeparatorChar)))) return true;
             string legacy;
             return OnAirDeckConfig.LegacyAssetFolders.TryGetValue(core, out legacy) && Directory.Exists(Path.Combine(projectRoot, legacy.Replace('/', Path.DirectorySeparatorChar)));
         }
@@ -116,7 +320,7 @@ namespace OnAirDeck.UnityManager
             foreach (var item in items)
             {
                 var package = packageOf(item) ?? "";
-                if (IsCore(package)) cores.Add(item);
+                if (IsCore(package) || FileCoreOfLicense(licenseOf(item)).Length > 0) cores.Add(item);
                 else if (CoreOf(package, licenseOf(item)).Length > 0 || (purchaseCoreOf != null && (purchaseCoreOf(item) ?? "").Length > 0)) addons.Add(item);
                 else middle.Add(item);
             }
@@ -149,7 +353,11 @@ namespace OnAirDeck.UnityManager
         {
             var corePackages = new HashSet<string>(StringComparer.Ordinal);
             foreach (var row in rows)
-                if (row.Entry != null && IsCore(row.Entry.PackageName)) corePackages.Add(row.Entry.PackageName);
+            {
+                // License rows and purchase rows that carry a core (a VModular base bought as a purchase) both hold their add-ons.
+                var provided = CoreProvidedBy(row.Entry);
+                if (provided.Length > 0) corePackages.Add(provided);
+            }
             var children = new Dictionary<string, List<ListLine>>(StringComparer.Ordinal);
             var kept = new List<ListLine>();
             foreach (var row in rows)
@@ -170,10 +378,10 @@ namespace OnAirDeck.UnityManager
             foreach (var row in kept)
             {
                 result.Add(row);
-                var package = row.Entry != null ? row.Entry.PackageName : "";
+                var package = CoreProvidedBy(row.Entry);
                 List<ListLine> list;
                 // Two rows of the same core (a free and a paid license that did not merge): the add-ons go under the first.
-                if (IsCore(package) && placed.Add(package) && children.TryGetValue(package, out list)) result.AddRange(list);
+                if (package.Length > 0 && placed.Add(package) && children.TryGetValue(package, out list)) result.AddRange(list);
             }
             return result;
         }

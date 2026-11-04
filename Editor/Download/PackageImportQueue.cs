@@ -21,6 +21,11 @@ namespace OnAirDeck.UnityManager
         private const string RecordsKey = "OnAirDeck.UnityManager.PendingImportRecords";
         // "path<TAB>result" lines of the last finished imports (newest last), for a caller that waits on one (the one-button import).
         private const string ResultsKey = "OnAirDeck.UnityManager.ImportResults";
+        // The package path whose ImportPackage call has started; erased when it ends (Finish). Still set after a domain reload means
+        // the reload cut the import off before its completion callback (G4 retest D2).
+        private const string StartedKey = "OnAirDeck.UnityManager.ImportStarted";
+        // Set while the queue holds script reloads (design A); still set in a new domain means a reload ran despite the hold.
+        private const string HeldKey = "OnAirDeck.UnityManager.ImportHoldsReloads";
         private const int MaxResults = 50;
         public const string ResultPending = "pending";
         public const string ResultImported = "imported";
@@ -39,9 +44,142 @@ namespace OnAirDeck.UnityManager
         // The package's files that existed before its import, with their write times (see ReimportUnchanged).
         private static Dictionary<string, DateTime> _overwritten;
 
+        // Script reloads wait while a package imports (G4 design A, 2026-11-04): the reload a package's scripts cause would otherwise
+        // drop the completion callbacks below (retest D2). Released in Finish (a callback, or WatchImport settling the import) or on a
+        // throw from ImportPackage.
+        private static readonly ImportReloadHold Hold = new ImportReloadHold(
+            () => { SessionState.SetBool(HeldKey, true); EditorApplication.LockReloadAssemblies(); },
+            () => { EditorApplication.UnlockReloadAssemblies(); SessionState.EraseBool(HeldKey); });
+
+        // Unity's import window (internal in 2021.3, UnityEditor.PackageImport). Null in a Unity that renamed it: the watch then treats
+        // the window as open, so an interactive import waits for its callback as it did before the watch.
+        private static readonly Type ImportWindowType = typeof(EditorWindow).Assembly.GetType("UnityEditor.PackageImport");
+        private static readonly ImportWatcher Watcher = new ImportWatcher();
+        private static double _lastWatch;
+
         static PackageImportQueue()
         {
+            if (SessionState.GetBool(HeldKey, false))
+            {
+                // The old domain ended without its before-reload release (a crash of the domain): Unity's lock count is unknown, so it
+                // is not touched. The started head, if any, settles from disk in ProcessNext.
+                SessionState.EraseBool(HeldKey);
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A script reload ran during a package import; the import is checked against the project's files.");
+            }
+            // A reload that runs anyway (Unity forced it past the hold) releases the hold in the old domain first, so Unity's lock
+            // count is balanced whatever it does with it across the reload (vdesk-1f review A). The new domain then settles the head.
+            AssemblyReloadEvents.beforeAssemblyReload += ReleaseBeforeReload;
+            EditorApplication.update += WatchImport;
             EditorApplication.delayCall += ProcessNext;
+            if (ImportWindowType == null)
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Unity's import window type was not found; a package import that gets no answer ends after "
+                    + (int)(ImportWatch.NoCallbackSeconds / 60) + " minutes.");
+        }
+
+        private static void ReleaseBeforeReload()
+        {
+            if (Hold.Release())
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "A script reload ran while a package was importing; the import is checked against the project's files.");
+        }
+
+        private static bool ImportWindowOpen()
+        {
+            return ImportWatch.WindowOpen(ImportWindowType != null, ImportWindowType == null ? 0 : Resources.FindObjectsOfTypeAll(ImportWindowType).Length);
+        }
+
+        private static void StartWatch()
+        {
+            Watcher.Start(EditorApplication.timeSinceStartup);
+        }
+
+        /// <summary>
+        /// Ends a started import whose callback will not come (design A review r1): its window was closed with X or never opened, or a
+        /// non-interactive import gave no callback in time. Settled from disk, which releases the reload hold and goes on with the queue.
+        /// An open window always waits. Checked once a second.
+        /// </summary>
+        private static void WatchImport()
+        {
+            if (!_importing || !Watcher.Active) return;
+            var now = EditorApplication.timeSinceStartup;
+            if (now - _lastWatch < 1) return;
+            _lastWatch = now;
+            var list = Load();
+            if (list.Count == 0 || SessionState.GetString(StartedKey, "") != list[0]) return;
+            var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
+            var busy = EditorApplication.isCompiling || EditorApplication.isUpdating;
+            if (Watcher.Tick(now, interactive, interactive && ImportWindowOpen(), busy))
+                SettleOrAbandon(list[0], interactive ? "its import window closed without an answer" : "no completion callback came");
+        }
+
+        /// <summary>
+        /// <see cref="SettleFromDisk"/>, and when it throws, the head still ends (vdesk-1f review B): failed through Finish, and in any
+        /// case the hold is released, a head still started is dropped, and the queue goes on.
+        /// </summary>
+        private static void SettleOrAbandon(string head, string why)
+        {
+            ImportWatch.SettleOrAbandon(
+                () => SettleFromDisk(head, why),
+                () =>
+                {
+                    if (SessionState.GetString(StartedKey, "") == head)
+                        Finish("Import of " + Path.GetFileName(head) + " did not finish (" + why + "); it could not be checked", true, ResultFailed);
+                },
+                () => AbandonHead(head),
+                e => Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Ending the import of " + Path.GetFileName(head) + " failed: " + e.Message));
+        }
+
+        /// <summary>The last resort after a failed settle: only SessionState and the hold, nothing that reads the disk.</summary>
+        private static void AbandonHead(string head)
+        {
+            AssetDatabase.importPackageCompleted -= OnCompleted;
+            AssetDatabase.importPackageCancelled -= OnCancelled;
+            AssetDatabase.importPackageFailed -= OnFailed;
+            Watcher.Stop();
+            _overwritten = null;
+            try
+            {
+                if (SessionState.GetString(StartedKey, "") == head)
+                {
+                    var list = Load();
+                    if (list.Count > 0 && list[0] == head)
+                    {
+                        list.RemoveAt(0);
+                        Save(list);
+                    }
+                    RememberResult(head, ResultFailed);
+                    SessionState.EraseString(StartedKey);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The import queue could not drop " + Path.GetFileName(head) + ": " + e.Message);
+            }
+            _importing = false;
+            Hold.Release();
+            EditorApplication.delayCall += ProcessNext;
+        }
+
+        /// <summary>
+        /// Ends the started head from what is on disk: imported when every file of the package is there with its GUID and content, else
+        /// failed (a partial, cancelled or closed import), so the person can retry. Content counts (review R2): an update keeps paths and
+        /// GUIDs, so the previous version's files alone are not this import.
+        /// </summary>
+        private static void SettleFromDisk(string head, string why)
+        {
+            Dictionary<string, string> hashes = null;
+            try { hashes = UnityPackageArchive.AssetSha256(head); }
+            catch (Exception) { hashes = null; }
+            var interactive = SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode;
+            var imported = UnityPackageArchive.SettleAfterReload(UnityPackageArchive.ImportedOnDisk(PackageInstallService.ProjectRoot, AssetsOf(head), hashes), interactive) == ImportSettle.Imported;
+            string[] started;
+            if (LoadContexts().TryGetValue(head, out started))
+            {
+                if (imported) InstallErrorWatch.ImportFinished(head, started[0], started[1]);
+                else InstallErrorWatch.End(head, started[0], started[1]);
+            }
+            Finish(imported ? "Imported " + Path.GetFileName(head) + " (checked on disk: " + why + ")"
+                            : "Import of " + Path.GetFileName(head) + " did not finish (" + why + "): not every file of the package is in the project",
+                !imported, imported ? ResultImported : ResultFailed);
         }
 
         /// <summary>Queues the packages; <paramref name="record"/>, when given, is saved after all of them imported (none if one fails).</summary>
@@ -119,6 +257,12 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>The mode of the imports waiting in the queue (meaningful while <see cref="PendingCount"/> is above 0).</summary>
+        public static bool QueuedInteractive
+        {
+            get { return SessionState.GetBool(InteractiveKey, true); }
+        }
+
         public static int PendingCount
         {
             get { return Load().Count; }
@@ -154,16 +298,44 @@ namespace OnAirDeck.UnityManager
         {
             if (_importing) return;
             var list = Load();
-            while (list.Count > 0 && !File.Exists(list[0]))
+            var contexts = LoadContexts();
+            // The local list decides (review G4 R5): a core dropped just above in this loop is no longer "coming" for the add-on after it.
+            while (list.Count > 0 && (!File.Exists(list[0]) || CoreImports.AddonWithoutCore(list[0], contexts, list)))
             {
+                // An add-on whose file core is not here and has no import left ahead of it (VModular Plus after a failed or missing
+                // VModular import): importing it would only leave scripts that do not compile, so it fails too (review G4 R1).
+                var blocked = File.Exists(list[0]);
+                if (blocked) Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Not importing " + Path.GetFileName(list[0]) + ": the product it needs did not import.");
                 FinishRecord(list[0], false);
-                RememberResult(list[0], ResultMissing);
+                RememberResult(list[0], blocked ? ResultFailed : ResultMissing);
                 list.RemoveAt(0);
             }
             Save(list);
             if (list.Count == 0) return;
 
+            // The head was already started by an earlier domain: the queue holds reloads during an import, so only a forced reload gets
+            // here (G4 retest D2, 2026-11-04, before the hold). Its callbacks are gone and importing it again would never empty the queue.
+            // Unity's import window keeps its state across a reload (review r1 R2): while it is open, the callbacks come back and the
+            // person's answer there decides (the watch settles it once the window is gone); with no window, it settles from disk now.
+            if (SessionState.GetString(StartedKey, "") == list[0])
+            {
+                _importing = true;
+                if (SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode && ImportWindowOpen())
+                {
+                    AssetDatabase.importPackageCompleted += OnCompleted;
+                    AssetDatabase.importPackageCancelled += OnCancelled;
+                    AssetDatabase.importPackageFailed += OnFailed;
+                    Hold.Hold();
+                    StartWatch();
+                    return;
+                }
+                SettleOrAbandon(list[0], "a script reload cut it off");
+                return;
+            }
+
             _importing = true;
+            SessionState.SetString(StartedKey, list[0]);
+            StartWatch();
             var assets = AssetsOf(list[0]);
             _overwritten = ExistingFiles(assets);
             string[] context;
@@ -178,7 +350,10 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCompleted += OnCompleted;
             AssetDatabase.importPackageCancelled += OnCancelled;
             AssetDatabase.importPackageFailed += OnFailed;
-            AssetDatabase.ImportPackage(list[0], SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode);
+            var path = list[0];
+            var thrown = Hold.Run(() => AssetDatabase.ImportPackage(path, SessionState.GetBool(InteractiveKey, true) && !Application.isBatchMode));
+            // A throw before any callback ended it: fail the head so the queue goes on (a callback that already ran erased StartedKey).
+            if (thrown != null && SessionState.GetString(StartedKey, "") == path) OnFailed(Path.GetFileName(path), thrown.Message);
         }
 
         private static void OnCompleted(string packageName)
@@ -260,6 +435,8 @@ namespace OnAirDeck.UnityManager
             AssetDatabase.importPackageCancelled -= OnCancelled;
             AssetDatabase.importPackageFailed -= OnFailed;
             _overwritten = null;
+            Watcher.Stop();
+            SessionState.EraseString(StartedKey);
 
             var list = Load();
             if (list.Count > 0)
@@ -280,6 +457,8 @@ namespace OnAirDeck.UnityManager
             if (warn) Debug.LogWarning(OnAirDeckConfig.LogPrefix + message);
             else Debug.Log(OnAirDeckConfig.LogPrefix + message);
 
+            // Last: the queue's state is saved, so the reload the import's scripts asked for may run now (it runs on a later tick).
+            Hold.Release();
             EditorApplication.delayCall += ProcessNext;
         }
 

@@ -7,6 +7,13 @@ using System.Text;
 
 namespace OnAirDeck.UnityManager
 {
+    /// <summary>How the import queue settles a head a script reload cut off (<see cref="UnityPackageArchive.SettleAfterReload"/>).</summary>
+    internal enum ImportSettle
+    {
+        Imported,
+        Failed
+    }
+
     /// <summary>One asset of a .unitypackage: its project path (forward slashes), whether it is a folder, and its GUID (the archive folder name, which the import writes into the .meta).</summary>
     internal sealed class PackageAsset
     {
@@ -157,6 +164,80 @@ namespace OnAirDeck.UnityManager
         public static string PathNameOf(byte[] content)
         {
             return Encoding.UTF8.GetString(content).Split('\n')[0].Trim().Replace('\\', '/');
+        }
+
+        /// <summary>
+        /// True when every file asset of the package is in the project with a .meta that carries the package's GUID for it (folders are
+        /// not checked). Used after a script reload cut an import off before its completion callback (G4 retest D2): anything less,
+        /// an unreadable package or an empty list, is not proof of an import.
+        /// </summary>
+        public static bool ImportedOnDisk(string projectRoot, IList<PackageAsset> assets)
+        {
+            return ImportedOnDisk(projectRoot, assets, null);
+        }
+
+        /// <param name="sha256ByGuid">The package's content hashes (<see cref="AssetSha256"/>): when given, each file must also hold that
+        /// content, so the previous version's files at the same paths with the same GUIDs are not taken for the update (review R2).</param>
+        public static bool ImportedOnDisk(string projectRoot, IList<PackageAsset> assets, IDictionary<string, string> sha256ByGuid)
+        {
+            if (assets == null) return false;
+            var files = 0;
+            foreach (var asset in assets)
+            {
+                if (asset == null || asset.IsFolder) continue;
+                var path = PathSafety.SafeRelativePath(asset.Path);
+                if (path == null || string.IsNullOrEmpty(asset.Guid)) return false;
+                var full = Path.Combine(projectRoot, path);
+                if (!File.Exists(full) || !File.Exists(full + ".meta")) return false;
+                if (!string.Equals(MetaGuid(full + ".meta"), asset.Guid, StringComparison.OrdinalIgnoreCase)) return false;
+                string expected;
+                if (sha256ByGuid != null && sha256ByGuid.TryGetValue(asset.Guid, out expected) && !string.Equals(FileSha256(full), expected, StringComparison.OrdinalIgnoreCase))
+                    return false;
+                files++;
+            }
+            return files > 0;
+        }
+
+        /// <summary>
+        /// What the import queue does with a head a script reload cut off: imported when the package is on disk, else failed, so the
+        /// person can retry. Only a safety net since the queue holds reloads during an import (<see cref="ImportReloadHold"/>): the
+        /// editor restarted or Unity forced a reload. It never waits for an import window (review r2 R6: a window that is gone would
+        /// stop every later import of the session); <paramref name="interactive"/> no longer changes the answer.
+        /// </summary>
+        public static ImportSettle SettleAfterReload(bool onDisk, bool interactive)
+        {
+            return onDisk ? ImportSettle.Imported : ImportSettle.Failed;
+        }
+
+        private static string FileSha256(string path)
+        {
+            try
+            {
+                using (var sha = SHA256.Create())
+                using (var stream = File.OpenRead(path))
+                    return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+        }
+
+        /// <summary>The "guid:" value of a .meta file, or "".</summary>
+        private static string MetaGuid(string metaPath)
+        {
+            try
+            {
+                foreach (var line in File.ReadAllLines(metaPath))
+                {
+                    var t = line.Trim();
+                    if (t.StartsWith("guid:", StringComparison.Ordinal)) return t.Substring(5).Trim();
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return "";
         }
 
         /// <summary>

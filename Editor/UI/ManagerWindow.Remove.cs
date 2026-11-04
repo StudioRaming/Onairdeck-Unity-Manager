@@ -22,6 +22,9 @@ namespace OnAirDeck.UnityManager
             public RemovalPlan Plan;
             public List<string> Keys = new List<string>();
             public List<string> LicenseIds = new List<string>();
+            /// <summary>An add-on removed on its own: the core its files that stay need, and those files (G4-R7).</summary>
+            public string RemnantCore = "";
+            public List<string> RemnantPaths = new List<string>();
         }
 
         /// <summary>The detail pane offers removal for what this project has: an installed license, or a downloaded purchase.</summary>
@@ -41,11 +44,22 @@ namespace OnAirDeck.UnityManager
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
             var placed = PlacedFiles.Load(root);
 
-            // Add-ons of this core that are here go first (the reverse of the install order).
+            // Add-ons of this core that are here go first (the reverse of the install order). Whether the core goes is judged with them
+            // going first: files only they also recorded (an add-on that carries the core's files, G4 retest 3.3) are then the core's.
             var addons = new List<CatalogEntry>();
-            if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName) && _entries != null)
+            var providedCore = CoreAddons.CoreProvidedBy(entry);
+            if (providedCore.Length > 0 && _entries != null)
                 foreach (var other in _entries)
-                    if (other != entry && CoreAddons.CoreOf(other) == entry.PackageName && AddonIsHere(root, other, placed)) addons.Add(other);
+                    // An add-on that still has a record counts too, though nothing of its own is here: files it wrote over may still
+                    // need the core (G4-R6). With nothing of its own it only gives up its record in the run.
+                    if (other != entry && CoreAddons.CoreOf(other) == providedCore && (AddonIsHere(root, other, placed) || HasRecord(other, placed))) addons.Add(other);
+            var addonKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var addon in addons) addonKeys.UnionWith(KeysOf(addon));
+            if (addons.Count > 0 && !TakesCoreAway(root, entry, providedCore, placed, addonKeys))
+            {
+                addons.Clear();
+                addonKeys.Clear();
+            }
             addons = RemovalPlanner.RemovalOrder(addons, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => e.IsLicense ? "" : CoreAddons.CoreOf(e));
 
             var steps = new List<RemovalStep>();
@@ -53,7 +67,7 @@ namespace OnAirDeck.UnityManager
             var goingFirst = new HashSet<string>(StringComparer.Ordinal);
             foreach (var addon in addons)
             {
-                var step = StepFor(root, addon, placed, goingFirst, OtherOptionKeys(addon));
+                var step = StepFor(root, addon, placed, goingFirst, OtherOptionKeys(addon), null);
                 // Nothing of its own is left, only files another product also wrote: it gives them up when the run goes, and does not
                 // hold the core. One whose own files the user changed is still here, and does.
                 if (step.Plan.Refusal == RemovalRefusal.NothingHere && step.Plan.Changed.Count == 0) { releaseOnly.Add(step); continue; }
@@ -66,20 +80,71 @@ namespace OnAirDeck.UnityManager
                 steps.Add(step);
                 if (step.Plan.PackageFolder.Length > 0) goingFirst.Add(addon.PackageName);
             }
-            var main = StepFor(root, entry, placed, goingFirst, OtherOptionKeys(entry));
+            var main = StepFor(root, entry, placed, goingFirst, OtherOptionKeys(entry), addonKeys);
             if (!main.Plan.CanRun)
             {
                 // Only files another product also wrote are left: this product gives them up (they pass to that product), nothing moves.
                 if (main.Plan.Refusal == RemovalRefusal.NothingHere && addons.Count == 0)
-                    foreach (var key in main.Keys) ReleaseRecord(root, key);
+                {
+                    // An add-on that moves nothing still remembers what of it stays with its core (review R1 of option A).
+                    var stayingCore = CoreAddons.CoreOf(entry);
+                    var staying = stayingCore.Length > 0 ? RemovalPlanner.RemnantPaths(main.Plan, placed, main.Keys) : new List<string>();
+                    // The record goes only once the remnant is written; a failed write keeps it (review r2 R1).
+                    try { PlacedFiles.ReleaseKeepingRemnant(root, main.Keys, stayingCore, staying); }
+                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
+                }
                 ExplainRefusal(main, null);
                 return;
             }
+            // An add-on file another product still holds stays after the run: the core must stay too, or that code loses it (review R1).
+            var blocking = new List<string>();
+            var leftovers = new List<string>();
+            var addonSteps = new List<RemovalStep>(steps);
+            addonSteps.AddRange(releaseOnly);
+            foreach (var addonStep in addonSteps)
+            {
+                var left = RemovalPlanner.AddonLeftovers(new[] { addonStep.Plan }, main.Plan);
+                if (left.Count == 0) continue;
+                blocking.Add(addonStep.Entry.Name);
+                leftovers.AddRange(left);
+            }
+            if (blocking.Count > 0)
+            {
+                Debug.Log(OnAirDeckConfig.LogPrefix + "Not removing " + entry.Name + ": files of " + string.Join(", ", blocking.ToArray())
+                    + " stay with another product:\n" + string.Join("\n", leftovers.ToArray()));
+                SetMessage(ManagerText.RmAddonBlocks.Replace("{a}", string.Join(", ", blocking.ToArray())).Replace("{c}", entry.Name), MessageType.Warning);
+                return;
+            }
+            // Files of an add-on removed earlier on its own that stayed and still need this core (G4-R7).
+            if (providedCore.Length > 0)
+            {
+                if (placed.RemnantsUnreadable)
+                {
+                    // What stayed is unknown: the core stays (review r2 R7).
+                    SetMessage(ManagerText.RmRemnantsUnreadable.Replace("{c}", entry.Name), MessageType.Warning);
+                    return;
+                }
+                var remnants = RemovalPlanner.RemnantsBlocking(root, placed, providedCore);
+                if (remnants.Count > 0)
+                {
+                    Debug.Log(OnAirDeckConfig.LogPrefix + "Not removing " + entry.Name + ": add-on files that use it are still here:\n" + string.Join("\n", remnants.ToArray()));
+                    SetMessage(ManagerText.RmRemnantBlocks.Replace("{c}", entry.Name).Replace("{n}", remnants.Count.ToString()), MessageType.Warning);
+                    return;
+                }
+            }
+            // An add-on removed on its own: what of it stays with no other owner is remembered with its core (G4-R7).
+            var ownCore = CoreAddons.CoreOf(entry);
+            if (ownCore.Length > 0)
+            {
+                main.RemnantCore = ownCore;
+                main.RemnantPaths = RemovalPlanner.RemnantPaths(main.Plan, placed, main.Keys);
+            }
             steps.Add(main);
 
-            if (addons.Count > 0)
+            var removing = steps.FindAll(s => s != main).ConvertAll(s => s.Entry);
+            if (removing.Count > 0)
             {
-                var names = string.Join(", ", addons.ConvertAll(a => a.Name).ToArray());
+                var names = string.Join(", ", removing.ConvertAll(a => a.Name).ToArray());
                 if (!EditorUtility.DisplayDialog(ManagerText.RmAskT.Replace("{n}", entry.Name), ManagerText.RmAddonsFirst.Replace("{c}", entry.Name).Replace("{a}", names),
                     ManagerText.RmTogether, ManagerText.Cancel)) return;
             }
@@ -96,6 +161,19 @@ namespace OnAirDeck.UnityManager
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the placed-files record: " + e.Message); }
         }
 
+        /// <summary>
+        /// Removing <paramref name="entry"/> takes <paramref name="core"/> out of the project: always for a core package; for a file core
+        /// (VModular 1.0.0, review N2) when this removal moves any file of the core (its marker or a file in its folders; review R2: a
+        /// marker kept as changed does not keep the rest). Another row that installed the same files (the base license and a base
+        /// purchase) keeps them, so nothing of the core moves and the add-ons stay too.
+        /// </summary>
+        private bool TakesCoreAway(string root, CatalogEntry entry, string core, PlacedRecords placed, ICollection<string> addonKeys)
+        {
+            if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName)) return true;
+            var dry = StepFor(root, entry, placed, new HashSet<string>(StringComparer.Ordinal), OtherOptionKeys(entry), addonKeys);
+            return dry.Plan.CanRun && CoreAddons.CoreFilesAmong(core, dry.Plan.Files);
+        }
+
         /// <summary>An add-on of a core is here: its package is installed, or files it recorded (or its marked state) are in the project.</summary>
         private static bool AddonIsHere(string root, CatalogEntry addon, PlacedRecords placed)
         {
@@ -107,6 +185,13 @@ namespace OnAirDeck.UnityManager
                 if (!placed.Products.TryGetValue(key, out recorded)) continue;
                 foreach (var path in recorded.Paths) if (File.Exists(RemovalPlanner.Absolute(root, path))) return true;
             }
+            return false;
+        }
+
+        /// <summary>The add-on still has a removal record (its own files may be gone; files it wrote over may not be).</summary>
+        private static bool HasRecord(CatalogEntry addon, PlacedRecords placed)
+        {
+            foreach (var key in KeysOf(addon)) if (placed.Products.ContainsKey(key)) return true;
             return false;
         }
 
@@ -134,7 +219,9 @@ namespace OnAirDeck.UnityManager
             return keys;
         }
 
-        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst, ICollection<string> otherOptionKeys)
+        /// <param name="addonKeysGoingFirst">The PlacedFiles keys of add-ons removed before this row in the same run (null: none).</param>
+        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst, ICollection<string> otherOptionKeys,
+            ICollection<string> addonKeysGoingFirst)
         {
             var step = new RemovalStep { Entry = entry, Keys = KeysOf(entry) };
             if (entry.IsLicense)
@@ -152,7 +239,7 @@ namespace OnAirDeck.UnityManager
             if (entry.IsLicense && entry.HasPackageVersions && InstalledPackages.IsInstalled(root, entry.PackageName))
                 step.Plan = RemovalPlanner.ForPackage(root, entry.PackageName, placed, own, goingFirst);
             else
-                step.Plan = RemovalPlanner.ForFiles(root, step.Keys, placed, own, ManualFolderOf(root, entry));
+                step.Plan = RemovalPlanner.ForFiles(root, step.Keys, placed, own, ManualFolderOf(root, entry), addonKeysGoingFirst);
             return step;
         }
 
@@ -274,7 +361,10 @@ namespace OnAirDeck.UnityManager
                     {
                         // Only a removal that went through gives up the record: the files another product also wrote pass to it, so the
                         // last of them removes them. A partial one keeps it, so nothing passes on too early.
-                        foreach (var key in step.Keys) ReleaseRecord(root, key);
+                        // An add-on's files that stayed still need its core (G4-R7): they are remembered first, and the record goes only
+                        // once that is written; a failed write keeps the record (review r2 R1).
+                        try { PlacedFiles.ReleaseKeepingRemnant(root, step.Keys, step.RemnantCore, step.RemnantPaths); }
+                        catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
                         try { InstallRecords.Remove(root, step.LicenseIds); }
                         catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the install record: " + e.Message); }
                         _lastFailure.Remove(step.Entry.Key);

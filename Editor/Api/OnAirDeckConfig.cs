@@ -63,17 +63,40 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         public static readonly Dictionary<string, string> CoreAddonLicenses = new Dictionary<string, string>
         {
-            { "73f4e203-ffd0-4e88-9b78-dc116fd74057", "com.studioraming.mingtoon" }   // Ming Light Controller
+            { "73f4e203-ffd0-4e88-9b78-dc116fd74057", "com.studioraming.mingtoon" },  // Ming Light Controller
+            { "39a68f32-437f-48e0-8082-da3b67b3c319", "com.studioraming.vmodular" }   // VModular Plus 1.0.0 (license of the Plus option)
         };
 
         /// <summary>
         /// Purchases that are add-ons of a core package (owner report 2026-11-03: VModular Plus needs VModular, like MingToon Core and its URP
-        /// add-on). VModular Plus is sold as an option of the VModular product, so it reaches the Manager as that product's purchase row, not
-        /// as a license: product id to the core and the asset files of the add-on option. A row is the add-on only when every file it lists
-        /// is one of them, so a purchase of the base product alone never is (CoreAddons.CoreOfPurchase).
+        /// add-on): product id to the core and the asset files of the add-on option. A row is the add-on only when every file it lists
+        /// is one of them, so a purchase of the base product alone never is (CoreAddons.CoreOfPurchase). Empty on purpose (desk read
+        /// 2026-11-04): a VModular Plus purchase row lists the base file and the Plus file together, so it carries its own core and installs
+        /// both in order; only the Plus license row is an add-on (<see cref="CoreAddonLicenses"/>).
         /// </summary>
         public static readonly Dictionary<string, PurchaseAddon> CoreAddonPurchases = new Dictionary<string, PurchaseAddon>
         {
+        };
+
+        /// <summary>
+        /// Cores sold as a .unitypackage, not as a package (lead decision 2026-11-04, G4 option A): VModular 1.0.0 imports into
+        /// Assets/Editor/VModularEditor and Assets/VModualr_InAvartar (the folder name is spelled that way in the package), never into
+        /// Packages/. Its marker file tells that it is here; its license (0c873fc3, the product's base license, every buyer of the product
+        /// has it) installs it before an add-on; a base purchase row (file 2a0417aa of product 7aac2c69) also carries it. A later package
+        /// form (com.studioraming.vmodular in Packages/) counts as here through the package check, so it needs no change here.
+        /// </summary>
+        public static readonly Dictionary<string, FileCore> FileCores = new Dictionary<string, FileCore>
+        {
+            {
+                "com.studioraming.vmodular", new FileCore
+                {
+                    LicenseIds = new[] { "0c873fc3-af50-4a2c-987f-cce1b9949185" },
+                    Markers = new[] { "Assets/Editor/VModularEditor/VModularManager.cs" },
+                    Folders = new[] { "Assets/Editor/VModularEditor", "Assets/VModualr_InAvartar" },
+                    PurchaseProductId = "7aac2c69-e72e-46f9-a928-5a9779392165",
+                    PurchaseFileIds = new[] { "2a0417aa-0f1f-43b8-a7e7-c53824bf4ff6" }
+                }
+            }
         };
 
         /// <summary>Packages that other products are add-ons of: the display name used in "install X first".</summary>
@@ -84,11 +107,10 @@ namespace OnAirDeck.UnityManager
         };
 
         /// <summary>
-        /// Cores whose add-ons the Manager cannot list yet (VModular: the VModular Plus ids in <see cref="CoreAddonPurchases"/> and
-        /// <see cref="CoreAddonLicenses"/> are still to be confirmed). Removing one is refused, so it never goes before an add-on the
-        /// Manager would not see; take a core out of here when its add-on ids are in.
+        /// Cores whose add-ons the Manager cannot list yet. Removing one is refused, so it never goes before an add-on the Manager would
+        /// not see; take a core out of here when its add-on ids are in. Empty since the VModular Plus ids are in (2026-11-04).
         /// </summary>
-        public static readonly string[] CoreAddonsPending = { "com.studioraming.vmodular" };
+        public static readonly string[] CoreAddonsPending = new string[0];
 
         /// <summary>
         /// Packages that only the Manager updates (owner decision 2026-10-31: no more MingToon updates through VCC). A VCC install of
