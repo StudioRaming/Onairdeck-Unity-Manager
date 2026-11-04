@@ -23,6 +23,8 @@ namespace OnAirDeck.UnityManager
         public static string RmAddonsFirst { get { return Pick("{c}를 지우려면 먼저 애드온을 지워야 해요: {a}. 애드온부터 함께 지울까요?", "{a} need {c}, so they are removed first. Remove them together with {c}?", "{c} を削除するには先にアドオンを削除する必要があります: {a}。アドオンから一緒に削除しますか?"); } }
         /// <summary>{a} add-on, {c} core.</summary>
         public static string RmAddonBlocks { get { return Pick("{a}가 {c}를 쓰고 있어서 {c}를 지우지 않았어요.", "{a} uses {c}, so {c} was not removed.", "{a} が {c} を使っているため、{c} は削除しませんでした。"); } }
+        /// <summary>{c} core, {n} number of files: add-on files that stayed after the add-on was removed and still need the core.</summary>
+        public static string RmRemnantBlocks { get { return Pick("{c}를 쓰는 애드온 파일 {n}개가 남아 있어서 {c}를 지우지 않았어요. 파일 목록은 Console에 있어요.", "{n} add-on file(s) that use {c} are still here, so {c} was not removed. The list is in the Console.", "{c} を使うアドオンのファイルが {n} 個残っているため、{c} は削除しませんでした。ファイル一覧は Console にあります。"); } }
         /// <summary>{n} product, {f} folder.</summary>
         public static string RmNoRecord { get { return Pick("{n}: 아틀리에 매니저가 무엇을 설치했는지 기록이 없어서 자동으로 지우지 않아요. 폴더를 열어 직접 지워 주세요: {f}", "{n}: the Atelier Manager has no record of what it installed, so it removes nothing on its own. Open the folder and remove it yourself: {f}", "{n}: アトリエマネージャーに何を入れたかの記録がないため、自動では削除しません。フォルダーを開いて手で削除してください: {f}"); } }
         public static string RmNoRecordNoFolder { get { return Pick("{n}: 아틀리에 매니저가 무엇을 설치했는지 기록이 없어서 자동으로 지우지 않아요. Project 창에서 직접 지워 주세요.", "{n}: the Atelier Manager has no record of what it installed, so it removes nothing on its own. Remove it yourself in the Project window.", "{n}: アトリエマネージャーに何を入れたかの記録がないため、自動では削除しません。Project ウィンドウで手で削除してください。"); } }

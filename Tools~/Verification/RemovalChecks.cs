@@ -47,6 +47,61 @@ internal static class RemovalChecks
         check("removal install record: removed licenses lose their version record, the others keep theirs", InstallRecordRemoved);
         check("removal run (G4 retest 3.3): a core's file an add-on going first also recorded goes with the core; the add-on alone, or the core alone, keeps it", SharedWithAddonGoingFirst);
         check("installed by record (G4 retest 3.2): a file core or add-on license counts as installed when its install record exists and a file it placed is here; generic, never outside that scope", InstalledByRecord);
+        check("remnants (G4-R7): an add-on removed alone keeps a record of its files that stay with no other owner; a core is refused while one naming it is here; pruned once they are gone", Remnants);
+    }
+
+    // G4-R6/R7 (option A, lead 2026-11-04): an add-on's file that stays after the add-on went (the user changed it, or it wrote over
+    // a file nobody else owns) still needs the core. The record of it (a remnant) keeps the core from going too early.
+    private static void Remnants()
+    {
+        var project = NewProject();
+        Put(project, "Assets/Core/Core.cs", "core");
+        Put(project, "Assets/Plus/Plus.cs", "plus");
+        Put(project, "Assets/Plus/Helper.cs", "helper");
+        Put(project, "Assets/User/Mine.cs", "user");
+        var coreKey = PlacedFiles.PurchaseKey("core-item");
+        var addonKey = PlacedFiles.LicenseKey("addon");
+        var placed = new PlacedRecords();
+        placed.Products[coreKey] = Entry(project, "Assets/Core/Core.cs");
+        var addonEntry = Entry(project, "Assets/Plus/Plus.cs", "Assets/Plus/Helper.cs");
+        addonEntry.Touched.Add("Assets/Core/Core.cs");   // the add-on carried the core's file over the installed core
+        addonEntry.Touched.Add("Assets/User/Mine.cs");   // and wrote over a file nobody recorded
+        placed.Products[addonKey] = addonEntry;
+        Put(project, "Assets/Plus/Plus.cs", "plus, edited by the user");
+
+        var plan = RemovalPlanner.ForFiles(project, new[] { addonKey }, placed, null, "");
+        Equal("Assets/Plus/Helper.cs", string.Join(",", plan.Files));
+        // What stays with no other owner: the changed file and the written-over one; the core's own file is the core's.
+        var stays = RemovalPlanner.RemnantPaths(plan, placed, new[] { addonKey });
+        Equal("Assets/Plus/Plus.cs,Assets/User/Mine.cs", string.Join(",", stays));
+
+        PlacedFiles.Save(project, placed);
+        PlacedFiles.KeepRemnant(project, addonKey, "core-x", stays);
+        PlacedFiles.Release(project, addonKey);   // the removal went through: the add-on's record goes, its remnant stays
+        var loaded = PlacedFiles.Load(project);
+        Require(!loaded.Products.ContainsKey(addonKey), "record released");
+        Equal("Assets/Plus/Plus.cs,Assets/User/Mine.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(project, loaded, "core-x")));
+        Equal(0, RemovalPlanner.RemnantsBlocking(project, loaded, "other-core").Count);
+
+        // Gone files no longer block, and the record is pruned once nothing of it is here.
+        File.Delete(Path.Combine(project, "Assets", "Plus", "Plus.cs"));
+        Equal("Assets/User/Mine.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(project, PlacedFiles.Load(project), "core-x")));
+        File.Delete(Path.Combine(project, "Assets", "User", "Mine.cs"));
+        Equal(0, RemovalPlanner.RemnantsBlocking(project, PlacedFiles.Load(project), "core-x").Count);
+        PlacedFiles.PruneRemnants(project);
+        Equal(0, PlacedFiles.Load(project).Remnants.Count);
+
+        // The usual add-on removal leaves none: its own files go, the core's files it carried stay the core's.
+        var usual = NewProject();
+        Put(usual, "Assets/Core/Core.cs", "core");
+        Put(usual, "Assets/Plus/Plus.cs", "plus");
+        var usualPlaced = new PlacedRecords();
+        usualPlaced.Products[coreKey] = Entry(usual, "Assets/Core/Core.cs");
+        var usualAddon = Entry(usual, "Assets/Plus/Plus.cs");
+        usualAddon.Touched.Add("Assets/Core/Core.cs");
+        usualPlaced.Products[addonKey] = usualAddon;
+        var usualPlan = RemovalPlanner.ForFiles(usual, new[] { addonKey }, usualPlaced, null, "");
+        Equal(0, RemovalPlanner.RemnantPaths(usualPlan, usualPlaced, new[] { addonKey }).Count);
     }
 
     // G4 retest 2026-11-04: VModular Plus ships the base's files too, so they were recorded under the base purchase and the Plus license.
