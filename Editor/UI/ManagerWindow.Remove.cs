@@ -41,12 +41,20 @@ namespace OnAirDeck.UnityManager
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
             var placed = PlacedFiles.Load(root);
 
-            // Add-ons of this core that are here go first (the reverse of the install order).
+            // Add-ons of this core that are here go first (the reverse of the install order). Whether the core goes is judged with them
+            // going first: files only they also recorded (an add-on that carries the core's files, G4 retest 3.3) are then the core's.
             var addons = new List<CatalogEntry>();
             var providedCore = CoreAddons.CoreProvidedBy(entry);
-            if (providedCore.Length > 0 && _entries != null && TakesCoreAway(root, entry, providedCore, placed))
+            if (providedCore.Length > 0 && _entries != null)
                 foreach (var other in _entries)
                     if (other != entry && CoreAddons.CoreOf(other) == providedCore && AddonIsHere(root, other, placed)) addons.Add(other);
+            var addonKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var addon in addons) addonKeys.UnionWith(KeysOf(addon));
+            if (addons.Count > 0 && !TakesCoreAway(root, entry, providedCore, placed, addonKeys))
+            {
+                addons.Clear();
+                addonKeys.Clear();
+            }
             addons = RemovalPlanner.RemovalOrder(addons, e => e.IsLicense ? e.PackageName : "", e => e.LicenseId, e => e.IsLicense ? "" : CoreAddons.CoreOf(e));
 
             var steps = new List<RemovalStep>();
@@ -54,7 +62,7 @@ namespace OnAirDeck.UnityManager
             var goingFirst = new HashSet<string>(StringComparer.Ordinal);
             foreach (var addon in addons)
             {
-                var step = StepFor(root, addon, placed, goingFirst, OtherOptionKeys(addon));
+                var step = StepFor(root, addon, placed, goingFirst, OtherOptionKeys(addon), null);
                 // Nothing of its own is left, only files another product also wrote: it gives them up when the run goes, and does not
                 // hold the core. One whose own files the user changed is still here, and does.
                 if (step.Plan.Refusal == RemovalRefusal.NothingHere && step.Plan.Changed.Count == 0) { releaseOnly.Add(step); continue; }
@@ -67,7 +75,7 @@ namespace OnAirDeck.UnityManager
                 steps.Add(step);
                 if (step.Plan.PackageFolder.Length > 0) goingFirst.Add(addon.PackageName);
             }
-            var main = StepFor(root, entry, placed, goingFirst, OtherOptionKeys(entry));
+            var main = StepFor(root, entry, placed, goingFirst, OtherOptionKeys(entry), addonKeys);
             if (!main.Plan.CanRun)
             {
                 // Only files another product also wrote are left: this product gives them up (they pass to that product), nothing moves.
@@ -103,10 +111,10 @@ namespace OnAirDeck.UnityManager
         /// marker kept as changed does not keep the rest). Another row that installed the same files (the base license and a base
         /// purchase) keeps them, so nothing of the core moves and the add-ons stay too.
         /// </summary>
-        private bool TakesCoreAway(string root, CatalogEntry entry, string core, PlacedRecords placed)
+        private bool TakesCoreAway(string root, CatalogEntry entry, string core, PlacedRecords placed, ICollection<string> addonKeys)
         {
             if (entry.IsLicense && CoreAddons.IsCore(entry.PackageName)) return true;
-            var dry = StepFor(root, entry, placed, new HashSet<string>(StringComparer.Ordinal), OtherOptionKeys(entry));
+            var dry = StepFor(root, entry, placed, new HashSet<string>(StringComparer.Ordinal), OtherOptionKeys(entry), addonKeys);
             return dry.Plan.CanRun && CoreAddons.CoreFilesAmong(core, dry.Plan.Files);
         }
 
@@ -148,7 +156,9 @@ namespace OnAirDeck.UnityManager
             return keys;
         }
 
-        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst, ICollection<string> otherOptionKeys)
+        /// <param name="addonKeysGoingFirst">The PlacedFiles keys of add-ons removed before this row in the same run (null: none).</param>
+        private static RemovalStep StepFor(string root, CatalogEntry entry, PlacedRecords placed, ICollection<string> goingFirst, ICollection<string> otherOptionKeys,
+            ICollection<string> addonKeysGoingFirst)
         {
             var step = new RemovalStep { Entry = entry, Keys = KeysOf(entry) };
             if (entry.IsLicense)
@@ -166,7 +176,7 @@ namespace OnAirDeck.UnityManager
             if (entry.IsLicense && entry.HasPackageVersions && InstalledPackages.IsInstalled(root, entry.PackageName))
                 step.Plan = RemovalPlanner.ForPackage(root, entry.PackageName, placed, own, goingFirst);
             else
-                step.Plan = RemovalPlanner.ForFiles(root, step.Keys, placed, own, ManualFolderOf(root, entry));
+                step.Plan = RemovalPlanner.ForFiles(root, step.Keys, placed, own, ManualFolderOf(root, entry), addonKeysGoingFirst);
             return step;
         }
 

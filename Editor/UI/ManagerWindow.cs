@@ -343,6 +343,14 @@ namespace OnAirDeck.UnityManager
             try { _markers = ProductMarkers.Scan(root); }
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Product marker scan failed: " + e.Message); _markers = new HashSet<string>(); }
             _installRecords = InstallRecords.Load(root);
+            // A file core or add-on license whose product ships no marker counts as installed by the Manager's own records (G4 retest).
+            try
+            {
+                foreach (var id in CoreAddons.InstalledByRecord(CoreAddons.RecordScopeLicenseIds(), _installRecords, PlacedFiles.Load(root),
+                    path => System.IO.File.Exists(RemovalPlanner.Absolute(root, path))))
+                    _markers.Add(id);
+            }
+            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not read the removal record: " + e.Message); }
             _mismatches = FindMismatches(root);
             _pendingRestores = LegacyMove.PendingRestores();
             RefreshVccState(root);

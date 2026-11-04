@@ -45,6 +45,68 @@ internal static class RemovalChecks
         check("option overwrite: an option the list no longer shows is found by its record's product; a record from before is not", OptionOverwriteByRecord);
         check("option overwrite: the contents of every .unitypackage asset are hashed as a stream", PackageAssetHashes);
         check("removal install record: removed licenses lose their version record, the others keep theirs", InstallRecordRemoved);
+        check("removal run (G4 retest 3.3): a core's file an add-on going first also recorded goes with the core; the add-on alone, or the core alone, keeps it", SharedWithAddonGoingFirst);
+        check("installed by record (G4 retest 3.2): a file core or add-on license counts as installed when its install record exists and a file it placed is here; generic, never outside that scope", InstalledByRecord);
+    }
+
+    // G4 retest 2026-11-04: VModular Plus ships the base's files too, so they were recorded under the base purchase and the Plus license.
+    // Removing the base then kept them as shared, so the base did not count as going and Plus was not asked to go first.
+    private static void SharedWithAddonGoingFirst()
+    {
+        var project = NewProject();
+        Put(project, "Assets/Core/Core.cs", "core");
+        Put(project, "Assets/Core/Both.cs", "both");
+        Put(project, "Assets/Core/Addon/Plus.cs", "plus");
+        var placed = new PlacedRecords();
+        var coreKey = PlacedFiles.PurchaseKey("core-item");
+        var addonKey = PlacedFiles.LicenseKey("addon");
+        placed.Products[coreKey] = Entry(project, "Assets/Core/Core.cs", "Assets/Core/Both.cs");
+        placed.Products[addonKey] = Entry(project, "Assets/Core/Both.cs", "Assets/Core/Addon/Plus.cs");
+
+        // The add-on goes first: its own file; the file the core also recorded stays for the core's step.
+        var addon = RemovalPlanner.ForFiles(project, new[] { addonKey }, placed, null, "");
+        Equal("Assets/Core/Addon/Plus.cs", string.Join(",", addon.Files));
+        Equal("Assets/Core/Both.cs", string.Join(",", addon.Shared));
+        // The core after it in the same run: the shared file is its too, nobody else keeps it.
+        var core = RemovalPlanner.ForFiles(project, new[] { coreKey }, placed, null, "", new[] { addonKey });
+        Equal("Assets/Core/Both.cs,Assets/Core/Core.cs", string.Join(",", core.Files));
+        // The core alone (the add-on stays): the add-on still needs that file.
+        var alone = RemovalPlanner.ForFiles(project, new[] { coreKey }, placed, null, "");
+        Equal("Assets/Core/Core.cs", string.Join(",", alone.Files));
+        Equal("Assets/Core/Both.cs", string.Join(",", alone.Shared));
+        // A third product that also recorded the file keeps it even when the add-on goes first.
+        placed.Products[PlacedFiles.LicenseKey("third")] = Entry(project, "Assets/Core/Both.cs");
+        var third = RemovalPlanner.ForFiles(project, new[] { coreKey }, placed, null, "", new[] { addonKey });
+        Equal("Assets/Core/Core.cs", string.Join(",", third.Files));
+    }
+
+    // G4 retest 2026-11-04: VModular Plus ships no atelier.product.json, so its row said "to get" after a good install.
+    private static void InstalledByRecord()
+    {
+        var project = NewProject();
+        Put(project, "Assets/Addon/Plus.cs", "plus");
+        var placed = new PlacedRecords();
+        placed.Products[PlacedFiles.LicenseKey("addon-lic")] = Entry(project, "Assets/Addon/Plus.cs");
+        placed.Products[PlacedFiles.LicenseKey("core-lic")] = Entry(project, "Assets/Core/Gone.cs");
+        placed.Products[PlacedFiles.LicenseKey("other-lic")] = Entry(project, "Assets/Addon/Plus.cs");
+        var records = new Dictionary<string, InstallRecord>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "addon-lic", new InstallRecord { LicenseId = "addon-lic", VersionId = "v1", Label = "1.0" } },
+            { "core-lic", new InstallRecord { LicenseId = "core-lic", VersionId = "v1", Label = "1.0" } },
+            { "other-lic", new InstallRecord { LicenseId = "other-lic", VersionId = "v1", Label = "1.0" } },
+        };
+        var scope = new[] { "addon-lic", "core-lic", "unrecorded-lic" };
+        Func<string, bool> exists = p => File.Exists(RemovalPlanner.Absolute(project, p));
+        var ids = CoreAddons.InstalledByRecord(scope, records, placed, exists);
+        // Recorded and a placed file here: installed. Recorded but its files gone: not. Not in scope: never (a marker decides there).
+        Equal("addon-lic", string.Join(",", ids));
+        // No record, files here: not (the files alone could be another row's).
+        records.Remove("addon-lic");
+        Equal(0, CoreAddons.InstalledByRecord(scope, records, placed, exists).Count);
+        // The live scope is the file cores' licenses and the add-on licenses (config), whatever product they are.
+        var live = new List<string>(CoreAddons.RecordScopeLicenseIds());
+        foreach (var id in OnAirDeckConfig.CoreAddonLicenses.Keys) Require(live.Contains(id), "add-on license " + id);
+        foreach (var core in OnAirDeckConfig.FileCores.Values) foreach (var id in core.LicenseIds) Require(live.Contains(id), "file core license " + id);
     }
 
     private static void Order()

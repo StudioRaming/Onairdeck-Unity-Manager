@@ -565,8 +565,11 @@ namespace OnAirDeck.UnityManager
         /// plus <paramref name="ownFiles"/> (the product's own onairdeck.license, found by the id inside it), and the recorded folders
         /// they leave empty. A recorded onairdeck.license goes only when it is one of <paramref name="ownFiles"/>. No record at all:
         /// NoRecord, with <paramref name="manualFolder"/> to open when it exists.
+        /// <paramref name="goingFirstKeys"/>: the keys removed earlier in the same run (a core's add-ons). What only they also recorded is
+        /// not kept for them, so it goes with this row (G4 retest 3.3: VModular Plus carries the base's files, recorded under both).
         /// </summary>
-        public static RemovalPlan ForFiles(string projectRoot, ICollection<string> keys, PlacedRecords placed, IEnumerable<string> ownFiles, string manualFolder)
+        public static RemovalPlan ForFiles(string projectRoot, ICollection<string> keys, PlacedRecords placed, IEnumerable<string> ownFiles, string manualFolder,
+            ICollection<string> goingFirstKeys = null)
         {
             var plan = new RemovalPlan();
             var mine = new List<string>();
@@ -585,7 +588,7 @@ namespace OnAirDeck.UnityManager
                     foreach (var g in pair.Value.Guids) guids[g.Key] = g.Value;
                     foreach (var h in pair.Value.Hashes) hashes[h.Key] = h.Value;
                 }
-                else
+                else if (goingFirstKeys == null || !goingFirstKeys.Contains(pair.Key))
                 {
                     // Another product created it, or wrote over it: it stays.
                     foreach (var p in pair.Value.Paths) others.Add(p);

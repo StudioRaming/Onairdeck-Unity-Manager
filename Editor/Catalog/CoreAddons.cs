@@ -92,6 +92,41 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(packageName) && OnAirDeckConfig.CorePackages.ContainsKey(packageName);
         }
 
+        /// <summary>
+        /// The licenses whose install state may come from the Manager's own records (<see cref="InstalledByRecord"/>): the licenses of
+        /// the file cores and the add-on licenses of the config, whatever product they are.
+        /// </summary>
+        public static List<string> RecordScopeLicenseIds()
+        {
+            var ids = new List<string>();
+            foreach (var core in OnAirDeckConfig.FileCores.Values)
+                if (core != null && core.LicenseIds != null)
+                    foreach (var id in core.LicenseIds) if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+            foreach (var id in OnAirDeckConfig.CoreAddonLicenses.Keys) if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+            return ids;
+        }
+
+        /// <summary>
+        /// The licenses of <paramref name="scope"/> that are installed by the Manager's own records (G4 retest 3.2): an install record
+        /// exists and a file the install placed under that license is still here. For a file license whose product ships no
+        /// atelier.product.json marker (VModular Plus): without this its row said "to get" and its core's removal never asked it to go
+        /// first. A record alone, or files alone (another row may have placed them), is not enough.
+        /// </summary>
+        public static List<string> InstalledByRecord(IEnumerable<string> scope, IDictionary<string, InstallRecord> records, PlacedRecords placed,
+            Func<string, bool> fileExists)
+        {
+            var ids = new List<string>();
+            if (scope == null || records == null || placed == null || fileExists == null) return ids;
+            foreach (var id in scope)
+            {
+                PlacedEntry entry;
+                if (string.IsNullOrEmpty(id) || !records.ContainsKey(id) || !placed.Products.TryGetValue(PlacedFiles.LicenseKey(id), out entry)) continue;
+                foreach (var path in entry.Paths)
+                    if (fileExists(path)) { ids.Add(id); break; }
+            }
+            return ids;
+        }
+
         /// <summary>The file core (<see cref="OnAirDeckConfig.FileCores"/>) a license ships, or "".</summary>
         public static string FileCoreOfLicense(string licenseId)
         {
