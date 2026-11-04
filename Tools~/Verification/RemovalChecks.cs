@@ -78,6 +78,20 @@ internal static class RemovalChecks
         placed.Products[PlacedFiles.LicenseKey("third")] = Entry(project, "Assets/Core/Both.cs");
         var third = RemovalPlanner.ForFiles(project, new[] { coreKey }, placed, null, "", new[] { addonKey });
         Equal("Assets/Core/Core.cs", string.Join(",", third.Files));
+
+        // review R1: when a third product also holds the add-on's own file, the add-on gives up its record (nothing of its own goes)
+        // and its code stays; the core taking the file they share would leave that code without its core. That is a leftover, and
+        // the window then refuses the core.
+        var r1 = new PlacedRecords();
+        r1.Products[coreKey] = Entry(project, "Assets/Core/Core.cs", "Assets/Core/Both.cs");
+        r1.Products[addonKey] = Entry(project, "Assets/Core/Both.cs", "Assets/Core/Addon/Plus.cs");
+        r1.Products[PlacedFiles.LicenseKey("holder")] = Entry(project, "Assets/Core/Addon/Plus.cs");
+        var addonPlan = RemovalPlanner.ForFiles(project, new[] { addonKey }, r1, null, "");
+        Equal(RemovalRefusal.NothingHere, addonPlan.Refusal);
+        var corePlan = RemovalPlanner.ForFiles(project, new[] { coreKey }, r1, null, "", new[] { addonKey });
+        Equal("Assets/Core/Addon/Plus.cs", string.Join(",", RemovalPlanner.AddonLeftovers(new[] { addonPlan }, corePlan)));
+        // The usual run leaves nothing: the add-on's own file goes with it, the shared one with the core.
+        Equal(0, RemovalPlanner.AddonLeftovers(new[] { addon }, core).Count);
     }
 
     // G4 retest 2026-11-04: VModular Plus ships no atelier.product.json, so its row said "to get" after a good install.
@@ -85,24 +99,32 @@ internal static class RemovalChecks
     {
         var project = NewProject();
         Put(project, "Assets/Addon/Plus.cs", "plus");
+        Put(project, "Assets/Core/Core.cs", "core");
         var placed = new PlacedRecords();
-        placed.Products[PlacedFiles.LicenseKey("addon-lic")] = Entry(project, "Assets/Addon/Plus.cs");
-        placed.Products[PlacedFiles.LicenseKey("core-lic")] = Entry(project, "Assets/Core/Gone.cs");
-        placed.Products[PlacedFiles.LicenseKey("other-lic")] = Entry(project, "Assets/Addon/Plus.cs");
-        var records = new Dictionary<string, InstallRecord>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "addon-lic", new InstallRecord { LicenseId = "addon-lic", VersionId = "v1", Label = "1.0" } },
-            { "core-lic", new InstallRecord { LicenseId = "core-lic", VersionId = "v1", Label = "1.0" } },
-            { "other-lic", new InstallRecord { LicenseId = "other-lic", VersionId = "v1", Label = "1.0" } },
-        };
-        var scope = new[] { "addon-lic", "core-lic", "unrecorded-lic" };
-        Func<string, bool> exists = p => File.Exists(RemovalPlanner.Absolute(project, p));
-        var ids = CoreAddons.InstalledByRecord(scope, records, placed, exists);
-        // Recorded and a placed file here: installed. Recorded but its files gone: not. Not in scope: never (a marker decides there).
-        Equal("addon-lic", string.Join(",", ids));
+        // The add-on carries the core's file too (VModular Plus); the core's own row recorded it as well.
+        placed.Products[PlacedFiles.LicenseKey("addon-lic")] = Entry(project, "Assets/Addon/Plus.cs", "Assets/Core/Core.cs");
+        placed.Products[PlacedFiles.PurchaseKey("core-item")] = Entry(project, "Assets/Core/Core.cs");
+        placed.Products[PlacedFiles.LicenseKey("core-lic")] = Entry(project, "Assets/Core/Core.cs");
+        placed.Products[PlacedFiles.LicenseKey("gone-lic")] = Entry(project, "Assets/Gone/Gone.cs");
+        var records = new Dictionary<string, InstallRecord>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in new[] { "addon-lic", "core-lic", "gone-lic" })
+            records[id] = new InstallRecord { LicenseId = id, VersionId = "v1", Label = "1.0" };
+        var scope = new[] { "addon-lic", "core-lic", "gone-lic", "unrecorded-lic" };
+        var addons = new[] { "addon-lic" };
+        // Recorded and a file of its own here: installed. A core may count a file it shares (its add-on carries it). Recorded but its
+        // files gone: not. Not in scope: never (a marker decides there).
+        Equal("addon-lic,core-lic", string.Join(",", CoreAddons.InstalledByRecord(scope, addons, records, placed, project)));
+        // review R2: an add-on whose own file is gone counts not by the core's file it also carried.
+        File.Delete(Path.Combine(project, "Assets", "Addon", "Plus.cs"));
+        Equal("core-lic", string.Join(",", CoreAddons.InstalledByRecord(scope, addons, records, placed, project)));
+        // Its own path with other contents (the user's file now) is no proof either.
+        Put(project, "Assets/Addon/Plus.cs", "the user's own");
+        Equal("core-lic", string.Join(",", CoreAddons.InstalledByRecord(scope, addons, records, placed, project)));
+        Put(project, "Assets/Addon/Plus.cs", "plus");
+        Equal("addon-lic,core-lic", string.Join(",", CoreAddons.InstalledByRecord(scope, addons, records, placed, project)));
         // No record, files here: not (the files alone could be another row's).
         records.Remove("addon-lic");
-        Equal(0, CoreAddons.InstalledByRecord(scope, records, placed, exists).Count);
+        Equal("core-lic", string.Join(",", CoreAddons.InstalledByRecord(scope, addons, records, placed, project)));
         // The live scope is the file cores' licenses and the add-on licenses (config), whatever product they are.
         var live = new List<string>(CoreAddons.RecordScopeLicenseIds());
         foreach (var id in OnAirDeckConfig.CoreAddonLicenses.Keys) Require(live.Contains(id), "add-on license " + id);

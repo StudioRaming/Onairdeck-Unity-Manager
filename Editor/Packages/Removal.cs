@@ -699,6 +699,39 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// The files of the add-ons going first that would stay after the run: kept as shared by an add-on and not taken by the
+        /// core's step (another product holds them). A core that goes while one stays leaves that add-on's code without its core
+        /// (review R1 of the G4 removal fix), so the window refuses it. Another product's license file is not a leftover.
+        /// </summary>
+        public static List<string> AddonLeftovers(IEnumerable<RemovalPlan> addonPlans, RemovalPlan corePlan)
+        {
+            var taken = new HashSet<string>(corePlan == null ? new List<string>() : corePlan.Files, StringComparer.OrdinalIgnoreCase);
+            var left = new List<string>();
+            if (addonPlans == null) return left;
+            foreach (var plan in addonPlans)
+            {
+                if (plan == null) continue;
+                foreach (var path in plan.Shared)
+                    if (!IsLicenseFile(path) && !taken.Contains(path) && !left.Contains(path)) left.Add(path);
+            }
+            left.Sort(StringComparer.Ordinal);
+            return left;
+        }
+
+        /// <summary>
+        /// Whether a recorded file is still the one the install wrote: its .meta keeps the package's GUID, or its contents keep the
+        /// recorded SHA-256. No proof recorded: false.
+        /// </summary>
+        public static bool IsRecordedFileHere(string projectRoot, PlacedEntry entry, string path)
+        {
+            if (entry == null || !IsAssetFile(path) || !File.Exists(Absolute(projectRoot, path))) return false;
+            string guid, hash;
+            if (entry.Guids.TryGetValue(path, out guid)) return string.Equals(MetaGuid(projectRoot, path), guid, StringComparison.OrdinalIgnoreCase);
+            if (entry.Hashes.TryGetValue(path, out hash)) return string.Equals(FileSha256(projectRoot, path), hash, StringComparison.OrdinalIgnoreCase);
+            return false;
+        }
+
+        /// <summary>
         /// A package the Manager installed in Packages/&lt;name&gt; (<see cref="PlacedRecords.Packages"/>): moved to the backup as a whole.
         /// Not in the record: NoRecord (a hand-copied or older install is removed by hand). Refused when VCC lists it, or while another
         /// installed package names it in vpmDependencies (the URP add-on pins MingToon Core), unless that package is in

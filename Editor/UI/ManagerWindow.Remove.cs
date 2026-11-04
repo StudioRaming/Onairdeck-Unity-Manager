@@ -84,6 +84,25 @@ namespace OnAirDeck.UnityManager
                 ExplainRefusal(main, null);
                 return;
             }
+            // An add-on file another product still holds stays after the run: the core must stay too, or that code loses it (review R1).
+            var blocking = new List<string>();
+            var leftovers = new List<string>();
+            var addonSteps = new List<RemovalStep>(steps);
+            addonSteps.AddRange(releaseOnly);
+            foreach (var addonStep in addonSteps)
+            {
+                var left = RemovalPlanner.AddonLeftovers(new[] { addonStep.Plan }, main.Plan);
+                if (left.Count == 0) continue;
+                blocking.Add(addonStep.Entry.Name);
+                leftovers.AddRange(left);
+            }
+            if (blocking.Count > 0)
+            {
+                Debug.Log(OnAirDeckConfig.LogPrefix + "Not removing " + entry.Name + ": files of " + string.Join(", ", blocking.ToArray())
+                    + " stay with another product:\n" + string.Join("\n", leftovers.ToArray()));
+                SetMessage(ManagerText.RmAddonBlocks.Replace("{a}", string.Join(", ", blocking.ToArray())).Replace("{c}", entry.Name), MessageType.Warning);
+                return;
+            }
             steps.Add(main);
 
             if (addons.Count > 0)

@@ -108,23 +108,41 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// The licenses of <paramref name="scope"/> that are installed by the Manager's own records (G4 retest 3.2): an install record
-        /// exists and a file the install placed under that license is still here. For a file license whose product ships no
-        /// atelier.product.json marker (VModular Plus): without this its row said "to get" and its core's removal never asked it to go
-        /// first. A record alone, or files alone (another row may have placed them), is not enough.
+        /// exists and a file the install placed under that license is still here as written (its GUID or contents). For a file license
+        /// whose product ships no atelier.product.json marker (VModular Plus): without this its row said "to get" and its core's removal
+        /// never asked it to go first. A record alone, or files alone (another row may have placed them), is not enough. An add-on
+        /// (<paramref name="addonIds"/>) counts only by a file no other row recorded: the core's files it also carries prove the core,
+        /// not the add-on (review R2).
         /// </summary>
-        public static List<string> InstalledByRecord(IEnumerable<string> scope, IDictionary<string, InstallRecord> records, PlacedRecords placed,
-            Func<string, bool> fileExists)
+        public static List<string> InstalledByRecord(IEnumerable<string> scope, ICollection<string> addonIds, IDictionary<string, InstallRecord> records,
+            PlacedRecords placed, string projectRoot)
         {
             var ids = new List<string>();
-            if (scope == null || records == null || placed == null || fileExists == null) return ids;
+            if (scope == null || records == null || placed == null || string.IsNullOrEmpty(projectRoot)) return ids;
             foreach (var id in scope)
             {
                 PlacedEntry entry;
-                if (string.IsNullOrEmpty(id) || !records.ContainsKey(id) || !placed.Products.TryGetValue(PlacedFiles.LicenseKey(id), out entry)) continue;
+                var key = PlacedFiles.LicenseKey(id);
+                if (string.IsNullOrEmpty(id) || !records.ContainsKey(id) || !placed.Products.TryGetValue(key, out entry)) continue;
+                var addon = addonIds != null && addonIds.Contains(id);
                 foreach (var path in entry.Paths)
-                    if (fileExists(path)) { ids.Add(id); break; }
+                {
+                    if (addon && RecordedElsewhere(placed, key, path)) continue;
+                    if (RemovalPlanner.IsRecordedFileHere(projectRoot, entry, path)) { ids.Add(id); break; }
+                }
             }
             return ids;
+        }
+
+        private static bool RecordedElsewhere(PlacedRecords placed, string key, string path)
+        {
+            foreach (var pair in placed.Products)
+            {
+                if (pair.Key == key) continue;
+                foreach (var other in pair.Value.Paths)
+                    if (string.Equals(other, path, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>The file core (<see cref="OnAirDeckConfig.FileCores"/>) a license ships, or "".</summary>

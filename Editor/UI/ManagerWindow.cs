@@ -346,8 +346,8 @@ namespace OnAirDeck.UnityManager
             // A file core or add-on license whose product ships no marker counts as installed by the Manager's own records (G4 retest).
             try
             {
-                foreach (var id in CoreAddons.InstalledByRecord(CoreAddons.RecordScopeLicenseIds(), _installRecords, PlacedFiles.Load(root),
-                    path => System.IO.File.Exists(RemovalPlanner.Absolute(root, path))))
+                foreach (var id in CoreAddons.InstalledByRecord(CoreAddons.RecordScopeLicenseIds(), OnAirDeckConfig.CoreAddonLicenses.Keys,
+                    _installRecords, PlacedFiles.Load(root), root))
                     _markers.Add(id);
             }
             catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not read the removal record: " + e.Message); }
