@@ -81,6 +81,7 @@ namespace OnAirDeck.UnityManager
         public static PlacedRecords Load(string projectRoot)
         {
             var result = new PlacedRecords();
+            LoadRemnants(projectRoot, result);
             try
             {
                 var path = PathFor(projectRoot);
@@ -118,25 +119,48 @@ namespace OnAirDeck.UnityManager
                 if (root.TryGetValue("packages", out raw) && raw is List<object>)
                     foreach (var name in (List<object>)raw)
                         if (name is string && ((string)name).Length > 0) result.Packages.Add((string)name);
-                if (root.TryGetValue("remnants", out raw) && raw is List<object>)
+            }
+            catch (Exception)
+            {
+                var empty = new PlacedRecords();
+                LoadRemnants(projectRoot, empty);
+                return empty;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The remnants live in their own file, ProjectSettings/OnAirDeck/placed-remnants.json: a Manager from before them rewrites
+        /// placed-files.json with products and packages only, and would drop them there (review R2 of option A).
+        /// </summary>
+        public static string RemnantsPathFor(string projectRoot)
+        {
+            return Path.Combine(Path.Combine(Path.Combine(projectRoot, "ProjectSettings"), "OnAirDeck"), "placed-remnants.json");
+        }
+
+        private static void LoadRemnants(string projectRoot, PlacedRecords result)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(projectRoot) || !File.Exists(RemnantsPathFor(projectRoot))) return;
+                var root = MiniJson.ParseObject(File.ReadAllText(RemnantsPathFor(projectRoot), Encoding.UTF8).TrimStart('﻿'));
+                object raw;
+                if (root == null || !root.TryGetValue("remnants", out raw) || !(raw is List<object>)) return;
+                foreach (var item in (List<object>)raw)
                 {
-                    foreach (var item in (List<object>)raw)
-                    {
-                        var obj = item as Dictionary<string, object>;
-                        var key = obj != null ? (MiniJson.GetString(obj, "key") ?? "") : "";
-                        var core = obj != null ? (MiniJson.GetString(obj, "core") ?? "") : "";
-                        if (key.Length == 0 || core.Length == 0) continue;
-                        var remnant = new PlacedRemnant { Core = core };
-                        foreach (var p in Strings(obj, "paths")) if (RemovalPlanner.IsAssetFile(p)) remnant.Paths.Add(p);
-                        if (remnant.Paths.Count > 0) result.Remnants[key] = remnant;
-                    }
+                    var obj = item as Dictionary<string, object>;
+                    var key = obj != null ? (MiniJson.GetString(obj, "key") ?? "") : "";
+                    var core = obj != null ? (MiniJson.GetString(obj, "core") ?? "") : "";
+                    if (key.Length == 0 || core.Length == 0) continue;
+                    var remnant = new PlacedRemnant { Core = core };
+                    foreach (var p in Strings(obj, "paths")) if (RemovalPlanner.IsAssetFile(p)) remnant.Paths.Add(p);
+                    if (remnant.Paths.Count > 0) result.Remnants[key] = remnant;
                 }
             }
             catch (Exception)
             {
-                return new PlacedRecords();
+                result.Remnants.Clear();
             }
-            return result;
         }
 
         private static IEnumerable<string> Strings(Dictionary<string, object> obj, string field)
@@ -383,16 +407,17 @@ namespace OnAirDeck.UnityManager
                 products.Add(product);
             }
             var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
-            if (all.Remnants.Count > 0)
+            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
+            // The remnants in their own file (an older Manager never touches it); none left: an empty list once the file exists.
+            if (all.Remnants.Count > 0 || File.Exists(RemnantsPathFor(projectRoot)))
             {
                 var remnantKeys = new List<string>(all.Remnants.Keys);
                 remnantKeys.Sort(StringComparer.Ordinal);
                 var remnants = new List<object>();
                 foreach (var key in remnantKeys)
                     remnants.Add(new Dictionary<string, object> { { "key", key }, { "core", all.Remnants[key].Core }, { "paths", Sorted(all.Remnants[key].Paths) } });
-                root["remnants"] = remnants;
+                AtomicFile.Write(RemnantsPathFor(projectRoot), JsonWriter.Write(new Dictionary<string, object> { { "remnants", remnants } }, "\n") + "\n");
             }
-            AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
         }
     }
 

@@ -76,12 +76,28 @@ internal static class RemovalChecks
         Equal("Assets/Plus/Plus.cs,Assets/User/Mine.cs", string.Join(",", stays));
 
         PlacedFiles.Save(project, placed);
+        // The run releases the record first, then keeps the remnant (review R1 of option A: in either order it stays).
+        PlacedFiles.Release(project, addonKey);
         PlacedFiles.KeepRemnant(project, addonKey, "core-x", stays);
-        PlacedFiles.Release(project, addonKey);   // the removal went through: the add-on's record goes, its remnant stays
         var loaded = PlacedFiles.Load(project);
         Require(!loaded.Products.ContainsKey(addonKey), "record released");
         Equal("Assets/Plus/Plus.cs,Assets/User/Mine.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(project, loaded, "core-x")));
         Equal(0, RemovalPlanner.RemnantsBlocking(project, loaded, "other-core").Count);
+
+        // review R2: an older Manager rewrites placed-files.json with products and packages only; the remnants live in their own
+        // file, so they survive that save.
+        File.WriteAllText(PlacedFiles.PathFor(project), "{\"format\":3,\"products\":[],\"packages\":[]}\n");
+        Equal("Assets/Plus/Plus.cs,Assets/User/Mine.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(project, PlacedFiles.Load(project), "core-x")));
+
+        // review R1: an add-on that moves nothing (every file of its own changed) still keeps what stays.
+        var nothing = NewProject();
+        Put(nothing, "Assets/Plus/Plus.cs", "plus");
+        var nothingPlaced = new PlacedRecords();
+        nothingPlaced.Products[addonKey] = Entry(nothing, "Assets/Plus/Plus.cs");
+        Put(nothing, "Assets/Plus/Plus.cs", "plus, edited");
+        var nothingPlan = RemovalPlanner.ForFiles(nothing, new[] { addonKey }, nothingPlaced, null, "");
+        Equal(RemovalRefusal.NothingHere, nothingPlan.Refusal);
+        Equal("Assets/Plus/Plus.cs", string.Join(",", RemovalPlanner.RemnantPaths(nothingPlan, nothingPlaced, new[] { addonKey })));
 
         // Gone files no longer block, and the record is pruned once nothing of it is here.
         File.Delete(Path.Combine(project, "Assets", "Plus", "Plus.cs"));

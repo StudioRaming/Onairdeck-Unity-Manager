@@ -85,7 +85,17 @@ namespace OnAirDeck.UnityManager
             {
                 // Only files another product also wrote are left: this product gives them up (they pass to that product), nothing moves.
                 if (main.Plan.Refusal == RemovalRefusal.NothingHere && addons.Count == 0)
+                {
+                    // An add-on that moves nothing still remembers what of it stays with its core (review R1 of option A).
+                    var stayingCore = CoreAddons.CoreOf(entry);
+                    var staying = stayingCore.Length > 0 ? RemovalPlanner.RemnantPaths(main.Plan, placed, main.Keys) : new List<string>();
+                    if (staying.Count > 0 && main.Keys.Count > 0)
+                    {
+                        try { PlacedFiles.KeepRemnant(root, main.Keys[0], stayingCore, staying); }
+                        catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
+                    }
                     foreach (var key in main.Keys) ReleaseRecord(root, key);
+                }
                 ExplainRefusal(main, null);
                 return;
             }
