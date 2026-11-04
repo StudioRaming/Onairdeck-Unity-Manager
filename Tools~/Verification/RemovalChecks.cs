@@ -92,6 +92,38 @@ internal static class RemovalChecks
         Equal("Assets/Core/Addon/Plus.cs", string.Join(",", RemovalPlanner.AddonLeftovers(new[] { addonPlan }, corePlan)));
         // The usual run leaves nothing: the add-on's own file goes with it, the shared one with the core.
         Equal(0, RemovalPlanner.AddonLeftovers(new[] { addon }, core).Count);
+
+        // review r2 R3: an add-on file the user changed stays (never removed): a leftover too.
+        var r3 = NewProject();
+        Put(r3, "Assets/Core/Core.cs", "core");
+        Put(r3, "Assets/Core/Addon/Plus.cs", "plus");
+        Put(r3, "Assets/Core/Addon/Helper.cs", "helper");
+        var r3Placed = new PlacedRecords();
+        r3Placed.Products[coreKey] = Entry(r3, "Assets/Core/Core.cs");
+        r3Placed.Products[addonKey] = Entry(r3, "Assets/Core/Addon/Plus.cs", "Assets/Core/Addon/Helper.cs");
+        Put(r3, "Assets/Core/Addon/Plus.cs", "plus, edited by the user");
+        var r3Addon = RemovalPlanner.ForFiles(r3, new[] { addonKey }, r3Placed, null, "");
+        Equal("Assets/Core/Addon/Plus.cs", string.Join(",", r3Addon.Changed));
+        var r3Core = RemovalPlanner.ForFiles(r3, new[] { coreKey }, r3Placed, null, "", new[] { addonKey });
+        Equal("Assets/Core/Addon/Plus.cs", string.Join(",", RemovalPlanner.AddonLeftovers(new[] { r3Addon }, r3Core)));
+
+        // review r2 R4: a file the add-on only wrote over (another product's, recorded as touched) stays: a leftover. One the core
+        // recorded (the add-on carried the core's file over an install of the core) goes with the core and is none.
+        var r4 = NewProject();
+        Put(r4, "Assets/Core/Core.cs", "core");
+        Put(r4, "Assets/Other/Lib.cs", "lib");
+        Put(r4, "Assets/Core/Addon/Plus.cs", "plus");
+        var r4Placed = new PlacedRecords();
+        r4Placed.Products[coreKey] = Entry(r4, "Assets/Core/Core.cs");
+        r4Placed.Products[PlacedFiles.LicenseKey("other")] = Entry(r4, "Assets/Other/Lib.cs");
+        var r4AddonEntry = Entry(r4, "Assets/Core/Addon/Plus.cs");
+        r4AddonEntry.Touched.Add("Assets/Other/Lib.cs");
+        r4AddonEntry.Touched.Add("Assets/Core/Core.cs");
+        r4Placed.Products[addonKey] = r4AddonEntry;
+        var r4Addon = RemovalPlanner.ForFiles(r4, new[] { addonKey }, r4Placed, null, "");
+        var r4Core = RemovalPlanner.ForFiles(r4, new[] { coreKey }, r4Placed, null, "", new[] { addonKey });
+        Equal("Assets/Core/Core.cs", string.Join(",", r4Core.Files));
+        Equal("Assets/Other/Lib.cs", string.Join(",", RemovalPlanner.AddonLeftovers(new[] { r4Addon }, r4Core)));
     }
 
     // G4 retest 2026-11-04: VModular Plus ships no atelier.product.json, so its row said "to get" after a good install.

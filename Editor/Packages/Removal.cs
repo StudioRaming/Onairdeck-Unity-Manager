@@ -507,6 +507,8 @@ namespace OnAirDeck.UnityManager
         public readonly List<string> Shared = new List<string>();
         /// <summary>Files this product created that are no longer what it wrote (changed, or replaced by the user's own): they stay.</summary>
         public readonly List<string> Changed = new List<string>();
+        /// <summary>Files this product only wrote over (they were there before its install) that are here: never removed with it.</summary>
+        public readonly List<string> Touched = new List<string>();
         /// <summary>Folders this product created that are empty once <see cref="Files"/> are gone, deepest first: they go too.</summary>
         public readonly List<string> Folders = new List<string>();
         /// <summary>Every folder this product's installs created (the run checks again, after the files went, which of them are empty).</summary>
@@ -577,6 +579,7 @@ namespace OnAirDeck.UnityManager
             var guids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var others = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var touchedMine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var recorded = false;
             foreach (var pair in placed.Products)
             {
@@ -584,6 +587,7 @@ namespace OnAirDeck.UnityManager
                 {
                     recorded = true;
                     mine.AddRange(pair.Value.Paths);
+                    foreach (var p in pair.Value.Touched) touchedMine.Add(p);
                     foreach (var f in pair.Value.Folders) myFolders.Add(f);
                     foreach (var g in pair.Value.Guids) guids[g.Key] = g.Value;
                     foreach (var h in pair.Value.Hashes) hashes[h.Key] = h.Value;
@@ -624,6 +628,10 @@ namespace OnAirDeck.UnityManager
             }
             foreach (var path in own)
                 if (!others.Contains(path) && seen.Add(path) && File.Exists(Absolute(projectRoot, path))) plan.Files.Add(path);
+            // What it only wrote over stays; listed so a core's removal can see an add-on's file that stays (review r2 R4).
+            foreach (var path in touchedMine)
+                if (IsAssetFile(path) && !seen.Contains(path) && File.Exists(Absolute(projectRoot, path))) plan.Touched.Add(path);
+            plan.Touched.Sort(StringComparer.Ordinal);
             plan.Files.Sort(StringComparer.Ordinal);
             if (plan.Files.Count == 0) { plan.Refusal = RemovalRefusal.NothingHere; return plan; }
             plan.CreatedFolders.AddRange(myFolders);
@@ -699,9 +707,10 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The files of the add-ons going first that would stay after the run: kept as shared by an add-on and not taken by the
-        /// core's step (another product holds them). A core that goes while one stays leaves that add-on's code without its core
-        /// (review R1 of the G4 removal fix), so the window refuses it. Another product's license file is not a leftover.
+        /// The files of the add-ons going first that would stay after the run and that the core's step does not take: kept as shared
+        /// (another product holds them, review R1), changed by the user (review r2 R3) or only written over (review r2 R4). A core
+        /// that goes while one stays leaves that add-on's code without its core, so the window refuses it. Another product's license
+        /// file is not a leftover.
         /// </summary>
         public static List<string> AddonLeftovers(IEnumerable<RemovalPlan> addonPlans, RemovalPlan corePlan)
         {
@@ -711,7 +720,10 @@ namespace OnAirDeck.UnityManager
             foreach (var plan in addonPlans)
             {
                 if (plan == null) continue;
-                foreach (var path in plan.Shared)
+                var staying = new List<string>(plan.Shared);
+                staying.AddRange(plan.Changed);
+                staying.AddRange(plan.Touched);
+                foreach (var path in staying)
                     if (!IsLicenseFile(path) && !taken.Contains(path) && !left.Contains(path)) left.Add(path);
             }
             left.Sort(StringComparer.Ordinal);
