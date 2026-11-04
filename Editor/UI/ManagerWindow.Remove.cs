@@ -89,12 +89,9 @@ namespace OnAirDeck.UnityManager
                     // An add-on that moves nothing still remembers what of it stays with its core (review R1 of option A).
                     var stayingCore = CoreAddons.CoreOf(entry);
                     var staying = stayingCore.Length > 0 ? RemovalPlanner.RemnantPaths(main.Plan, placed, main.Keys) : new List<string>();
-                    if (staying.Count > 0 && main.Keys.Count > 0)
-                    {
-                        try { PlacedFiles.KeepRemnant(root, main.Keys[0], stayingCore, staying); }
-                        catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
-                    }
-                    foreach (var key in main.Keys) ReleaseRecord(root, key);
+                    // The record goes only once the remnant is written; a failed write keeps it (review r2 R1).
+                    try { PlacedFiles.ReleaseKeepingRemnant(root, main.Keys, stayingCore, staying); }
+                    catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
                 }
                 ExplainRefusal(main, null);
                 return;
@@ -121,6 +118,12 @@ namespace OnAirDeck.UnityManager
             // Files of an add-on removed earlier on its own that stayed and still need this core (G4-R7).
             if (providedCore.Length > 0)
             {
+                if (placed.RemnantsUnreadable)
+                {
+                    // What stayed is unknown: the core stays (review r2 R7).
+                    SetMessage(ManagerText.RmRemnantsUnreadable.Replace("{c}", entry.Name), MessageType.Warning);
+                    return;
+                }
                 var remnants = RemovalPlanner.RemnantsBlocking(root, placed, providedCore);
                 if (remnants.Count > 0)
                 {
@@ -358,13 +361,10 @@ namespace OnAirDeck.UnityManager
                     {
                         // Only a removal that went through gives up the record: the files another product also wrote pass to it, so the
                         // last of them removes them. A partial one keeps it, so nothing passes on too early.
-                        foreach (var key in step.Keys) ReleaseRecord(root, key);
-                        if (step.RemnantCore.Length > 0 && step.RemnantPaths.Count > 0 && step.Keys.Count > 0)
-                        {
-                            // The add-on's files that stayed still need its core: the core is not removed while they are here (G4-R7).
-                            try { PlacedFiles.KeepRemnant(root, step.Keys[0], step.RemnantCore, step.RemnantPaths); }
-                            catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
-                        }
+                        // An add-on's files that stayed still need its core (G4-R7): they are remembered first, and the record goes only
+                        // once that is written; a failed write keeps the record (review r2 R1).
+                        try { PlacedFiles.ReleaseKeepingRemnant(root, step.Keys, step.RemnantCore, step.RemnantPaths); }
+                        catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the removal record: " + e.Message); }
                         try { InstallRecords.Remove(root, step.LicenseIds); }
                         catch (Exception e) { Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not update the install record: " + e.Message); }
                         _lastFailure.Remove(step.Entry.Key);

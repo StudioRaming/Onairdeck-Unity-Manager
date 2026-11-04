@@ -46,6 +46,11 @@ namespace OnAirDeck.UnityManager
         public readonly HashSet<string> Packages = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>Per removed add-on key, what of it stayed (<see cref="PlacedRemnant"/>).</summary>
         public readonly Dictionary<string, PlacedRemnant> Remnants = new Dictionary<string, PlacedRemnant>(StringComparer.Ordinal);
+        /// <summary>
+        /// The remnant file exists but cannot be read (cut, empty, not a list): what it held is unknown, so a core is not removed and
+        /// the file is not overwritten (review r2 R7 of the remnant records).
+        /// </summary>
+        public bool RemnantsUnreadable;
     }
 
     /// <summary>
@@ -145,7 +150,7 @@ namespace OnAirDeck.UnityManager
                 if (string.IsNullOrEmpty(projectRoot) || !File.Exists(RemnantsPathFor(projectRoot))) return;
                 var root = MiniJson.ParseObject(File.ReadAllText(RemnantsPathFor(projectRoot), Encoding.UTF8).TrimStart('﻿'));
                 object raw;
-                if (root == null || !root.TryGetValue("remnants", out raw) || !(raw is List<object>)) return;
+                if (root == null || !root.TryGetValue("remnants", out raw) || !(raw is List<object>)) { result.RemnantsUnreadable = true; return; }
                 foreach (var item in (List<object>)raw)
                 {
                     var obj = item as Dictionary<string, object>;
@@ -160,6 +165,7 @@ namespace OnAirDeck.UnityManager
             catch (Exception)
             {
                 result.Remnants.Clear();
+                result.RemnantsUnreadable = true;
             }
         }
 
@@ -352,6 +358,7 @@ namespace OnAirDeck.UnityManager
         {
             if (string.IsNullOrEmpty(projectRoot) || string.IsNullOrEmpty(key) || string.IsNullOrEmpty(core) || paths == null) return;
             var all = Load(projectRoot);
+            if (all.RemnantsUnreadable) throw new InvalidOperationException("The remnant record cannot be read: " + RemnantsPathFor(projectRoot));
             PlacedRemnant remnant;
             if (!all.Remnants.TryGetValue(key, out remnant)) remnant = new PlacedRemnant { Core = core };
             remnant.Core = core;
@@ -359,6 +366,18 @@ namespace OnAirDeck.UnityManager
             if (remnant.Paths.Count == 0) return;
             all.Remnants[key] = remnant;
             Save(projectRoot, all);
+        }
+
+        /// <summary>
+        /// After a removal of an add-on that went through: keeps what of it stays (<paramref name="paths"/>, may be empty) with its core,
+        /// then gives up its records. The records go only once the remnant is written: a failed write throws and keeps them, so nothing
+        /// that still needs the core is forgotten (review r2 R1 of the remnant records).
+        /// </summary>
+        public static void ReleaseKeepingRemnant(string projectRoot, IList<string> keys, string core, ICollection<string> paths)
+        {
+            if (keys == null || keys.Count == 0) return;
+            if (!string.IsNullOrEmpty(core) && paths != null && paths.Count > 0) KeepRemnant(projectRoot, keys[0], core, paths);
+            foreach (var key in keys) Release(projectRoot, key);
         }
 
         /// <summary>Drops the remnant files that are gone, and a remnant with none left.</summary>
@@ -409,7 +428,7 @@ namespace OnAirDeck.UnityManager
             var root = new Dictionary<string, object> { { "format", Format }, { "products", products }, { "packages", Sorted(all.Packages) } };
             AtomicFile.Write(PathFor(projectRoot), JsonWriter.Write(root, "\n") + "\n");
             // The remnants in their own file (an older Manager never touches it); none left: an empty list once the file exists.
-            if (all.Remnants.Count > 0 || File.Exists(RemnantsPathFor(projectRoot)))
+            if (!all.RemnantsUnreadable && (all.Remnants.Count > 0 || File.Exists(RemnantsPathFor(projectRoot))))
             {
                 var remnantKeys = new List<string>(all.Remnants.Keys);
                 remnantKeys.Sort(StringComparer.Ordinal);

@@ -99,6 +99,40 @@ internal static class RemovalChecks
         Equal(RemovalRefusal.NothingHere, nothingPlan.Refusal);
         Equal("Assets/Plus/Plus.cs", string.Join(",", RemovalPlanner.RemnantPaths(nothingPlan, nothingPlaced, new[] { addonKey })));
 
+        // review r2 R8 / R1: the release keeps the remnant first and gives up the record only once that is written.
+        PlacedFiles.Save(nothing, nothingPlaced);
+        PlacedFiles.ReleaseKeepingRemnant(nothing, new[] { addonKey }, "core-x", new[] { "Assets/Plus/Plus.cs" });
+        var afterRelease = PlacedFiles.Load(nothing);
+        Require(!afterRelease.Products.ContainsKey(addonKey), "record released");
+        Equal("Assets/Plus/Plus.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(nothing, afterRelease, "core-x")));
+        // The remnant cannot be written (a folder where its file goes): the record stays, nothing is lost.
+        var blocked = NewProject();
+        Put(blocked, "Assets/Plus/Plus.cs", "plus");
+        var blockedPlaced = new PlacedRecords();
+        blockedPlaced.Products[addonKey] = Entry(blocked, "Assets/Plus/Plus.cs");
+        PlacedFiles.Save(blocked, blockedPlaced);
+        Directory.CreateDirectory(PlacedFiles.RemnantsPathFor(blocked));
+        var threw = false;
+        try { PlacedFiles.ReleaseKeepingRemnant(blocked, new[] { addonKey }, "core-x", new[] { "Assets/Plus/Plus.cs" }); }
+        catch (Exception) { threw = true; }
+        Require(threw, "the failed write is reported");
+        Require(PlacedFiles.Load(blocked).Products.ContainsKey(addonKey), "record kept when the remnant could not be written");
+
+        // review r2 R7: an unreadable remnant file is not an empty one: it is not overwritten, and it reads as unknown.
+        var broken = NewProject();
+        Directory.CreateDirectory(Path.GetDirectoryName(PlacedFiles.RemnantsPathFor(broken)));
+        File.WriteAllText(PlacedFiles.RemnantsPathFor(broken), "{\"remnants\": [");
+        var brokenLoaded = PlacedFiles.Load(broken);
+        Require(brokenLoaded.RemnantsUnreadable, "a cut file is unreadable");
+        PlacedFiles.Save(broken, brokenLoaded);
+        Equal("{\"remnants\": [", File.ReadAllText(PlacedFiles.RemnantsPathFor(broken)));
+        var keepThrew = false;
+        try { PlacedFiles.KeepRemnant(broken, addonKey, "core-x", new[] { "Assets/Plus/Plus.cs" }); }
+        catch (Exception) { keepThrew = true; }
+        Require(keepThrew, "no remnant is added over an unreadable file");
+        File.WriteAllText(PlacedFiles.RemnantsPathFor(broken), "{\"remnants\": []}");
+        Require(!PlacedFiles.Load(broken).RemnantsUnreadable, "an empty list is readable");
+
         // Gone files no longer block, and the record is pruned once nothing of it is here.
         File.Delete(Path.Combine(project, "Assets", "Plus", "Plus.cs"));
         Equal("Assets/User/Mine.cs", string.Join(",", RemovalPlanner.RemnantsBlocking(project, PlacedFiles.Load(project), "core-x")));
