@@ -240,17 +240,19 @@ namespace OnAirDeck.UnityManager
         private void DrawScreen(Rect body)
         {
             var notice = DeviceLimitNotice.Current;
-            if ((_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired))
-                DrawRequiredUpdate(body);
-            else if (_signingIn) DrawSigningIn(body);
-            else if (_session == null)
-            {
-                if (_view == (int)View.Offline) DrawOffline(body);
-                else if (_timeoutText != null) DrawTimeout(body);
-                else DrawSignedOut(body);
-            }
-            else if (notice != null && notice.Kind == NoticeKind.DeviceLimit) DrawDeviceLimit(body, notice);
-            else if (_view == (int)View.Offline) DrawOffline(body);
+            var screen = ManagerScreenRoute.Pick(
+                _view == (int)View.Offline,
+                (_update != null && _update.MustUpdate) || (notice != null && notice.Kind == NoticeKind.UpdateRequired),
+                _signingIn,
+                _session != null,
+                _timeoutText != null,
+                notice != null && notice.Kind == NoticeKind.DeviceLimit);
+            if (screen == ManagerScreen.Offline) DrawOffline(body);
+            else if (screen == ManagerScreen.RequiredUpdate) DrawRequiredUpdate(body);
+            else if (screen == ManagerScreen.SigningIn) DrawSigningIn(body);
+            else if (screen == ManagerScreen.Timeout) DrawTimeout(body);
+            else if (screen == ManagerScreen.SignedOut) DrawSignedOut(body);
+            else if (screen == ManagerScreen.DeviceLimit) DrawDeviceLimit(body, notice);
             else if (_view == (int)View.Devices) DrawDeviceManager(body);
             else if (_view == (int)View.Ask) DrawAsk(body);
             else if (_view == (int)View.Conflicts) DrawConflicts(body);

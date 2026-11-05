@@ -228,6 +228,10 @@ namespace OnAirDeck.UnityManager
                 if (SRGui.Button(new GUIContent(ManagerText.ViewAt), SRButtonKind.Secondary, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
                     Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
             }
+            // The licence-file import works with no update, sign-in or network, so it stays reachable here (review R34-02).
+            GUILayout.Space(SRMetrics.Space4);
+            if (SRGui.Button(new GUIContent(ManagerText.OlEntry), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
+                Defer(OpenOffline);
             if (!string.IsNullOrEmpty(_message))
             {
                 GUILayout.Space(SRMetrics.Space8);

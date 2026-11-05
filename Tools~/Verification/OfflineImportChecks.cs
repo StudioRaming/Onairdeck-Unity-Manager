@@ -35,6 +35,7 @@ internal static class OfflineImportChecks
         check("offline import: only the newest file of a licence stays, and an older bundle never replaces it", NewestWins);
         check("offline import: a list shows each file's state; Remove takes only the named file, and a path cannot escape", ListAndRemove);
         check("offline import: device code groups, check code vectors, file form with an escaped label", DeviceCodeForms);
+        check("offline screen: drawn before a forced update and a device limit, signed in or out (review R34-02)", OfflineScreenFirst);
     }
 
     private static string Folder(string name)
@@ -167,6 +168,22 @@ internal static class OfflineImportChecks
     }
 
     private static string Url(byte[] bytes) { return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'); }
+    private static void OfflineScreenFirst()
+    {
+        // offlineView, mustUpdate, signingIn, signedIn, timedOut, deviceLimit
+        Equal(ManagerScreen.Offline, ManagerScreenRoute.Pick(true, true, false, false, false, false));
+        Equal(ManagerScreen.Offline, ManagerScreenRoute.Pick(true, true, false, true, false, false));
+        Equal(ManagerScreen.Offline, ManagerScreenRoute.Pick(true, false, false, true, false, true));
+        Equal(ManagerScreen.Offline, ManagerScreenRoute.Pick(true, false, false, false, true, false));
+        // Without the offline view nothing else moves.
+        Equal(ManagerScreen.RequiredUpdate, ManagerScreenRoute.Pick(false, true, true, true, false, true));
+        Equal(ManagerScreen.SigningIn, ManagerScreenRoute.Pick(false, false, true, false, false, false));
+        Equal(ManagerScreen.Timeout, ManagerScreenRoute.Pick(false, false, false, false, true, false));
+        Equal(ManagerScreen.SignedOut, ManagerScreenRoute.Pick(false, false, false, false, false, false));
+        Equal(ManagerScreen.DeviceLimit, ManagerScreenRoute.Pick(false, false, false, true, false, true));
+        Equal(ManagerScreen.Signed, ManagerScreenRoute.Pick(false, false, false, true, false, false));
+    }
+
     private static void Require(bool condition) { if (!condition) throw new Exception("Assertion failed"); }
     private static void Equal(object expected, object actual) { if (!object.Equals(expected, actual)) throw new Exception("Expected " + expected + ", got " + actual); }
 }
