@@ -6,9 +6,10 @@ namespace OnAirDeck.License
 {
     /// <summary>
     /// The check a seller's editor code calls: <c>OnAirDeckLicense.Check("&lt;product id&gt;")</c>.
-    /// Valid means: Atelier Manager is signed in on this computer (its session marker exists)
+    /// Valid means either of two things. Atelier Manager is signed in on this computer (its session marker exists)
     /// and a license file under Assets/StudioRaming_Onairdeck/ carries a valid OnAirDeck signature for
-    /// this product, for that account, and for the current time. Works offline.
+    /// this product, for that account, and for the current time. Or an offline licence file for this product,
+    /// fixed to this PC, is in the per-PC offline folder; that one needs no sign-in. Both work offline.
     /// Honest limit: this is a client-side check. It stops casual sharing; it cannot stop someone who
     /// decompiles and edits the assembly that calls it.
     /// </summary>
@@ -18,6 +19,7 @@ namespace OnAirDeck.License
         public const string InstallRoot = "Assets/StudioRaming_Onairdeck";
         public const string SessionMarkerFolder = "OnAirDeck";
         public const string SessionMarkerFile = "session.json";
+        public const string OfflineFolderName = "offline";
         public const string SignInHint = "Sign in with Atelier Manager (Window > Atelier Manager) and reopen this tool. If the license is missing, download the asset again from the Manager.";
 
         /// <summary>Unity project root. Null means the current directory, which the Unity Editor keeps at the project folder.</summary>
@@ -25,6 +27,12 @@ namespace OnAirDeck.License
 
         /// <summary>Path of the Manager's session marker. Null means &lt;local app data&gt;/OnAirDeck/session.json.</summary>
         public static string SessionMarkerPath;
+
+        /// <summary>Folder of the offline licence files. Null means &lt;local app data&gt;/OnAirDeck/offline.</summary>
+        public static string OfflineFolderPath;
+
+        /// <summary>This PC's raw device id, set by the Editor-only adapter assembly. Null or unusable: offline files fail closed.</summary>
+        public static Func<string> RawDeviceIdProvider;
 
         /// <summary>Check(productId) results are reused for this long, so calling it from OnGUI stays cheap. 0 disables.</summary>
         public static int CacheSeconds = 30;
@@ -45,7 +53,9 @@ namespace OnAirDeck.License
                 if (CacheSeconds > 0 && Cache.TryGetValue(key, out hit) && now - hit.At < CacheSeconds) return hit.Result;
             }
             var result = CheckUncached(key, now);
-            lock (Cache) { Cache[key] = new CacheEntry { Result = result, At = now }; }
+            // The adapter may simply not have run yet at this point of a domain reload, so that answer is not kept.
+            if (result.Status != LicenseStatus.OfflineDeviceUnavailable)
+                lock (Cache) { Cache[key] = new CacheEntry { Result = result, At = now }; }
             return result;
         }
 
@@ -83,8 +93,19 @@ namespace OnAirDeck.License
         private static LicenseCheckResult CheckUncached(string productId, long now)
         {
             var userId = ReadSignedInUserId();
-            if (string.IsNullOrEmpty(userId)) return LicenseCheckResult.Fail(LicenseStatus.NotSignedIn, SignInHint);
+            LicenseCheckResult online = null;
+            if (!string.IsNullOrEmpty(userId))
+            {
+                online = CheckOnline(productId, userId, now);
+                if (online.IsValid) return online;
+            }
+            // Signed in or not. When the file exists and fails, its state is the one to report: it is what a closed member holds.
+            var offline = CheckOffline(productId);
+            return offline ?? online ?? LicenseCheckResult.Fail(LicenseStatus.NotSignedIn, SignInHint);
+        }
 
+        private static LicenseCheckResult CheckOnline(string productId, string userId, long now)
+        {
             var candidates = FindLicenseFiles(productId);
             if (candidates.Count == 0)
                 return LicenseCheckResult.Fail(LicenseStatus.LicenseMissing, "No OnAirDeck license for this product was found under " + InstallRoot + "/. Download the asset again with Atelier Manager.");
@@ -99,6 +120,49 @@ namespace OnAirDeck.License
                 if (first == null) first = result;
             }
             return first;
+        }
+
+        /// <summary>The verdict of this product's offline file, or null when there is none.</summary>
+        private static LicenseCheckResult CheckOffline(string productId)
+        {
+            if (!IsSafeFileId(productId)) return null;
+            var path = Path.Combine(ResolveOfflineFolder(), productId + ".license");
+            if (!File.Exists(path)) return null;
+            string text;
+            try { text = File.ReadAllText(path); }
+            catch (IOException) { return LicenseCheckResult.Fail(LicenseStatus.LicenseMissing, "The offline licence file could not be read: " + path); }
+            catch (UnauthorizedAccessException) { return LicenseCheckResult.Fail(LicenseStatus.LicenseMissing, "The offline licence file could not be read: " + path); }
+            var result = OfflineLicenseVerifier.Verify(text, productId, ResolveDeviceHash());
+            result.LicensePath = path;
+            return result;
+        }
+
+        /// <summary>This PC's plain device hash, or null when the adapter is not loaded or the id is unusable.</summary>
+        internal static string ResolveDeviceHash()
+        {
+            var provider = RawDeviceIdProvider;
+            if (provider == null) return null;
+            try { return OfflineDeviceHash.Compute(provider()); }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>Product ids become a file name here: letters, digits, '.', '_' and '-' only, so no path can be injected.</summary>
+        internal static bool IsSafeFileId(string id)
+        {
+            if (string.IsNullOrEmpty(id) || id.Length > 100 || id.IndexOf("..", StringComparison.Ordinal) >= 0) return false;
+            foreach (var c in id)
+            {
+                var ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        internal static string ResolveOfflineFolder()
+        {
+            if (!string.IsNullOrEmpty(OfflineFolderPath)) return OfflineFolderPath;
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(Path.Combine(local, SessionMarkerFolder), OfflineFolderName);
         }
 
         private sealed class Candidate { public string Path; public string Text; public long Exp; }

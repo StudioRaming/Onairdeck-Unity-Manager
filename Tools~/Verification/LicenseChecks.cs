@@ -14,6 +14,10 @@ internal static class LicenseChecks
     private const string RealLicense =
         "eyJ2IjoxLCJpc3MiOiJvbmFpcmRlY2siLCJjbGllbnQiOiJ1bml0eS1tYW5hZ2VyIiwidXNlcl9pZCI6IjJhYmVlODI1LTVmODYtNDY1My04YTk5LTRhYTA5OTMyMzFhZiIsIml0ZW1faWQiOiI4ZWE0M2UzOC0wZjU2LTRmYjItOWE3YS03MWM5YzJiOWJiZWEiLCJwcm9kdWN0X2lkIjoiMmQ1ZjgzYjctYmFjZi00MTA0LWIzNTItNmM4NDE4MDgzMGMxIiwicHJvZHVjdF9uYW1lIjoiVW5pdHkgVGV4dHVyZSBDb2xvciBUb29sIDEuMCIsImlhdCI6MTc5MTk2MTgwMCwiZXhwIjoxNzkyNTY2NjAwLCJub25jZSI6ImJjZGNhODk4NTY4MGI2NmZiMjlmY2EwYjhmMWQ3MzBhIn0"
         + ".sznJUKAV3ANy6ScaXqV27fBuUS2XMX4k8MurYee1M5mPrLvGdwn6Wjnlepcy5jQnBP3DvWsDcllLvv9SgoHaak5g5D__eZdyQqw4l_zhn664mFYQQyiZesl76ta9xdmXFdzSq-HQeAVhuGvVpo4Qib_4AYncZ0mm3bmA0Ze4KhxxVpvTKMpdMyizPmWD1lf7OIgLq1yKu-ahQGxTTxlv5VGd20g1WjFxvYczBNGI0gPbYK6ZPhN4Jfym856Z1qstX2HEub2272hqsCATAIXjx-KnA1OWTDDVChLXfZUgVcNPg3IaPaY63ZLyAH5mD4pGlkboPu1cM8hHPYNKrqfzNQ";
+    internal const string RealLicenseForOffline = RealLicense;
+    internal const string RealUserForOffline = RealUser;
+    internal const long RealIatForOffline = RealIat;
+    internal const long RealExpForOffline = RealExp;
     private const string RealUser = "2abee825-5f86-4653-8a99-4aa0993231af";
     private const string RealProduct = "2d5f83b7-bacf-4104-b352-6c84180830c1";
     private const long RealIat = 1791961800;

@@ -6,6 +6,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);ONAIRDECK_VERIFICATION</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
@@ -22,6 +23,8 @@
     <Compile Include="../../Editor/License/SessionMarker.cs" />
     <Compile Include="../../License/*.cs" />
     <Compile Include="LicenseChecks.cs" />
+    <Compile Include="OfflineChecks.cs" />
+    <Content Include="offline-license.vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="PackageChecks.cs" />
     <Compile Include="DeviceChecks.cs" />
     <Compile Include="CatalogChecks.cs" />

@@ -195,13 +195,13 @@ namespace OnAirDeck.License
             catch (FormatException) { return null; }
         }
 
-        private static Dictionary<string, object> ParsePayload(byte[] payload)
+        internal static Dictionary<string, object> ParsePayload(byte[] payload)
         {
             try { return MiniJson.ParseObject(Encoding.UTF8.GetString(payload)); }
             catch (ArgumentException) { return null; }
         }
 
-        private static bool VerifySignature(byte[] data, byte[] signature, RSAParameters publicKey)
+        internal static bool VerifySignature(byte[] data, byte[] signature, RSAParameters publicKey)
         {
             try
             {
