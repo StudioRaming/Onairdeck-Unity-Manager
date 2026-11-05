@@ -2,8 +2,8 @@
 
 ## [Unreleased]
 
-- **A download is checked against the store's checksum before it is installed.** plugin-download now sends `sha256` with every file (the SHA-256 the store recorded when the file was uploaded). The Manager hashes each downloaded file and refuses it before anything is extracted or imported when it differs ("the downloaded file does not match the store's checksum; nothing was installed"); the download is deleted. A file the store has no checksum for (uploaded before the server recorded them, or an older server) is installed as before and the Console says so once per file. A value that is not 64 hex digits is refused, never read as missing. Covers product files, licence builds (packages and their dependencies) and the legacy MingToon handoff (`DownloadIntegrity`, `Downloader.DownloadVerifiedAsync`).
-- Verification: headless checks for a match (either case), a mismatch, no checksum (null, empty) and a malformed value; compile check against the 2021.3 assemblies.
+- **A download is checked against the store's checksum before it is installed.** plugin-download now sends `sha256` with every file (the SHA-256 the store recorded when the file was uploaded). The Manager hashes each downloaded file and refuses it before anything is extracted or imported when it differs ("the downloaded file does not match the store's checksum; nothing was installed"); the download is deleted. plugin-download also sends `sha256_required`: when it is true, a file without a checksum is refused too. A file the store has no checksum for and does not require one for (not backfilled yet, or an older server) is installed as before and the Console says so once per file. A value that is not 64 hex digits is refused, never read as missing. Covers product files, licence builds (packages and their dependencies) and the legacy MingToon handoff (`DownloadIntegrity`, `Downloader.DownloadVerifiedAsync`).
+- Verification: headless checks for a match (either case), a mismatch, no checksum (null, empty), a required checksum that is missing or present, a malformed value and the cleanup of a refused download; compile check against the 2021.3 assemblies.
 
 ## [0.1.7]
 
