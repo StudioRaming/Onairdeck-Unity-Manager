@@ -39,6 +39,7 @@ internal static class Program
             AuthChecks.Run(Check);
             LicenseChecks.Run(Check, _project);
             OfflineChecks.Run(Check, _project);
+            OfflineImportChecks.Run(Check, _project);
             PackageChecks.Run(Check, _project);
             DeviceChecks.Run(Check);
             CatalogChecks.Run(Check);

@@ -24,6 +24,8 @@
     <Compile Include="../../License/*.cs" />
     <Compile Include="LicenseChecks.cs" />
     <Compile Include="OfflineChecks.cs" />
+    <Compile Include="OfflineImportChecks.cs" />
+    <Compile Include="../../Editor/License/OfflineImport.cs" />
     <Content Include="offline-license.vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="PackageChecks.cs" />
     <Compile Include="DeviceChecks.cs" />
