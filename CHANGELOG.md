@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- **A download is checked against the store's checksum before it is installed.** plugin-download now sends `sha256` with every file (the SHA-256 the store recorded when the file was uploaded). The Manager hashes each downloaded file and refuses it before anything is extracted or imported when it differs ("the downloaded file does not match the store's checksum; nothing was installed"); the download is deleted. A file the store has no checksum for (uploaded before the server recorded them, or an older server) is installed as before and the Console says so once per file. A value that is not 64 hex digits is refused, never read as missing. Covers product files, licence builds (packages and their dependencies) and the legacy MingToon handoff (`DownloadIntegrity`, `Downloader.DownloadVerifiedAsync`).
+- Verification: headless checks for a match (either case), a mismatch, no checksum (null, empty) and a malformed value; compile check against the 2021.3 assemblies.
+
 ## [0.1.7]
 
 - **A queued import is never lost to a script reload.** While the Manager imports one `.unitypackage` after another (a core, then its add-on), script reloads are held until the queue is done (`ImportReloadHold`), so Unity's completion callback of each import arrives. An import whose window was closed with X (Unity sends no callback then), or that gets no callback in time, is ended by checking its files on disk (`ImportWatcher`); any failure in that check still releases the hold and moves the queue on. G4 real-editor check 2026-11-04: VModular, then VModular Plus, each through its own callback, one reload after both.

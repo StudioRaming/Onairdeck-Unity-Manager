@@ -54,6 +54,26 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>
+        /// A plugin-download file: <see cref="DownloadAsync"/>, then the server's checksum (<see cref="DownloadIntegrity"/>)
+        /// before the caller extracts or imports it. A mismatch deletes the download and throws; no checksum is logged.
+        /// </summary>
+        public static async Task<string> DownloadVerifiedAsync(DownloadFile file, string safeFileName, Action<float> onProgress, CancellationToken cancel)
+        {
+            var path = await DownloadAsync(file.url, safeFileName, onProgress, cancel);
+            try
+            {
+                if (DownloadIntegrity.Check(path, file.sha256, safeFileName) == DownloadIntegrity.Outcome.NoServerChecksum)
+                    Debug.LogWarning(OnAirDeckConfig.LogPrefix + "The store sent no checksum for " + safeFileName + "; installed without one.");
+            }
+            catch
+            {
+                TryDeleteFolder(Path.GetDirectoryName(path));
+                throw;
+            }
+            return path;
+        }
+
         public static void TryDeleteFolder(string folder)
         {
             try

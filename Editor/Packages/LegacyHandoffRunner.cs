@@ -127,9 +127,9 @@ namespace OnAirDeck.UnityManager
                 throw new LegacyCleanupRequiredException(LegacyInstallText.HandoffUnavailable(LegacyInstallText.Language(), request.Product, request.Folder, false));
             PackageDownloadChecks.RequireHttps(file.url);
 
-            // The license download gives a size but no hash (contract v9.5): the size check below plus the content checks (installer config,
-            // package.json identity, full extraction in MingToonLegacyCleanup.Stage). A server SHA-256 would be verified here, before the size.
-            var path = await Downloader.DownloadAsync(file.url, PathSafety.SafeFileName(file.file_name),
+            // The server's SHA-256 (plugin-download sha256, when it recorded one) is verified by DownloadVerifiedAsync before the size check
+            // below and the content checks (installer config, package.json identity, full extraction in MingToonLegacyCleanup.Stage).
+            var path = await Downloader.DownloadVerifiedAsync(file, PathSafety.SafeFileName(file.file_name),
                 p => { if (onProgress != null) onProgress("Downloading " + request.Product + " " + file.file_name, start + p * 0.5f); }, cancel);
             folders.Add(Path.GetDirectoryName(path));
             var size = new FileInfo(path).Length;
