@@ -71,11 +71,21 @@ namespace OnAirDeck.License
     /// <summary>
     /// Every offline key ever used. A perpetual file has no expiry and a closed member cannot get a newer build, so a key
     /// is never removed from this table. The online signing key is never in it, so an online signature cannot pass here.
-    /// No production key exists yet: until one is added, every perpetual file reports OfflineKeyUnknown (fails closed).
+    /// A file whose kid is not in this table reports OfflineKeyUnknown (fails closed).
     /// </summary>
     internal static class OfflineKeys
     {
-        internal static readonly OfflineKey[] Production = new OfflineKey[0];
+        // Public halves only (RSA-2048, exponent 65537). Each entry: kid, modulus (unsigned big-endian, 256 bytes) and the
+        // SHA-256 of that modulus as four big-endian words; the first word starts with the kid. Append only, never remove.
+        internal static readonly OfflineKey[] Production =
+        {
+            // First production offline key, generated 2026-11-07 on the main PC; the private half stays offline.
+            new OfflineKey(
+                "61ee82969f30f1aa",
+                Convert.FromBase64String(
+                    "4jjtlRziq5OmJE/Cgvn100qBgAdUr0AWy+EoIdoe3FlC/+6LcUbd4AZ9K0LWAcccDfmlpOVVlKOO5res1l3sniTnutJaU0UM70JskXOww+eEwbHncH2TKjGdNOtMOvWpwnF7VVwTLHqmwVRQyJ6MS6WCsr9GIlogIaHAXrAVeLbW4l6oCT4gibNwaDhVTR/vyf6tawlGvwKYNWEuWy1/e0sJs1VYWN6H1Cxkgwt7jbq51N4iSKgbdQgq53J1+yJ7snmLJeNmIlz0e90C/49hB41B/v+lPwnSDBjIOQnSh+7bqGQC7MZQOqvpTAb3OUm4L8jboiir2zQeorcfNBFVdQ=="),
+                0x61ee82969f30f1aaUL, 0x8639b7cbe3f59927UL, 0xd7e6f1edb51f1f82UL, 0x4bf01b768d7bd98cUL),
+        };
 
 #if ONAIRDECK_VERIFICATION
         /// <summary>Only in the Verification program; a normal build has no way to add a key.</summary>
