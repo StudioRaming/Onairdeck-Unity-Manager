@@ -11,7 +11,7 @@ internal static class ImportChecks
         check("import poll: never within 15 s of the last poll, focus triggers at once after that, the 60 s poll only with the window open", PollTiming);
         check("import poll: blocked while signed out, compiling, in play mode, during a legacy hand-off or while the window is busy", Blocked);
         check("import pick: newest usable Unity request; another target, unknown kind, missing subject, expired or skipped ones are passed over", Pick);
-        check("import confirm: the refund warning only for a never-downloaded purchase with Unity files; Import goes on, Cancel declines, Not this project releases", Confirm);
+        check("import confirm: the refund warning only for a never-downloaded purchase with Unity files, its own or through a license it grants (F7); Import goes on, Cancel declines, Not this project releases", Confirm);
         check("import resume: a recorded report is posted again, an open confirm is released, a package install is done only when that version is in, else interrupted; old records are forgotten", Resume);
         check("import waiting: a queued .unitypackage is done only when every import is in; cancelled, failed or forgotten imports fail with their code; a hand-off is done when its version is in; an hour without an end is interrupted", Waiting);
         check("import errors: 429, 5xx and no answer keep the request for later; 400, 401, 404, 409 and 410 drop it; failure codes match [a-z0-9_]{1,40}", Errors);
@@ -84,9 +84,19 @@ internal static class ImportChecks
         Equal("Product a", ImportRequestLogic.ProductName(item));
         item.purchase.downloaded = true;
         Require(!ImportRequestLogic.WarnsRefund(item));
-        // Files through a license (no Unity files on the purchase) are not the purchase's first download.
+        // Files through a license the item grants (no Unity files on the purchase, MaskMaker): the license download ends the refund too
+        // (mark_license_downloaded stamps the item), so a never-downloaded item warns (QA 2026-11-06 F7). Once downloaded it does not.
         var viaLicense = Item("b"); viaLicense.purchase.files = new PurchaseFile[0];
+        viaLicense.licenses = new[] { new LicenseEntry { license_id = "lic-b", name = "Tool", versions = new[] { new LicenseVersionEntry { version_id = "v-b" } } } };
+        Require(ImportRequestLogic.WarnsRefund(viaLicense));
+        viaLicense.purchase.downloaded = true;
         Require(!ImportRequestLogic.WarnsRefund(viaLicense));
+        // Nothing for Unity at all (no files, no license version): nothing is downloaded, nothing to warn about.
+        var nothing = Item("n"); nothing.purchase.files = new PurchaseFile[0];
+        Require(!ImportRequestLogic.WarnsRefund(nothing));
+        // The seller's own product: nothing is recorded for the owner.
+        var own = Item("o"); own.purchase.source = "own";
+        Require(!ImportRequestLogic.WarnsRefund(own));
         // A license request: no purchase (JsonUtility leaves an empty object), the license names the product.
         var license = new ImportRequest
         {

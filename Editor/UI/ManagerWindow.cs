@@ -134,8 +134,7 @@ namespace OnAirDeck.UnityManager
             OnEnablePackages();
             RestoreBatchRows();
             HookHandoff();
-            OnEnableAutoUpdate();
-            CheckForUpdate(true);
+            OnEnableAutoUpdate();   // also asks the server on open, from its update tick (OnEnable runs inside a script reload too)
             StartOrReuseConflictScan();
         }
 
@@ -164,6 +163,7 @@ namespace OnAirDeck.UnityManager
         private void OnFocus()
         {
             // A package folder can change outside the window (VCC, another editor, a rollback).
+            // No web request starts here: OnFocus also runs inside a script reload. The watchers only mark a refresh.
             RefreshInstalledState();
             PurchaseWatcher.NotifyWindowFocused();
             ImportRequestWatcher.NotifyWindowFocused();
@@ -288,7 +288,10 @@ namespace OnAirDeck.UnityManager
         {
             _entriesDirty = false;
             var root = PackageInstallService.ProjectRoot;
-            _entries = ManagerCatalog.Build(_purchases, _licenses, name => InstalledPackages.InstalledVersion(root, name), _markers, _installRecords);
+            // License versions this account downloaded through this PC: a license removed from the project still reads "downloaded".
+            var downloaded = DownloadedLicenses.VersionIds(_session != null ? _session.userId : null);
+            _entries = ManagerCatalog.Build(_purchases, _licenses, name => InstalledPackages.InstalledVersion(root, name), _markers, _installRecords, downloaded);
+            MarkPurchasesInProject(root, _entries);
             _sellers = ManagerCatalog.Sellers(_entries);
             if (_sellerFilter.Length > 0 && !_sellers.Contains(_sellerFilter)) _sellerFilter = "";
             _favorites = new HashSet<string>();

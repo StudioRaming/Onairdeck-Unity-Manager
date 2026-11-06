@@ -212,6 +212,8 @@ namespace OnAirDeck.UnityManager
             // A backup is made only of a package that is already installed.
             var text = string.IsNullOrEmpty(entry.InstalledVersion) ? ManagerText.DlgInNew : ManagerText.DlgIn;
             var message = text.Replace("{n}", version.package_name).Replace("{v}", version.package_version);
+            // The first download of a license ends its refund like a purchase's (QA 2026-11-06 F7).
+            if (ManagerCatalog.NeedsRefundNotice(entry)) message += "\n\n" + ManagerText.DlgRefund;
             if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
             // MingToon from VCC or the BOOTH installer: one question, then its vpm-manifest entries go (undone if the install fails).
             VpmMove vccMove;
@@ -305,6 +307,8 @@ namespace OnAirDeck.UnityManager
             // A .unitypackage or loose files overwrite in place; nothing is backed up either way.
             var text = entry.State == EntryState.None ? ManagerText.DlgInNew : ManagerText.DlgInFile;
             var message = text.Replace("{n}", entry.Name).Replace("{v}", label);
+            // The first download of a license ends its refund like a purchase's (QA 2026-11-06 F7).
+            if (ManagerCatalog.NeedsRefundNotice(entry)) message += "\n\n" + ManagerText.DlgRefund;
             if (!confirmed && !EditorUtility.DisplayDialog(title, message, ManagerText.BInst, ManagerText.Cancel)) return ImportOutcome.Declined();
 
             BeginWork(entry.Key);

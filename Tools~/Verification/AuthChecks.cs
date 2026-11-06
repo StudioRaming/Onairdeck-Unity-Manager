@@ -19,6 +19,7 @@ internal static class AuthChecks
     {
         check("PKCE verifier and S256 challenge", PkceShape);
         check("sign-in returns the approved code", ReturnsCode);
+        check("success page (F10 I2): the Manager's name in its language with an English line, not the old brand", PageLanguage);
         check("favicon request does not end sign-in", IgnoresFavicon);
         check("Deny in the browser is reported", ReportsDeny);
         check("state mismatch is rejected", RejectsStateMismatch);
@@ -52,8 +53,32 @@ internal static class AuthChecks
             var page = Get(listener.RedirectUri + "?code=abc123&state=" + State);
             Equal("abc123", wait.GetAwaiter().GetResult());
             Equal(HttpStatusCode.OK, page.Item1);
-            Require(page.Item2.Contains("Signed in to OnAirDeck"), "success page text missing");
+            Require(page.Item2.Contains("Logged in to Atelier Manager"), "success page text missing");
+            Require(!page.Item2.Contains("OnAirDeck"), "old brand on the success page");
         }
+    }
+
+    private static void PageLanguage()
+    {
+        using (var listener = LoopbackListener.Start(0))
+        {
+            var wait = listener.WaitForCodeAsync(State, 5000, CancellationToken.None);
+            var page = Get(listener.RedirectUri + "?code=abc123&state=" + State);
+            Equal("abc123", wait.GetAwaiter().GetResult());
+            Require(page.Item2.Contains("아틀리에 매니저에 로그인했어요"), "Korean title missing");
+            Require(page.Item2.Contains("이 탭을 닫고 Unity로 돌아가세요."), "Korean body missing");
+            Require(page.Item2.Contains("Logged in to Atelier Manager. You can close this tab and return to Unity."), "English line missing");
+            Require(page.Item2.Contains("<html lang='ko'>"), "page language not set");
+        }
+        var japanese = LoopbackListener.PageHtml(CallbackPage.SignedIn, 2);
+        Require(japanese.Contains("アトリエマネージャーにログインしました") && japanese.Contains("Logged in to Atelier Manager."), "Japanese page");
+        // English: one line only, no second English copy. Failure pages follow the language too.
+        var english = LoopbackListener.PageHtml(CallbackPage.SignedIn, 1);
+        Equal(1, english.Split(new[] { "Logged in to Atelier Manager" }, StringSplitOptions.None).Length - 1);
+        Require(LoopbackListener.PageHtml(CallbackPage.Cancelled, 0).Contains("로그인을 취소했어요"), "Korean cancel page");
+        foreach (CallbackPage kind in Enum.GetValues(typeof(CallbackPage)))
+            for (var language = 0; language < 3; language++)
+                Require(!LoopbackListener.PageHtml(kind, language).Contains("OnAirDeck") && !LoopbackListener.PageHtml(kind, language).Contains("{"+"TITLE}"), kind + " " + language);
     }
 
     private static void IgnoresFavicon()
@@ -75,7 +100,7 @@ internal static class AuthChecks
             var wait = listener.WaitForCodeAsync(State, 5000, CancellationToken.None);
             var page = Get(listener.RedirectUri + "?error=access_denied&state=" + State);
             Equal(HttpStatusCode.OK, page.Item1);
-            Require(page.Item2.Contains("Sign-in was cancelled"), "deny page text missing");
+            Require(page.Item2.Contains("The login was cancelled"), "deny page text missing");
             Equal("Sign-in was denied in the browser.", Failure(wait).Message);
         }
     }

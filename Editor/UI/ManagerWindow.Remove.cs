@@ -27,12 +27,28 @@ namespace OnAirDeck.UnityManager
             public List<string> RemnantPaths = new List<string>();
         }
 
-        /// <summary>The detail pane offers removal for what this project has: an installed license, or a downloaded purchase.</summary>
+        /// <summary>The detail pane offers removal for what this project has: an installed license, or a downloaded purchase with files here.</summary>
         private static bool CanOfferRemove(CatalogEntry entry)
         {
-            if (entry == null) return false;
-            if (entry.IsLicense) return entry.State != EntryState.None;
-            return entry.State == EntryState.Got || entry.State == EntryState.New;
+            return ManagerCatalog.OffersRemove(entry);
+        }
+
+        /// <summary>
+        /// Whether each purchase row has files in this project (CatalogEntry.InProject), read once per list build: its removal record's
+        /// files, else its product folder (RemovalPlanner.FilesHere). An unreadable record keeps the row's removal offered.
+        /// </summary>
+        private static void MarkPurchasesInProject(string root, List<CatalogEntry> entries)
+        {
+            if (entries == null) return;
+            PlacedRecords placed;
+            try { placed = PlacedFiles.Load(root); }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not read the removal record: " + e.Message);
+                return;
+            }
+            foreach (var entry in entries)
+                if (!entry.IsLicense && entry.Purchase != null) entry.InProject = RemovalPlanner.FilesHere(root, KeysOf(entry), placed, ManualFolderOf(root, entry));
         }
 
         private void RemoveEntry(CatalogEntry entry)
@@ -272,7 +288,8 @@ namespace OnAirDeck.UnityManager
                 default: text = ManagerText.RmNothing.Replace("{n}", entry.Name); break;
             }
             if (!string.IsNullOrEmpty(prefix)) text = prefix + " " + text;
-            _lastFailure[entry.Key] = text;
+            // The message bar only: the row's failure card says "the last install did not finish" and its button installs again,
+            // which a removal that was refused is not (QA 2026-11-06 F6).
             SetMessage(text, MessageType.Warning);
             if (step.Plan.Refusal == RemovalRefusal.NoRecord && step.Plan.ManualFolder.Length > 0
                 && EditorUtility.DisplayDialog(ManagerText.RmAskT.Replace("{n}", entry.Name), text, ManagerText.OpenFolder, ManagerText.Close))

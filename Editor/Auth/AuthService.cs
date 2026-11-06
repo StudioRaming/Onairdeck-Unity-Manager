@@ -24,7 +24,7 @@ namespace OnAirDeck.UnityManager
             Pkce.Create(out verifier, out challenge);
             var state = Pkce.RandomString(16);
 
-            using (var listener = LoopbackListener.Start())
+            using (var listener = LoopbackListener.Start(ManagerText.Language))
             {
                 var url = DevServer.SiteUrl + "/plugin-auth" +
                           "?redirect_uri=" + Uri.EscapeDataString(listener.RedirectUri) +

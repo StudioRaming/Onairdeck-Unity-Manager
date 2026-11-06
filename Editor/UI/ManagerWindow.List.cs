@@ -249,7 +249,7 @@ namespace OnAirDeck.UnityManager
             if (work == 1) { text = ManagerText.RcDling; tone = SRTone.Info; return true; }
             if (work == 2) { text = ManagerText.RcWait; tone = SRTone.Neutral; return true; }
             if (IsUnseen(entry)) { text = ManagerText.RcNewBuy; tone = SRTone.Brand; return true; }
-            switch (ManagerCatalog.RowChipOf(entry.State))
+            switch (ManagerCatalog.RowChipOf(entry))
             {
                 case RowChipKind.New: text = ManagerText.RcNew; tone = SRTone.Warning; return true;
                 case RowChipKind.NotGot: text = ManagerText.RcNone; tone = SRTone.Neutral; return true;
