@@ -59,6 +59,17 @@ namespace OnAirDeck.UnityManager
         public string InstalledVersion = "";  // license: what this project has
         public string LatestVersion = "";     // license: the version offered by default, which is never a preview or beta unless one is installed or nothing else exists
         public EntryState State = EntryState.None;
+        /// <summary>
+        /// This account downloaded it before, here or anywhere (its refund has ended): a purchase by the server's flag, a license by the
+        /// server's flag or this PC's record of its downloads (DownloadedLicensesLogic), for the row or a license it stands for. A license
+        /// can be downloaded and still have State None: it is not in this project (QA 2026-11-06 F5).
+        /// </summary>
+        public bool Downloaded;
+        /// <summary>
+        /// Purchase: files of it are in this project (a removal record with a file still here, or its product folder). True until the
+        /// window has looked (ManagerWindow.RebuildEntries), so nothing is hidden on a guess.
+        /// </summary>
+        public bool InProject = true;
         public int MaxDevices;
         public int DevicesUsed;
         /// <summary>License: the other licenses of the account this row also stands for (same package, see ManagerCatalog.MergeSamePackage).</summary>
@@ -114,8 +125,9 @@ namespace OnAirDeck.UnityManager
         public const string FavoriteGroupId = "fav";
         public const string AllGroupId = "all";
 
+        /// <param name="downloadedVersionIds">License version ids this account downloaded through this PC (DownloadedLicenses); null: none.</param>
         public static List<CatalogEntry> Build(PurchaseItem[] purchases, LicenseEntry[] licenses, Func<string, string> installedVersion, ISet<string> markerLicenseIds,
-            IDictionary<string, InstallRecord> installRecords = null)
+            IDictionary<string, InstallRecord> installRecords = null, ICollection<string> downloadedVersionIds = null)
         {
             var list = new List<CatalogEntry>();
             var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -128,6 +140,8 @@ namespace OnAirDeck.UnityManager
             LabelVariants(list);
             if (licenses != null)
             {
+                // Judged on the account's real licenses, before same-package rows are merged (a merged row lists only some versions).
+                var downloaded = DownloadedLicensesLogic.DownloadedLicenseIds(licenses, downloadedVersionIds);
                 var also = new Dictionary<string, List<string>>(StringComparer.Ordinal);
                 foreach (var license in MergeSamePackage(licenses, also))
                 {
@@ -138,6 +152,8 @@ namespace OnAirDeck.UnityManager
                     if (entry == null) continue;
                     List<string> ids;
                     if (also.TryGetValue(license.license_id, out ids)) entry.AlsoLicenseIds.AddRange(ids);
+                    entry.Downloaded = downloaded.Contains(license.license_id);
+                    foreach (var id in entry.AlsoLicenseIds) entry.Downloaded = entry.Downloaded || downloaded.Contains(id);
                     list.Add(entry);
                 }
             }
@@ -386,6 +402,7 @@ namespace OnAirDeck.UnityManager
             }
             entry.LatestVersion = entry.Versions.Count > 0 ? entry.Versions[0].Label : "";
             entry.State = !item.downloaded ? EntryState.None : item.update_available ? EntryState.New : EntryState.Got;
+            entry.Downloaded = item.downloaded;
             return entry;
         }
 
@@ -545,6 +562,51 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// The row chip of an entry: its state's, except a license that is not in this project but was downloaded before, which says
+        /// "downloaded" like a purchase does, not "to get": its refund already ended (QA 2026-11-06 F5, after an install and a removal).
+        /// </summary>
+        public static RowChipKind RowChipOf(CatalogEntry entry)
+        {
+            if (entry == null) return RowChipKind.None;
+            if (entry.IsLicense && entry.State == EntryState.None && entry.Downloaded) return RowChipKind.Got;
+            return RowChipOf(entry.State);
+        }
+
+        /// <summary>
+        /// The install confirm must say that this first download ends the refund: plugin-download records a purchase download, and a
+        /// license version download (mark_license_downloaded stamps every line item that grants the license), the same way. A purchase
+        /// that was never downloaded; a license row this account never downloaded (server or this PC) and that this project does not have
+        /// (installed here means it was got before). Never for the seller's own product or license (nothing is recorded for the owner).
+        /// QA 2026-11-06 F7: the detail's install of a license said nothing.
+        /// </summary>
+        public static bool NeedsRefundNotice(CatalogEntry entry)
+        {
+            if (entry == null || entry.IsOwn) return false;
+            if (entry.Kind == FavoriteKind.Purchase) return entry.Purchase != null && !entry.Purchase.downloaded;
+            return !entry.Downloaded && entry.State == EntryState.None;
+        }
+
+        /// <summary>
+        /// The core-first question installs the core and the add-on with no further confirm: it carries the refund notice when either
+        /// license would be downloaded for the first time. A purchase asks its own refund question in its download (never twice).
+        /// </summary>
+        public static bool CoreFirstNeedsRefundNotice(CatalogEntry addon, CatalogEntry core)
+        {
+            return (addon != null && addon.IsLicense && NeedsRefundNotice(addon)) || (core != null && core.IsLicense && NeedsRefundNotice(core));
+        }
+
+        /// <summary>
+        /// The detail pane offers removal only for what this project has: an installed license, or a downloaded purchase with files here.
+        /// A purchase downloaded into another project or PC is "downloaded" too, but has nothing here to remove (QA 2026-11-06 F6).
+        /// </summary>
+        public static bool OffersRemove(CatalogEntry entry)
+        {
+            if (entry == null) return false;
+            if (entry.IsLicense) return entry.State != EntryState.None;
+            return (entry.State == EntryState.Got || entry.State == EntryState.New) && entry.InProject;
+        }
+
+        /// <summary>
         /// Whether a batch can take this row: a downloadable purchase, or a license that offers a package or a file version. A file version
         /// (.unitypackage, zip) goes through the same install as its single install button (LicenseVersionInstall), after every package
         /// of the run; before 2026-11-03 only a file add-on of a core (Ming Light Controller) could, which left most file products without a
@@ -614,7 +676,8 @@ namespace OnAirDeck.UnityManager
             switch (filter)
             {
                 case FilterMode.New: if (e.State != EntryState.New) return false; break;
-                case FilterMode.None: if (e.State != EntryState.None) return false; break;
+                // "To get" lists what the chip calls "to get": a license downloaded before reads "downloaded" (RowChipOf).
+                case FilterMode.None: if (RowChipOf(e) != RowChipKind.NotGot) return false; break;
                 case FilterMode.Installed: if (e.State == EntryState.None) return false; break;
                 case FilterMode.Favorites: if (!favorite) return false; break;
                 case FilterMode.Own: if (!e.IsOwn) return false; break;

@@ -184,7 +184,7 @@ namespace OnAirDeck.UnityManager
             {
                 switch (e.State)
                 {
-                    case EntryState.None: return ManagerText.StPkgNot.Replace("{l}", latest);
+                    case EntryState.None: return (e.Downloaded ? ManagerText.StPkgGotNotHere : ManagerText.StPkgNot).Replace("{l}", latest);
                     case EntryState.Unknown: return ManagerText.StUnknown.Replace("{l}", latest);
                     case EntryState.New: return ManagerText.StNew.Replace("{i}", e.InstalledVersion).Replace("{l}", latest);
                     case EntryState.Installed: return ManagerText.StInst.Replace("{v}", e.InstalledVersion);
@@ -221,7 +221,12 @@ namespace OnAirDeck.UnityManager
             if (entry.SellerName.Length > 0) GUILayout.Label(entry.SellerName, SRStyles.Muted);
             GUILayout.Space(SRMetrics.Space4);
             GUILayout.BeginHorizontal();
-            if (entry.HasPackageVersions || entry.Kind == FavoriteKind.Purchase || IsFileLicense(entry)) SRGui.BadgeLayout(StateChip(entry.State), StateTone(entry.State));
+            if (entry.HasPackageVersions || entry.Kind == FavoriteKind.Purchase || IsFileLicense(entry))
+            {
+                // A license downloaded before but not in this project reads "downloaded", as its list row does (ManagerCatalog.RowChipOf).
+                var shown = entry.IsLicense && ManagerCatalog.RowChipOf(entry) == RowChipKind.Got ? EntryState.Got : entry.State;
+                SRGui.BadgeLayout(StateChip(shown), StateTone(shown));
+            }
             if (entry.IsOwn) SRGui.BadgeLayout(ManagerText.OwnChip, SRTone.Brand);
             if (entry.HasPackageVersions && entry.PackageName == _focusPackage) SRGui.BadgeLayout(ManagerText.Requested, SRTone.Brand);
             GUILayout.FlexibleSpace();

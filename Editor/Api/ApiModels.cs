@@ -55,6 +55,13 @@ namespace OnAirDeck.UnityManager
         public string description = "";     // plain text, at most 4000 chars; "" when none
         public string product_url = "";     // public product page; "" when the product is not public
 
+        /// <summary>
+        /// The account downloaded a version of this license before, on any device or client (plugin-download's license path records it
+        /// together with the refund lock). False from a server that does not send it yet; the Manager's own record of license downloads
+        /// on this PC (DownloadedLicenses) fills that gap.
+        /// </summary>
+        public bool downloaded;
+
         public bool IsOwn { get { return source == "own"; } }
         public LicenseVersionEntry[] versions;   // active versions, newest first, at most 20
 

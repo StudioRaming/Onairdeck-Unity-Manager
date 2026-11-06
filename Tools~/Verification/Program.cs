@@ -56,6 +56,7 @@ internal static class Program
             ListRowChecks.Run(Check);
             RemovalChecks.Run(Check, _project);
             PurchaseOptionChecks.Run(Check);
+            DownloadStateChecks.Run(Check, _project);
         }
         finally
         {

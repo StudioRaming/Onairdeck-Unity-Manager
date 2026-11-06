@@ -672,6 +672,26 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// Something of a file product is in this project: a file <paramref name="keys"/> recorded is still here, or, with no such file,
+        /// <paramref name="manualFolder"/> (its product folder, where a copy without a record would be) exists. Then removal has something
+        /// to remove or a folder to point at (<see cref="ForFiles"/>); otherwise it would only refuse (QA 2026-11-06 F6: a purchase
+        /// downloaded into another project offered "remove" and then said it had no record).
+        /// </summary>
+        public static bool FilesHere(string projectRoot, ICollection<string> keys, PlacedRecords placed, string manualFolder)
+        {
+            if (string.IsNullOrEmpty(projectRoot)) return false;
+            if (placed != null && keys != null)
+                foreach (var key in keys)
+                {
+                    PlacedEntry recorded;
+                    if (key == null || !placed.Products.TryGetValue(key, out recorded)) continue;
+                    foreach (var path in recorded.Paths)
+                        if (IsAssetFile(path) && File.Exists(Absolute(projectRoot, path))) return true;
+                }
+            return !string.IsNullOrEmpty(manualFolder) && Directory.Exists(Absolute(projectRoot, manualFolder));
+        }
+
+        /// <summary>
         /// The files of <paramref name="keys"/> (a row and the licenses it stands for) that are here and that no other key recorded,
         /// plus <paramref name="ownFiles"/> (the product's own onairdeck.license, found by the id inside it), and the recorded folders
         /// they leave empty. A recorded onairdeck.license goes only when it is one of <paramref name="ownFiles"/>. No record at all:
