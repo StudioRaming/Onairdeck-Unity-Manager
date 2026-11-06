@@ -321,6 +321,8 @@ internal static class OfflineChecks
             Require(key.Intact());
             Equal(256, key.Modulus.Length);
         }
+        // Closed members hold files signed with the first production key for good: removing it would strand them.
+        Require(OfflineKeys.Production.Any(k => k.Kid == "61ee82969f30f1aa"));
         // Set by a release run: a build with no production key could never accept a closed member's file.
         if (Environment.GetEnvironmentVariable("ATELIER_RELEASE_CHECK") == "1") Require(OfflineKeys.Production.Length > 0);
     }
