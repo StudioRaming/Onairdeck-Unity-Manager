@@ -91,6 +91,7 @@ namespace OnAirDeck.UnityManager
             menu.AddDisabledItem(new GUIContent(_session.email ?? ""));
             menu.AddSeparator("");
             menu.AddItem(new GUIContent(ManagerText.MAcctDev), _view == (int)View.Devices, () => Defer(OpenDeviceManager));
+            menu.AddItem(new GUIContent(ManagerText.OlTitle), _view == (int)View.Offline, () => Defer(OpenOffline));
             var current = (int)SRLanguage.Get(ManagerText.LanguageKey);
             var names = new[] { "한국어", "English", "日本語" };
             for (var i = 0; i < names.Length; i++)
@@ -137,6 +138,9 @@ namespace OnAirDeck.UnityManager
             GUILayout.Space(SRMetrics.Space4);
             if (SRGui.Button(new GUIContent(ManagerText.Signup), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
                 Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
+            GUILayout.Space(SRMetrics.Space4);
+            if (SRGui.Button(new GUIContent(ManagerText.OlEntry), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
+                Defer(OpenOffline);
             EndScreen();
         }
 
@@ -197,6 +201,9 @@ namespace OnAirDeck.UnityManager
             GUILayout.Space(SRMetrics.Space4);
             if (SRGui.Button(new GUIContent(ManagerText.Back), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
                 Defer(() => { _timeoutText = null; });
+            GUILayout.Space(SRMetrics.Space4);
+            if (SRGui.Button(new GUIContent(ManagerText.OlEntry), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
+                Defer(OpenOffline);
             EndScreen();
         }
 
@@ -221,6 +228,10 @@ namespace OnAirDeck.UnityManager
                 if (SRGui.Button(new GUIContent(ManagerText.ViewAt), SRButtonKind.Secondary, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
                     Application.OpenURL(OnAirDeckConfig.WebsiteUrl);
             }
+            // The licence-file import works with no update, sign-in or network, so it stays reachable here (review R34-02).
+            GUILayout.Space(SRMetrics.Space4);
+            if (SRGui.Button(new GUIContent(ManagerText.OlEntry), SRButtonKind.Ghost, SRButtonSize.Default, GUILayout.ExpandWidth(true)))
+                Defer(OpenOffline);
             if (!string.IsNullOrEmpty(_message))
             {
                 GUILayout.Space(SRMetrics.Space8);

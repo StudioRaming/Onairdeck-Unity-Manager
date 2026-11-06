@@ -201,8 +201,10 @@ namespace OnAirDeck.UnityManager
         internal static void ThrowIfFailed(UnityWebRequest request, string action)
         {
             if (request.Succeeded()) return;
-            if (request.responseCode == 401) throw new SessionExpiredException("Your sign-in has expired. Please sign in again.");
             var body = request.downloadHandler != null ? request.downloadHandler.text : null;
+            // A closed account's session answers 401 account_closed: signing in again cannot help, the licence file does.
+            if (request.responseCode == 401)
+                throw new SessionExpiredException(ClosedAccount.IsClosedAnswer(body) ? ManagerText.OlClosed : "Your sign-in has expired. Please sign in again.");
             throw ApiErrorParser.ToException(request.responseCode, body, action, request.error);
         }
 
