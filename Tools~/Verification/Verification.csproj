@@ -42,6 +42,8 @@
     <Compile Include="ListRowChecks.cs" />
     <Compile Include="RemovalChecks.cs" />
     <Compile Include="PurchaseOptionChecks.cs" />
+    <Compile Include="DownloadStateChecks.cs" />
+    <Compile Include="../../Editor/Catalog/DownloadedLicensesLogic.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflicts.cs" />
     <Compile Include="../../Editor/Conflicts/ProjectConflictFixes.cs" />
     <Compile Include="../../Editor/Import/ImportRequestLogic.cs" />

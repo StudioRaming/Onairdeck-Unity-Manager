@@ -163,12 +163,26 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// True when the confirm must say that the first download makes the purchase non-refundable: an item whose Unity files are
-        /// downloaded by the purchase (not through a license) and that was never downloaded.
+        /// True when the confirm must say that the first download makes the purchase non-refundable: a purchased item that was never
+        /// downloaded, whose Unity files come with the purchase or through a license it grants. A license version download ends the
+        /// refund too (plugin-download's license path: mark_license_downloaded stamps every line item that grants the license, which is
+        /// also what `downloaded` counts); before QA 2026-11-06 F7 an item delivered only through its license said nothing. A license
+        /// request (kind "license") and the seller's own product have no purchase to refund.
         /// </summary>
         public static bool WarnsRefund(ImportRequest request)
         {
-            return request != null && request.kind == "item" && HasPurchase(request) && !request.purchase.downloaded && request.purchase.HasUnityFiles;
+            if (request == null || request.kind != "item" || !HasPurchase(request) || request.purchase.downloaded || request.purchase.IsOwn) return false;
+            return request.purchase.HasUnityFiles || HasLicenseVersions(request.licenses);
+        }
+
+        private static bool HasLicenseVersions(LicenseEntry[] licenses)
+        {
+            if (licenses == null) return false;
+            foreach (var license in licenses)
+                if (license != null && license.versions != null)
+                    foreach (var v in license.versions)
+                        if (v != null && !string.IsNullOrEmpty(v.version_id)) return true;
+            return false;
         }
 
         /// <summary>The purchase row is present (JsonUtility turns an absent object into an empty one).</summary>

@@ -158,6 +158,7 @@ namespace OnAirDeck.UnityManager
         public static string VerInstall { get { return Pick("이 버전 설치", "Install This Version", "このバージョンをインストール"); } }
         public static string VerGet { get { return Pick("이 버전 받기", "Get This Version", "このバージョンをダウンロード"); } }
         public static string StPkgNot { get { return Pick("아직 설치 안 했어요 · 최신 {l}", "Not installed yet · Latest {l}", "まだインストールしていません · 最新 {l}"); } }
+        public static string StPkgGotNotHere { get { return Pick("받았지만 이 프로젝트에는 없어요 · 최신 {l}", "Downloaded, not in this project · Latest {l}", "ダウンロード済み、このプロジェクトにはありません · 最新 {l}"); } }
         public static string InfoKindFile { get { return Pick("파일", "File", "ファイル"); } }
         public static string RcNew { get { return Pick("새 버전", "Update", "新版"); } }
         public static string RcNone { get { return Pick("받기 전", "To get", "未取得"); } }
