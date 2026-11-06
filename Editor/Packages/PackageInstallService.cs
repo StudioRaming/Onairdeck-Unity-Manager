@@ -60,7 +60,7 @@ namespace OnAirDeck.UnityManager
                 }
                 var file = PickFile(files, version);
                 PackageDownloadChecks.RequireHttps(file.url);
-                var zip = await Downloader.DownloadAsync(file.url, PathSafety.SafeFileName(file.file_name),
+                var zip = await Downloader.DownloadVerifiedAsync(file, PathSafety.SafeFileName(file.file_name),
                     p => Report(onProgress, "Downloading " + version.package_name + " " + version.package_version, p * 0.6f), cancel);
                 cacheFolders.Add(Path.GetDirectoryName(zip));
 
@@ -383,7 +383,7 @@ namespace OnAirDeck.UnityManager
                     }
                     var file = PickFile(files, licenseVersion);
                     PackageDownloadChecks.RequireHttps(file.url);
-                    zip = await Downloader.DownloadAsync(file.url, PathSafety.SafeFileName(file.file_name),
+                    zip = await Downloader.DownloadVerifiedAsync(file, PathSafety.SafeFileName(file.file_name),
                         p => Report(onProgress, "Downloading " + label, 0.6f * p), cancel);
                     cacheFolders.Add(Path.GetDirectoryName(zip));
                     depManifest = PackageZip.Validate(zip, dependency.Key, dependency.Value);

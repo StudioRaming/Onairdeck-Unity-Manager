@@ -55,6 +55,20 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>
+        /// A plugin-download file: <see cref="DownloadAsync"/>, then the server's checksum (<see cref="DownloadIntegrity"/>)
+        /// before the caller extracts or imports it. A refusal deletes the download and throws; no checksum, when the store does
+        /// not require one, is logged.
+        /// </summary>
+        public static async Task<string> DownloadVerifiedAsync(DownloadFile file, string safeFileName, Action<float> onProgress, CancellationToken cancel)
+        {
+            var path = await DownloadAsync(file.url, safeFileName, onProgress, cancel);
+            DownloadIntegrity.CheckDownload(path, file.sha256, file.sha256_required, safeFileName,
+                () => TryDeleteFolder(Path.GetDirectoryName(path)),
+                message => Debug.LogWarning(OnAirDeckConfig.LogPrefix + message));
+            return path;
+        }
+
         public static void TryDeleteFolder(string folder)
         {
             try
