@@ -134,8 +134,7 @@ namespace OnAirDeck.UnityManager
             OnEnablePackages();
             RestoreBatchRows();
             HookHandoff();
-            OnEnableAutoUpdate();
-            CheckForUpdate(true);
+            OnEnableAutoUpdate();   // also asks the server on open, from its update tick (OnEnable runs inside a script reload too)
             StartOrReuseConflictScan();
         }
 
@@ -164,6 +163,7 @@ namespace OnAirDeck.UnityManager
         private void OnFocus()
         {
             // A package folder can change outside the window (VCC, another editor, a rollback).
+            // No web request starts here: OnFocus also runs inside a script reload. The watchers only mark a refresh.
             RefreshInstalledState();
             PurchaseWatcher.NotifyWindowFocused();
             ImportRequestWatcher.NotifyWindowFocused();

@@ -31,12 +31,13 @@ namespace OnAirDeck.UnityManager
             request.timeout = 0; // large files; cancellation is handled below
             using (request)
             {
-                var operation = request.SendWebRequest();
+                var operation = request.SendTracked();   // aborted and disposed if scripts reload meanwhile
                 while (!operation.isDone)
                 {
                     if (cancel.IsCancellationRequested)
                     {
                         request.Abort();
+                        WebRequestExtensions.Untrack(request);
                         TryDeleteFolder(folder);
                         throw new OperationCanceledException("Download cancelled.");
                     }

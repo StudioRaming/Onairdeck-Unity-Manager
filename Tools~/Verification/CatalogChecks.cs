@@ -26,6 +26,7 @@ internal static class CatalogChecks
         check("batch: a failed item does not stop the rest; a rejected session does", BatchFailures);
         check("batch: device limit pauses, retry resumes the same item", BatchPauseResume);
         check("batch: cancel while paused skips the rest and clears the notice", BatchCancelPaused);
+        check("purchase watcher (F5 I9): a window focus only marks the refresh; the update tick starts it once the editor is not compiling or importing", FocusRefreshDeferred);
         check("v3: every request carries X-Atelier-Manager: 1", ManagerHeader);
         check("v3: plugin-purchases body with description, product_url, versions[] parses; older body keeps defaults", ParseV3Purchases);
         check("file versions: the install record decides new / latest / installed; an installed product without a record is unknown, not latest", FileVersionState);
@@ -621,6 +622,27 @@ internal static class CatalogChecks
         Equal(0, old.purchases[0].versions.Length);
         Equal("", old.licenses[0].description);
         Equal("", old.licenses[0].versions[0].released_at);
+    }
+
+    // A window focus also arrives inside a script reload (HostView.OnEnable during FinalizeReload), where starting a
+    // UnityWebRequest crashed Unity 2022.3 natively. The focus only marks the wish; the update tick starts it when settled.
+    private static void FocusRefreshDeferred()
+    {
+        var pending = true;
+        Equal(WatchTick.Wait, PurchaseWatcherLogic.NextTick(true, ref pending, false, false));
+        Require(pending);
+        Equal(WatchTick.Refresh, PurchaseWatcherLogic.NextTick(false, ref pending, false, false));
+        Require(!pending);
+        Equal(WatchTick.Idle, PurchaseWatcherLogic.NextTick(false, ref pending, false, false));
+        // The editor regaining focus while it compiles or imports waits too and is not lost.
+        Equal(WatchTick.Wait, PurchaseWatcherLogic.NextTick(true, ref pending, true, false));
+        Require(pending);
+        Equal(WatchTick.Refresh, PurchaseWatcherLogic.NextTick(false, ref pending, false, false));
+        Require(!pending);
+        // The 5-minute tick waits while busy without being stored: it is due again on the next tick by itself.
+        Equal(WatchTick.Wait, PurchaseWatcherLogic.NextTick(true, ref pending, false, true));
+        Require(!pending);
+        Equal(WatchTick.Refresh, PurchaseWatcherLogic.NextTick(false, ref pending, false, true));
     }
 
     private static string RepoRoot()
