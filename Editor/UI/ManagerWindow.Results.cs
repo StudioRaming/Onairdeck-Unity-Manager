@@ -140,10 +140,18 @@ namespace OnAirDeck.UnityManager
                 SetMessage(text, MessageType.Warning);
                 return true;
             }
-            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+            var coreEntry = CoreEntry(core);
+            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), CoreFirstText(entry, coreEntry, coreName),
                 ManagerText.BInst, ManagerText.Cancel)) return true;
-            InstallCoreThenAddon(entry, CoreEntry(core));
+            InstallCoreThenAddon(entry, coreEntry);
             return true;
+        }
+
+        /// <summary>The core-first question; it is the only confirm of both installs, so it carries the refund notice when one is a first download.</summary>
+        private static string CoreFirstText(CatalogEntry addon, CatalogEntry coreEntry, string coreName)
+        {
+            var text = ManagerText.CoreFirstAsk.Replace("{a}", addon.Name).Replace("{c}", coreName);
+            return ManagerCatalog.CoreFirstNeedsRefundNotice(addon, coreEntry) ? text + "\n\n" + ManagerText.DlgRefund : text;
         }
 
         /// <summary>
@@ -164,7 +172,7 @@ namespace OnAirDeck.UnityManager
                 SetMessage(missing, MessageType.Warning);
                 return ImportOutcome.Failed("dependency_missing");
             }
-            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), ManagerText.CoreFirstAsk.Replace("{a}", entry.Name).Replace("{c}", coreName),
+            if (!CoreFirstDialog(ManagerText.CoreFirstBtn.Replace("{c}", coreName), CoreFirstText(entry, coreEntry, coreName),
                 ManagerText.BInst, ManagerText.Cancel))
             {
                 SetMessage(ManagerText.Declined, MessageType.None);

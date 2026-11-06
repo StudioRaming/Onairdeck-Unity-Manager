@@ -19,10 +19,14 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private string _autoNoteKind;
         // No check ever ran in this project: the Manager was just installed (maybe from an old file), so it goes to the latest first.
         [NonSerialized] private bool _firstRun;
+        // The check on open waits for the first update tick: OnEnable also runs inside a script reload, where a web request
+        // crashed the editor (F5 I9).
+        [NonSerialized] private bool _openCheckPending;
 
         private void OnEnableAutoUpdate()
         {
             _firstRun = AutoUpdater.LastCheck == 0;
+            _openCheckPending = true;
             _autoNote = AutoUpdater.PendingNote(out _autoNoteKind);
             EditorApplication.update -= AutoUpdateTick;
             EditorApplication.update += AutoUpdateTick;
@@ -35,6 +39,13 @@ namespace OnAirDeck.UnityManager
 
         private void AutoUpdateTick()
         {
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
+            if (_openCheckPending)
+            {
+                _openCheckPending = false;
+                CheckForUpdate(true);
+                return;
+            }
             if (EditorApplication.timeSinceStartup < _autoNextTick) return;
             _autoNextTick = EditorApplication.timeSinceStartup + AutoTickSeconds;
             var now = AutoUpdater.Now();

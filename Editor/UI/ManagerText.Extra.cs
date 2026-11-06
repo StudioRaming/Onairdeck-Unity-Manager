@@ -57,6 +57,9 @@ namespace OnAirDeck.UnityManager
         public static string DlgIn { get { return Pick("{n} {v} 버전을 설치할까요? 지금 버전은 자동으로 백업돼요.", "Install {n} {v}? Your current version is backed up automatically.", "{n} {v} をインストールしますか? 今のバージョンは自動でバックアップされます。"); } }
         // First install: nothing to back up. File install over an existing copy: the .unitypackage overwrites in place, no backup.
         public static string DlgInNew { get { return Pick("{n} {v} 버전을 설치할까요?", "Install {n} {v}?", "{n} {v} をインストールしますか?"); } }
+        // Added under an install question when the install is the first download (ManagerCatalog.NeedsRefundNotice): the same rule and
+        // words as the one-button import's notice.
+        public static string DlgRefund { get { return ImpRefund; } }
         public static string DlgInFile { get { return Pick("{n} {v} 버전을 설치할까요? 같은 파일은 새 버전으로 덮어써요. 따로 백업하지 않아요.", "Install {n} {v}? Files with the same name are overwritten by this version. No backup is made.", "{n} {v} をインストールしますか? 同じファイルはこのバージョンで上書きされます。バックアップは作りません。"); } }
 
         public static string ChipUnknown { get { return Pick("버전 확인 필요", "Version Unknown", "バージョン不明"); } }

@@ -171,7 +171,7 @@ namespace OnAirDeck.UnityManager
                         continue;
                     }
                     var index = i;
-                    var path = await Downloader.DownloadAsync(files[i].url, safeName,
+                    var path = await Downloader.DownloadVerifiedAsync(files[i], safeName,
                         p => { if (onProgress != null) onProgress(safeName, (index + p) / files.Length); }, cancel);
                     cacheFolders.Add(Path.GetDirectoryName(path));
                     cached.Add(new KeyValuePair<string, string>(path, safeName));

@@ -55,6 +55,13 @@ namespace OnAirDeck.UnityManager
         public string description = "";     // plain text, at most 4000 chars; "" when none
         public string product_url = "";     // public product page; "" when the product is not public
 
+        /// <summary>
+        /// The account downloaded a version of this license before, on any device or client (plugin-download's license path records it
+        /// together with the refund lock). False from a server that does not send it yet; the Manager's own record of license downloads
+        /// on this PC (DownloadedLicenses) fills that gap.
+        /// </summary>
+        public bool downloaded;
+
         public bool IsOwn { get { return source == "own"; } }
         public LicenseVersionEntry[] versions;   // active versions, newest first, at most 20
 
@@ -148,7 +155,7 @@ namespace OnAirDeck.UnityManager
         public string file_name;
     }
 
-    // POST plugin-download { item_id, client } → { files: [{ url, file_name }] }
+    // POST plugin-download { item_id, client } → { files: [{ url, file_name, sha256 }] }
     [Serializable]
     internal class DownloadRequest
     {
@@ -186,5 +193,10 @@ namespace OnAirDeck.UnityManager
     {
         public string url;        // presigned, valid for 30 minutes
         public string file_name;
+        // Lower-case hex SHA-256 of the bytes url serves; null or empty when the store recorded none (older servers omit
+        // it). Checked before anything is extracted or imported (DownloadIntegrity).
+        public string sha256;
+        // True when the store promises a digest for this file: a missing sha256 is refused. False when absent (older servers).
+        public bool sha256_required;
     }
 }

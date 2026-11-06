@@ -22,6 +22,9 @@ namespace OnAirDeck.UnityManager
         public string FirstLoadText = "";
     }
 
+    /// <summary>What the watcher's update tick does this frame.</summary>
+    internal enum WatchTick { Idle, Wait, Refresh }
+
     /// <summary>The pure rules of <see cref="PurchaseWatcher"/> (no UnityEngine, headless-checked).</summary>
     internal static class PurchaseWatcherLogic
     {
@@ -50,6 +53,21 @@ namespace OnAirDeck.UnityManager
             if (!windowOpen) return false;
             if (lastAttemptUnix <= 0 || lastAttemptUnix > nowUnix) return true;
             return nowUnix - lastAttemptUnix >= PeriodSeconds;
+        }
+
+        /// <summary>
+        /// A refresh starts only from the update tick and only while the editor is not compiling or importing
+        /// (<paramref name="editorBusy"/>). A window focus or a regained editor focus is kept in <paramref name="focusPending"/>
+        /// until then: window focus also arrives inside a script reload, where starting a web request crashed the editor.
+        /// The 5-minute tick is not stored; it is due again on the next tick by itself.
+        /// </summary>
+        public static WatchTick NextTick(bool editorBusy, ref bool focusPending, bool regainedFocus, bool periodicDue)
+        {
+            if (regainedFocus) focusPending = true;
+            if (!focusPending && !periodicDue) return WatchTick.Idle;
+            if (editorBusy) return WatchTick.Wait;
+            focusPending = false;
+            return WatchTick.Refresh;
         }
 
         /// <summary>

@@ -106,6 +106,9 @@ namespace OnAirDeck.UnityManager
                 request.timeout = 60;
                 await request.SendAsync();
                 ThrowIfFailed(request, "Preparing the package download");
+                // Signed means recorded (and, for a license held through a purchase, no longer refundable): noted on this PC so the
+                // list and the next install know it even after the files leave the project.
+                DownloadedLicenses.RecordVersion(versionId);
                 var response = JsonUtility.FromJson<DownloadResponse>(request.downloadHandler.text);
                 return response != null && response.files != null ? response.files : new DownloadFile[0];
             }

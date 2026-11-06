@@ -7,7 +7,8 @@ namespace OnAirDeck.UnityManager
     /// <summary>
     /// A purchase made on the website shows up without a manual refresh. It refreshes plugin-purchases when the editor
     /// regains focus (polled in the update tick), when the window is focused (<see cref="NotifyWindowFocused"/>) and every 5 minutes while the window
-    /// is open (<see cref="SetWindowOpen"/>), at most once per 60 s, signed in only, silently on failure.
+    /// is open (<see cref="SetWindowOpen"/>), at most once per 60 s, signed in only, silently on failure. Every refresh starts
+    /// from the update tick while the editor is not compiling or importing, never from inside OnFocus/OnEnable.
     /// "Seen" ids are kept per account in EditorPrefs; the first load for an account marks everything seen.
     /// No server change, no URL scheme and no local listener.
     /// </summary>
@@ -27,6 +28,7 @@ namespace OnAirDeck.UnityManager
         private static bool _busy;
         private static string _userId = "";
         private static bool _wasActive;
+        private static bool _focusPending;
 
         /// <summary>Entries not seen on this PC yet (the "new" chip and the bar).</summary>
         public static IList<WatchedEntry> Unseen { get { return _unseen; } }
@@ -46,10 +48,14 @@ namespace OnAirDeck.UnityManager
             _windowOpen = open;
         }
 
-        /// <summary>Call when the window gets focus.</summary>
+        /// <summary>
+        /// Call when the window gets focus. It only marks the refresh: Unity also calls OnFocus while it finishes a script
+        /// reload (HostView.OnEnable inside FinalizeReload), and a UnityWebRequest started there crashed the editor (SIGSEGV
+        /// in UnityWebRequest.BeginWebRequest, 2022.3.22f1). The update tick starts it once the reload is over.
+        /// </summary>
         public static void NotifyWindowFocused()
         {
-            RequestRefresh();
+            _focusPending = true;
         }
 
         private static void Tick()
@@ -57,13 +63,14 @@ namespace OnAirDeck.UnityManager
             var active = UnityEditorInternal.InternalEditorUtility.isApplicationActive;
             var regainedFocus = active && !_wasActive;
             _wasActive = active;
-            if (regainedFocus) { RequestRefresh(); return; }
-            if (!PurchaseWatcherLogic.PeriodicDue(_windowOpen, Now(), _lastAttempt)) return;
+            var busy = EditorApplication.isCompiling || EditorApplication.isUpdating;
+            var periodic = PurchaseWatcherLogic.PeriodicDue(_windowOpen, Now(), _lastAttempt);
+            if (PurchaseWatcherLogic.NextTick(busy, ref _focusPending, regainedFocus, periodic) != WatchTick.Refresh) return;
             RequestRefresh();
         }
 
-        /// <summary>Refreshes now when signed in and the 60 s limit allows. Returns whether a refresh started.</summary>
-        public static bool RequestRefresh()
+        /// <summary>Refreshes now when signed in and the 60 s limit allows. Returns whether a refresh started. Update tick only.</summary>
+        private static bool RequestRefresh()
         {
             if (_busy) return false;
             var session = SessionStore.Load();
