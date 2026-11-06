@@ -23,7 +23,13 @@ namespace OnAirDeck.License
         /// <summary>Issued in the future, beyond the allowed clock skew.</summary>
         NotYetValid,
         /// <summary>exp has passed. The Manager re-issues licenses for installed products when its window opens.</summary>
-        Expired
+        Expired,
+        /// <summary>An offline licence file names a key this build does not carry.</summary>
+        OfflineKeyUnknown,
+        /// <summary>An offline licence file is fixed to another PC.</summary>
+        OfflineDeviceMismatch,
+        /// <summary>This PC's device id could not be read, so an offline licence file cannot be checked.</summary>
+        OfflineDeviceUnavailable
     }
 
     /// <summary>Outcome of OnAirDeckLicense.Check / LicenseVerifier.Verify.</summary>

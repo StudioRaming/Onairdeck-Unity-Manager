@@ -1,0 +1,27 @@
+{
+  "note": "Public subset of Vdesk supabase/functions/_shared/offline-license.vectors.json (feat/device-binding-p1 615caad3b). Throwaway test key: no production table holds it.",
+  "source_sha256": "74417b8eaefaf49c7670a0cda67552f72a3bf60fb8c1ad7616fbd3211e039f6b",
+  "test_modulus_b64url": "0Wzuj9uJG21qHvYx3XIonEZZ3NNo_Zb7FqpVL7yGgrblgGWBT_4t_tVIXy6i1uk-LQoQfN-L9c_mgz1WUFD2bM-shaUc74GZIFWVqgt5lhGamqY8eW37rXVSt_vW0paSX55XaiLDkZGlZCK5OD2v2yrgrIe0dtopZpCb4L9bhgsfd4d9GbHQqSMs7NyD1SaxK2wUbhJrkDSMlP5ZwmwAHFcJI95OcEiNbzxLvr6B7p0WFqGjskyBu5fNj3GY5Wy_8Q7TN-42chTBB4_apBOSA3GYPXw7Mx-0bALuYUTxJ95RNN2z3t0jz0Sqoe7bbGPm6jL3v207wgIxqaH9cSIFSw",
+  "kid": "76e391ea45746ea7",
+  "unity_hash": {
+    "prefix": "onairdeck-device-v1|",
+    "fake_raw_id": "verification-fake-device-0001",
+    "hash": "8b610204f8d09f8c6adca64e0f5cea14285dec9883b13b5d701f7a579c24f9e6"
+  },
+  "check_codes": [
+    {
+      "dev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "chk": "5417"
+    },
+    {
+      "dev": "8b610204f8d09f8c6adca64e0f5cea14285dec9883b13b5d701f7a579c24f9e6",
+      "chk": "c8b7"
+    }
+  ],
+  "unity_entry": {
+    "license_id": "00000000-0000-4000-8000-00000000c002",
+    "product_name": "テスト라이선스 (Unity)",
+    "dev": "8b610204f8d09f8c6adca64e0f5cea14285dec9883b13b5d701f7a579c24f9e6",
+    "license": "eyJ2IjoyLCJpc3MiOiJvbmFpcmRlY2siLCJjbGllbnQiOiJ1bml0eS1tYW5hZ2VyIiwibW9kZSI6InBlcnBldHVhbC1kZXZpY2UiLCJraWQiOiI3NmUzOTFlYTQ1NzQ2ZWE3IiwibGljZW5zZV9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwYzAwMiIsInByb2R1Y3RfaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMGMwMDIiLCJwcm9kdWN0X25hbWUiOiLjg4bjgrnjg4jrnbzsnbTshKDsiqQgKFVuaXR5KSIsImtpbmQiOiJsaWNlbnNlIiwiZGV2IjoiOGI2MTAyMDRmOGQwOWY4YzZhZGNhNjRlMGY1Y2VhMTQyODVkZWM5ODgzYjEzYjVkNzAxZjdhNTc5YzI0ZjllNiIsImRldl9zY2hlbWUiOiJ1bml0eS1oYXNoIiwicmVhc29uIjoicmVpc3N1ZSIsInNsb3QiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMGIwMDIiLCJpYXQiOjE3OTM4MzY4MDEsIm5vbmNlIjoiZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTAifQ.NlK4-5nK_SEEUFvbZPiILxz8v1cLRphxQmtkYZyGvXOybroV-qQ13fCB0bRufKHafWOAwzNUL7F1hG8S4qH-D5mlnqcNvoIbnNwJ4KATO54TyBx4IQqZlHGkgYaAsBBpz4tVuGwSmhhEcruYJ5JCzpwugIaQn8UGmB4ORcCeeDLQukRa_KktXrmW8d_537qgLPebmvN-7R-xcAU0_HmSgO1M0f1ADyvWODb9X1sFHv-vZBKTpz2G9UbqaBL55VMM1PN_xcTCnxz6AmipT04old72r1OUPsdUCTbJiiPD9GpQSqAEqlxIN6bUtOT9zVl-YWzsKdpG0dRSLecd1z5U7Q"
+  }
+}
