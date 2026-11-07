@@ -28,6 +28,9 @@ namespace OnAirDeck.UnityManager
             _firstRun = AutoUpdater.LastCheck == 0;
             _openCheckPending = true;
             _autoNote = AutoUpdater.PendingNote(out _autoNoteKind);
+            // The window's message survives the script reload: the old version's "installing <v>" banner is stale once <v> runs.
+            if (!AutoUpdater.Running && AutoUpdateLogic.StaleRunningMessage(_message, AutoUpdater.LoadedVersion, ManagerText.AuRunningAll))
+                SetMessage(null, MessageType.None);
             EditorApplication.update -= AutoUpdateTick;
             EditorApplication.update += AutoUpdateTick;
         }
