@@ -138,7 +138,7 @@ namespace OnAirDeck.UnityManager
         public static string RefreshTip { get { return Pick("새로고침", "Refresh", "更新"); } }
         public static string SellerShort { get { return Pick("모든 판매자", "All Sellers", "すべての販売者"); } }
         public static string FOwn { get { return Pick("내 상품(판매자)", "My Products (Seller)", "自分の商品(販売者)"); } }
-        public static string BackList { get { return Pick("목록", "List", "一覧"); } }
+        public static string BackList { get { return Pick("← 목록으로", "← Back to list", "← 一覧へ戻る"); } }
         public static string TabDesc { get { return Pick("설명", "Description", "説明"); } }
         public static string TabVer { get { return Pick("버전 기록", "Version History", "バージョン履歴"); } }
         public static string TabDev { get { return Pick("기기", "Devices", "デバイス"); } }
