@@ -9,8 +9,9 @@ namespace OnAirDeck.UnityManager
 
     /// <summary>
     /// Reads the build kind of a version. A package version follows semver: a prerelease part ("0.1.15-preview.1",
-    /// "1.0.0-beta.2") makes it a preview, beta or other prerelease, and nothing else does. A hotfix is an ordinary
-    /// patch release (semver has no hotfix rank); the seller's label ("0.1.15 Hotfix 1") only adds the Hotfix chip.
+    /// "1.0.0-beta.2") makes it a preview, beta or other prerelease, and nothing else does. A hotfix is a stable release:
+    /// either a "-hotfix.&lt;n&gt;" suffix ("0.1.16-hotfix.1", which ranks above 0.1.16, see <see cref="PackageVersion.IsHotfix"/>)
+    /// or an ordinary patch release whose seller label says so ("0.1.15 Hotfix 1"); both get the Hotfix chip.
     /// A file (.unitypackage) has no version to parse, so its kind comes from the label the seller typed.
     /// </summary>
     internal static class BuildKinds
@@ -25,6 +26,7 @@ namespace OnAirDeck.UnityManager
         /// <summary>Kind of a package version; <paramref name="label"/> (the seller's version label) can only add Hotfix.</summary>
         public static BuildKind OfPackage(string version, string label)
         {
+            if (PackageVersion.IsHotfix(version)) return BuildKind.Hotfix;
             if (PackageVersion.IsPrerelease(version))
             {
                 var pre = version.Substring(version.IndexOf('-') + 1);

@@ -21,6 +21,7 @@ internal static class CatalogChecks
         check("update check: throttle (session, 6 hours, signed in, clock moved back)", Throttle);
         check("update check: purchases and installed packages with a newer version", FindUpdates);
         check("versions: a release is offered before a preview or beta unless a prerelease is installed; hotfix and kind chips", OfferedVersion);
+        check("hotfix versions: a '-hotfix.<n>' row is offered by default, is an update for a 0.1.15 or 0.1.16 holder, and carries the Hotfix chip", HotfixVersions);
         check("batch: order, progress text, results", BatchOrder);
         check("batch: cancel stops after the current item", BatchCancel);
         check("batch: a failed item does not stop the rest; a rejected session does", BatchFailures);
@@ -374,6 +375,53 @@ internal static class CatalogChecks
         Equal("pkg.e", found[2].Name);
         Equal("1.0.0", found[2].Latest);
         Equal(0, UpdateCheckLogic.Find(null, null, n => "").Count);
+    }
+
+    private static void HotfixVersions()
+    {
+        Func<LicenseVersionEntry[], LicenseEntry> license = versions => new LicenseEntry { license_id = "MT", name = "MingToon", versions = versions };
+        Func<LicenseVersionEntry[]> rows = () => new[] { V("pkg.m", "0.1.15"), V("pkg.m", "0.1.16-hotfix.1"), V("pkg.m", "0.1.16-beta.1"), V("pkg.m", "0.1.16") };
+
+        // A new buyer is offered the hotfix by default; it is the first row and carries the Hotfix chip with no label.
+        var entry = ManagerCatalog.Build(null, new[] { license(rows()) }, n => "", null)[0];
+        Equal("0.1.16-hotfix.1", entry.LatestVersion);
+        Equal(EntryState.None, entry.State);
+        Equal("0.1.16-hotfix.1", entry.Versions[0].Label);
+        Equal("0.1.16", entry.Versions[1].Label);
+        Equal("0.1.16-beta.1", entry.Versions[2].Label);
+        Equal(BuildKind.Hotfix, entry.Versions[0].Kind);
+        Equal(BuildKind.Release, entry.Versions[1].Kind);
+        Require(entry.Versions[0].Latest && !entry.Versions[1].Latest);
+
+        // The 0.1.16 row hidden: still the hotfix.
+        entry = ManagerCatalog.Build(null, new[] { license(new[] { V("pkg.m", "0.1.15"), V("pkg.m", "0.1.16-hotfix.1") }) }, n => "", null)[0];
+        Equal("0.1.16-hotfix.1", entry.LatestVersion);
+
+        // A 0.1.15 or 0.1.16 holder sees an update; the hotfix holder is up to date; a 0.1.17 holder is ahead.
+        foreach (var held in new[] { "0.1.15", "0.1.16", "0.1.16-beta.1" })
+        {
+            entry = ManagerCatalog.Build(null, new[] { license(rows()) }, n => held, null)[0];
+            Equal("0.1.16-hotfix.1", entry.LatestVersion);
+            Equal(EntryState.New, entry.State);
+        }
+        Equal(EntryState.Latest, ManagerCatalog.Build(null, new[] { license(rows()) }, n => "0.1.16-hotfix.1", null)[0].State);
+        Equal(EntryState.Installed, ManagerCatalog.Build(null, new[] { license(rows()) }, n => "0.1.17", null)[0].State);
+        Equal(EntryState.New, ManagerCatalog.StateOfPackage("0.1.16", "0.1.16-hotfix.1"));
+        Equal(EntryState.Installed, ManagerCatalog.StateOfPackage("0.1.16-hotfix.2", "0.1.16-hotfix.1"));
+
+        // The update check: the hotfix is offered to stable holders of 0.1.15 and 0.1.16; a later beta is not offered to a hotfix holder.
+        var licenses = new[] { license(rows()) };
+        foreach (var held in new[] { "0.1.15", "0.1.16" })
+        {
+            var found = UpdateCheckLogic.Find(null, licenses, n => held);
+            Equal(1, found.Count);
+            Equal("0.1.16-hotfix.1", found[0].Latest);
+        }
+        Equal(0, UpdateCheckLogic.Find(null, licenses, n => "0.1.16-hotfix.1").Count);
+        Equal(0, UpdateCheckLogic.Find(null, new[] { license(new[] { V("pkg.m", "0.1.17-beta.1"), V("pkg.m", "0.1.16-hotfix.1") }) }, n => "0.1.16-hotfix.1").Count);
+        var next = UpdateCheckLogic.Find(null, new[] { license(new[] { V("pkg.m", "0.1.17"), V("pkg.m", "0.1.16-hotfix.9") }) }, n => "0.1.16-hotfix.9");
+        Equal(1, next.Count);
+        Equal("0.1.17", next[0].Latest);
     }
 
     private static void OfferedVersion()

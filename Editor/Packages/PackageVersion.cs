@@ -14,10 +14,26 @@ namespace OnAirDeck.UnityManager
             return !string.IsNullOrEmpty(version) && Exact.IsMatch(version);
         }
 
-        /// <summary>Whether a version has a prerelease part ("1.0.0-beta.2", "0.1.15-preview.1").</summary>
+        // The whole prerelease part of a hotfix: "hotfix.<n>", lower case, n without leading zeroes.
+        private static readonly Regex HotfixPart = new Regex(@"\Ahotfix\.(0|[1-9][0-9]*)\z", RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Whether a version is a hotfix ("0.1.16-hotfix.1"): a stable release that ranks above the same x.y.z and below the
+        /// next patch (0.1.16-beta.1 &lt; 0.1.16 &lt; 0.1.16-hotfix.1 &lt; 0.1.16-hotfix.2 &lt; 0.1.17-beta.1 &lt; 0.1.17). Owner
+        /// decision 2026-11-04; the store's version compare and the MingToon package use the same rule. Any other suffix,
+        /// "-hotfix" alone or "-Hotfix.1" included, stays a prerelease.
+        /// </summary>
+        public static bool IsHotfix(string version)
+        {
+            if (!IsExact(version)) return false;
+            var dash = version.IndexOf('-');
+            return dash >= 0 && HotfixPart.IsMatch(version.Substring(dash + 1));
+        }
+
+        /// <summary>Whether a version has a prerelease part ("1.0.0-beta.2", "0.1.15-preview.1"). A hotfix suffix is not one.</summary>
         public static bool IsPrerelease(string version)
         {
-            return !string.IsNullOrEmpty(version) && version.IndexOf('-') >= 0;
+            return !string.IsNullOrEmpty(version) && version.IndexOf('-') >= 0 && !IsHotfix(version);
         }
 
         /// <summary>
@@ -34,7 +50,10 @@ namespace OnAirDeck.UnityManager
             return true;
         }
 
-        /// <summary>Semver precedence. Prerelease sorts below the release; unparsable input sorts lowest.</summary>
+        /// <summary>
+        /// Semver precedence, with one addition: inside one x.y.z a hotfix ranks above the release and a prerelease below it,
+        /// and hotfixes order by their number. Unparsable input sorts lowest.
+        /// </summary>
         public static int Compare(string a, string b)
         {
             var okA = IsExact(a);
@@ -49,9 +68,17 @@ namespace OnAirDeck.UnityManager
                 var cmp = coreA[i].CompareTo(coreB[i]);
                 if (cmp != 0) return cmp;
             }
-            if (preA.Length == 0 && preB.Length == 0) return 0;
-            if (preA.Length == 0) return 1;
-            if (preB.Length == 0) return -1;
+            var rank = Rank(a, preA).CompareTo(Rank(b, preB));
+            if (rank != 0) return rank;
+            if (preA.Length == 0) return 0;   // both releases
+            if (IsHotfix(a))
+            {
+                // Both hotfixes: by number, any length (no leading zeroes, so the longer number is the larger).
+                var numA = preA.Substring(preA.IndexOf('.') + 1);
+                var numB = preB.Substring(preB.IndexOf('.') + 1);
+                var byLength = numA.Length.CompareTo(numB.Length);
+                return byLength != 0 ? byLength : string.CompareOrdinal(numA, numB);
+            }
 
             var partsA = preA.Split(new[] { '.' });
             var partsB = preB.Split(new[] { '.' });
@@ -70,6 +97,13 @@ namespace OnAirDeck.UnityManager
                 if (cmp != 0) return cmp;
             }
             return 0;
+        }
+
+        // Inside one x.y.z: 0 prerelease, 1 release, 2 hotfix.
+        private static int Rank(string version, string prerelease)
+        {
+            if (prerelease.Length == 0) return 1;
+            return IsHotfix(version) ? 2 : 0;
         }
 
         private static long[] Split(string version, out string prerelease)
