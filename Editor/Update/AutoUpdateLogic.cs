@@ -107,6 +107,16 @@ namespace OnAirDeck.UnityManager
         public const long DailySeconds = 24 * 60 * 60;
         /// <summary>A failed check (offline, server error) is tried again after this long, not on every tick.</summary>
         public const long RetrySeconds = 10 * 60;
+        /// <summary>A click on Refresh asks the server again (past the 10-minute and the session cache), but not more often than this.</summary>
+        public const long RefreshCheckSeconds = 30;
+
+        /// <summary>True when a click on Refresh may force a fresh plugin-version check now: never within 30 seconds of the last one it forced,
+        /// so repeated clicks do not reach the server each time. The rest (blocked version, busy moment) is <see cref="Decide"/>'s.</summary>
+        public static bool RefreshCheckDue(long now, long lastRefreshCheck)
+        {
+            if (lastRefreshCheck <= 0 || now < lastRefreshCheck) return true;
+            return now - lastRefreshCheck >= RefreshCheckSeconds;
+        }
 
         /// <summary>True when the window should ask plugin-version now: on open unless asked within 10 minutes, else once a day.</summary>
         public static bool CheckDue(bool onOpen, long now, long lastCheck)

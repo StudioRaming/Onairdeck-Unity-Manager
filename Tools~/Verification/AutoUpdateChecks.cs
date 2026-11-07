@@ -10,6 +10,7 @@ internal static class AutoUpdateChecks
     public static void Run(Action<string, Action> check, string project)
     {
         check("auto update timing: asked on open unless asked within 10 minutes, once a day while open, at once when never asked or the clock went back", Timing);
+        check("auto update refresh: a click forces a fresh check at once, then not again within 30 seconds; due again at 30 seconds or when the clock went back; the decision after it still refuses a blocked or busy release", RefreshCheck);
         check("auto update decision: only a release newer than the running code that this install can take; never one being installed, rolled back or failed here; waits while an install, import, compile or play mode runs", Decision);
         check("auto update settle: the new version marks the update done; the old one marks it failed, or deferred when it was cut before any swap", Settle);
         check("auto update settle on load: a record the old version marked failed (or left applying) is settled as done once the running version reached its target; a failed update to a newer version stays failed; this editor's own update waits for its reload", SettleOnLoad);
@@ -46,6 +47,26 @@ internal static class AutoUpdateChecks
             Equal("811c9dc5", AutoUpdateLogic.StableHash(""));
             Require(AutoUpdateLogic.StableHash("C:/Proj/A") != AutoUpdateLogic.StableHash("C:/Proj/B"));
         });
+    }
+
+    private static void RefreshCheck()
+    {
+        const long t = 2000000000;
+        Require(AutoUpdateLogic.RefreshCheckDue(t, 0));                   // never forced: the first click asks
+        Require(!AutoUpdateLogic.RefreshCheckDue(t, t - 1));
+        Require(!AutoUpdateLogic.RefreshCheckDue(t, t - 29));
+        Require(AutoUpdateLogic.RefreshCheckDue(t, t - 30));
+        Require(AutoUpdateLogic.RefreshCheckDue(t, t + 5));               // the clock went back
+        Equal(30L, AutoUpdateLogic.RefreshCheckSeconds);
+        // Unlike the open check, a forced one ignores a check made a minute ago (the 10-minute rule is not consulted).
+        Require(!AutoUpdateLogic.CheckDue(true, t, t - 60));
+        Require(AutoUpdateLogic.RefreshCheckDue(t, t - 60));
+        // What follows a forced check is the usual decision: a blocked release and a busy moment still hold it back.
+        var safe = new AutoUpdateMoment();
+        Equal(AutoUpdateAction.Apply, AutoUpdateLogic.Decide(true, true, "0.1.9", "0.1.8", "", safe));
+        Equal(AutoUpdateAction.Blocked, AutoUpdateLogic.Decide(true, true, "0.1.9", "0.1.8", "0.1.9", safe));
+        Equal(AutoUpdateAction.Wait, AutoUpdateLogic.Decide(true, true, "0.1.9", "0.1.8", "", new AutoUpdateMoment { WindowBusy = true }));
+        Equal(AutoUpdateAction.None, AutoUpdateLogic.Decide(false, true, "0.1.8", "0.1.8", "", safe));
     }
 
     private static void Timing()

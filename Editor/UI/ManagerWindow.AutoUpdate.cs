@@ -15,6 +15,8 @@ namespace OnAirDeck.UnityManager
         [NonSerialized] private double _autoNextTick;
         [NonSerialized] private bool _checkingUpdate;
         [NonSerialized] private long _nextCheckAttempt;
+        // When a click on Refresh last forced a check (the 30-second throttle).
+        [NonSerialized] private long _lastRefreshCheck;
         [NonSerialized] private SelfUpdateRecord _autoNote;
         [NonSerialized] private string _autoNoteKind;
         // No check ever ran in this project: the Manager was just installed (maybe from an old file), so it goes to the latest first.
