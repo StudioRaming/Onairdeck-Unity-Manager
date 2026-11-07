@@ -23,9 +23,9 @@ namespace OnAirDeck.UnityManager
 
         private void DrawDetailPaneWithBack(Rect r, CatalogEntry entry)
         {
-            var top = new Rect(r.x, r.y, r.width, 28f);
-            var back = new Rect(top.x + SRMetrics.Space8, top.y + 5f, 80f, SRMetrics.ButtonMini);
-            if (SRGui.Button(back, new GUIContent(ManagerText.BackList, ManagerText.BackList), SRButtonKind.Ghost, SRButtonSize.Mini))
+            var top = new Rect(r.x, r.y, r.width, 34f);
+            var back = new Rect(top.x + SRMetrics.Space8, top.y + 5f, Mathf.Min(130f, top.width - 2f * SRMetrics.Space8), SRMetrics.ButtonLarge);
+            if (SRGui.Button(back, new GUIContent(ManagerText.BackList, ManagerText.BackList), SRButtonKind.Secondary, SRButtonSize.Large))
                 Defer(() => { _showDetail = false; });
             DrawDetailPane(new Rect(r.x, top.yMax, r.width, Mathf.Max(0f, r.height - top.height)), entry);
         }
