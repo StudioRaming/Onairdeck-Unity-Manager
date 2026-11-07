@@ -49,6 +49,13 @@ namespace OnAirDeck.UnityManager
                 own.Add(file);
                 own.Add(file + ".meta");
             }
+            // An Assets copy of the package carries its package.json, which older release manifests do not list. It names this very
+            // package (the guard let the folder in for that reason), so it is the product's own file and moves to the backup with the rest.
+            if (LegacyInstall.NamesPackage(folder, probe.Name))
+            {
+                own.Add(item.Path + "/package.json");
+                own.Add(item.Path + "/package.json.meta");
+            }
             var bad = new List<string>();
             foreach (var file in Directory.GetFiles(folder, "*", SearchOption.AllDirectories))
             {

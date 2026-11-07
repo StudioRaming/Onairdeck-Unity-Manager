@@ -38,6 +38,7 @@
     <Compile Include="OverwriteChecks.cs" />
     <Compile Include="HandoffChecks.cs" />
     <Compile Include="AstraR1Checks.cs" />
+    <Compile Include="OwnPackageJsonChecks.cs" />
     <Compile Include="DevChecks.cs" />
     <Compile Include="InstallErrorChecks.cs" />
     <Compile Include="ManagerErrorChecks.cs" />

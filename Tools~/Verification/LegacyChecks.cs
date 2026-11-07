@@ -45,6 +45,7 @@ internal static partial class LegacyChecks
         LegacyInstall.Handlers.Clear();
         LegacyInstall.Handlers.Add(new ReleaseManifestHandler());
         LegacyInstall.Handlers.Add(new InstallerHandoffHandler());
+        RunOwnPackageJson(check);
     }
 
     // ---------- helpers ----------

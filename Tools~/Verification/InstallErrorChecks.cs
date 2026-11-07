@@ -14,6 +14,7 @@ internal static class InstallErrorChecks
     public static void Run(Action<string, Action> check, string project)
     {
         check("error report redaction: paths (drive, UNC, //host, file:///, 8.3, JSON-escaped, POSIX) project-relative or <path>/file, names, e-mail, tokens, secret keys, Bearer, Steam ids", Redaction);
+        check("error report redaction: a host or user name inside a longer word (a package name) stays; the name alone, beside punctuation or Korean text, goes", RedactionNameBoundaries);
         check("error report redaction: spans are found on the original text (a user named key still hides key=value), short names are whole tokens, a second pass changes nothing", RedactionOverlapAndIdempotence);
         check("error report redaction: plain text, project-relative paths and compiler lines stay; the package list is redacted entry by entry", RedactionLeavesPlainText);
         check("error report redaction: a secret value is hidden even with a placeholder inside it; only an exact placeholder is left alone", RedactionSecretWithPlaceholder);
@@ -66,6 +67,18 @@ internal static class InstallErrorChecks
         Equal("api_key: <redacted>", R("api_key: abcdef123456"));
         Equal(@"{""password"": ""<redacted>"", ""n"": 1}", R(@"{""password"": ""hunter2"", ""n"": 1}"));
         Equal("cookie=<redacted>; theme=dark", R("cookie=sess123; theme=dark"));
+    }
+
+    private static void RedactionNameBoundaries()
+    {
+        // Owner report 2026-11-07: host "raming" turned com.studioraming.mingtoon into com.studio<host>.mingtoon.
+        var ctx = new RedactContext("", "maru", "raming");
+        const string refusal = "com.studioraming.mingtoon 이(가) 있는 프로젝트에는 설치할 수 없어요 (같은 GUID 파일 525개)";
+        Equal(refusal, FeedbackText.Redact(refusal, ctx));
+        Equal("StudioRaming MingToon by marumaru, RAMINGPC", FeedbackText.Redact("StudioRaming MingToon by marumaru, RAMINGPC", ctx));
+        // The name itself still goes: alone, any case, beside punctuation, a dash, an underscore or Korean text.
+        Equal("pc <host>, <host>-pc, <host>.local, <host>_x, <host>에서 <user>님", FeedbackText.Redact("pc raming, RAMING-pc, raming.local, raming_x, raming에서 maru님", ctx));
+        Equal("mail <email> on <host>", FeedbackText.Redact("mail maru@example.com on Raming", ctx));
     }
 
     private static void RedactionOverlapAndIdempotence()

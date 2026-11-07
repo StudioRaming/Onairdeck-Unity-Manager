@@ -79,8 +79,8 @@ namespace OnAirDeck.UnityManager
         /// <c>key=value</c> / <c>"key": "value"</c> / <c>key: value</c> for secret-like keys and <c>Bearer x</c> (value becomes
         /// &lt;redacted&gt;); e-mail addresses (&lt;email&gt;); absolute paths (drive, UNC, //host, file:///, POSIX, either slash,
         /// JSON-escaped): below the project folder project-relative, elsewhere &lt;path&gt;/file; Steam ids; JWTs and runs of 20+
-        /// base64/hex characters (&lt;token&gt;); the host name and Windows user name (3+ characters anywhere, 1-2 characters only
-        /// as a whole token). Callers redact the whole text BEFORE any cut.
+        /// base64/hex characters (&lt;token&gt;); the host name and Windows user name (only where they are
+        /// not part of a longer ASCII word, so a package name that contains them stays). Callers redact the whole text BEFORE any cut.
         /// </summary>
         public static string Redact(string text, RedactContext context)
         {
@@ -244,8 +244,10 @@ namespace OnAirDeck.UnityManager
         {
             if (string.IsNullOrEmpty(name)) return;
             var escaped = Regex.Escape(name);
-            // 3+ characters anywhere; 1-2 characters only as a whole token, so a short name does not eat every letter.
-            var pattern = name.Length >= 3 ? escaped : @"(?<![A-Za-z0-9])" + escaped + @"(?![A-Za-z0-9])";
+            // Only where the name is not part of a longer ASCII word: a host "raming" must not turn com.studioraming.mingtoon into
+            // com.studio<host>.mingtoon, and a short name must not eat every letter. Punctuation, "_", "-", spaces and non-ASCII text
+            // (Korean particles) next to the name still count as its edge.
+            var pattern = @"(?<![A-Za-z0-9])" + escaped + @"(?![A-Za-z0-9])";
             foreach (Match m in Regex.Matches(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 spans.Add(new Span { Start = m.Index, End = m.Index + m.Length, Priority = 7, Replacement = replacement });
             // The 8.3 short form of the name (ZMNBN~1, a long name's first six characters).
