@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.10]
+
+- **An old MingToon in Assets that carries its own package.json updates as the old install.** An `Assets/StudioRaming/MingToon` folder whose `package.json` names `com.studioraming.mingtoon` was refused as another vendor's package ("com.studioraming.mingtoon 이(가) 있는 프로젝트에는 설치할 수 없어요 (같은 GUID 파일 525개)"): every folder holding a `package.json` was turned away before the old-install rules ran, so the product's own old copy was labelled a foreign package. A folder whose own `package.json` names exactly the package being installed now passes and goes through the old-install rules (move, hand-off or the named refusal, as before); a `package.json` in a folder above it, or one naming any other package, still refuses (`LegacyInstall.TryGuard`, `LegacyInstall.NamesPackage`). The release-manifest check counts that `package.json` (and its `.meta`) as the product's own file, since older manifests do not list it (`ReleaseManifestHandler`).
+- **A bug report hides the PC and user name only as whole words.** The host and Windows user names are redacted only where they are not part of a longer ASCII word, so a host named "raming" no longer turns `com.studioraming.mingtoon` into `com.studio<host>.mingtoon`. Punctuation, `_`, `-`, spaces and Korean text next to the name still count as its edge (`FeedbackText`).
+- Verification: headless checks for the own package.json (passes for the package being installed, refuses for an ancestor or another name) and the whole-word redaction.
+
 ## [0.1.9]
 
 - **The header refresh button (↻) also checks for a Manager update right away.** Until now only a window open, a script reload after 10 minutes and the daily check asked the server. A click on Refresh now forces a fresh plugin-version check, past the 10-minute rule and the session's cached answer, and a newer release goes through the same flow as always (embedded swap or Package Manager git route). It asks at most once every 30 seconds, so repeated clicks do not reach the server each time. A release that failed or is still settling here stays blocked, and nothing starts while an install, import, compile or play mode runs (`AutoUpdateLogic.RefreshCheckDue`, `AutoUpdateLogic.Decide`).
