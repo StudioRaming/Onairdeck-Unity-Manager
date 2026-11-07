@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.1.9]
+
+- **The header refresh button (↻) also checks for a Manager update right away.** Until now only a window open, a script reload after 10 minutes and the daily check asked the server. A click on Refresh now forces a fresh plugin-version check, past the 10-minute rule and the session's cached answer, and a newer release goes through the same flow as always (embedded swap or Package Manager git route). It asks at most once every 30 seconds, so repeated clicks do not reach the server each time. A release that failed or is still settling here stays blocked, and nothing starts while an install, import, compile or play mode runs (`AutoUpdateLogic.RefreshCheckDue`, `AutoUpdateLogic.Decide`).
+- Verification: headless checks for the forced check, the 30-second throttle (first click, within, at 30 seconds, clock went back) and the blocked and busy decisions after it.
+
 ## [0.1.8]
 
 - **The self-update from 0.1.7 ends with "업데이트됨", not a stuck banner.** In a real 0.1.7 → 0.1.8 update (git route, unfocused editor, QA 2026-11-08) 0.1.7's delayed settle ran during its own install, before the reload, and marked the update "failed"; 0.1.8 then showed no "업데이트됨 0.1.7 → 0.1.8" note, and 0.1.7's "Atelier Manager 0.1.8을(를) 받는 중이에요" banner stayed because a window's message survives the script reload. On load and when a window opens, a record still applying or marked failed whose target the running version has reached is now settled as done: the note shows once when the running version is the target, and nothing shows when it is past it. A failed update to a newer version stays failed. The leftover "installing <v>" banner is cleared once <v> runs (`AutoUpdateLogic.SettleOnLoad`, `AutoUpdateLogic.StaleRunningMessage`). From 0.1.8 on, the delayed settle of the editor that started an update leaves its record applying until the reload, so the next update cannot hit the same race.

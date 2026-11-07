@@ -204,6 +204,13 @@ namespace OnAirDeck.UnityManager
             RefreshInstalledState();
             LoadEntries(true);
             StartConflictScan();
+            // Refresh also asks for a Manager update right away (the same guarded flow as on open), at most once every 30 seconds.
+            var now = AutoUpdater.Now();
+            if (!_checkingUpdate && AutoUpdateLogic.RefreshCheckDue(now, _lastRefreshCheck))
+            {
+                _lastRefreshCheck = now;
+                CheckForUpdate(false, true);
+            }
         }
 
         // ---------- the Manager's own update ----------
