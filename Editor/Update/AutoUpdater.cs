@@ -33,6 +33,12 @@ namespace OnAirDeck.UnityManager
 
         private static int _running;
 
+        /// <summary>
+        /// This domain wrote an "applying" record. Its delayed settle, when it runs late (an unfocused editor), must not call that
+        /// update failed before the reload that brings the new version.
+        /// </summary>
+        private static bool _startedHere;
+
         /// <summary>An undone update whose "applying" record could not be rewritten; this editor does not act on it.</summary>
         private static string _abandoned = "";
 
@@ -73,7 +79,7 @@ namespace OnAirDeck.UnityManager
                     RollBack();
                     return;
                 }
-                if (AutoUpdateLogic.Settle(record, LoadedVersion)) AutoUpdateLogic.Save(Root, record);
+                if (AutoUpdateLogic.SettleOnLoad(record, LoadedVersion, _startedHere)) AutoUpdateLogic.Save(Root, record);
             }
             catch (Exception e)
             {
@@ -157,6 +163,7 @@ namespace OnAirDeck.UnityManager
             var inTransaction = false;   // the swap ran; whether it stayed is the install journal's to say
             try
             {
+                _startedHere = true;
                 AutoUpdateLogic.Save(Root, record);
                 var seam = ApplySeam;
                 if (seam != null) await seam(state, record);
@@ -377,9 +384,10 @@ namespace OnAirDeck.UnityManager
         public static SelfUpdateRecord PendingNote(out string kind)
         {
             var record = AutoUpdateLogic.Load(Root);
-            // The window may open before the delayed settle ran. Only the new version may settle here: the old one opening a window
-            // while its update still runs must not call that update failed.
-            if (record != null && record.Phase == SelfUpdateRecord.PhaseApplying && record.To == LoadedVersion && AutoUpdateLogic.Settle(record, LoadedVersion))
+            // The window may open before the delayed settle ran. Only a version that reached the target may settle here: the old one
+            // opening a window while its update still runs must not call that update failed.
+            if (record != null && PackageVersion.IsExact(record.To) && PackageVersion.Compare(LoadedVersion, record.To) >= 0
+                && AutoUpdateLogic.SettleOnLoad(record, LoadedVersion, _startedHere))
             {
                 try { AutoUpdateLogic.Save(Root, record); } catch (Exception) { }
             }

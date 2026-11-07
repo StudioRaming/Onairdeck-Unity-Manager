@@ -12,6 +12,8 @@ internal static class AutoUpdateChecks
         check("auto update timing: asked on open unless asked within 10 minutes, once a day while open, at once when never asked or the clock went back", Timing);
         check("auto update decision: only a release newer than the running code that this install can take; never one being installed, rolled back or failed here; waits while an install, import, compile or play mode runs", Decision);
         check("auto update settle: the new version marks the update done; the old one marks it failed, or deferred when it was cut before any swap", Settle);
+        check("auto update settle on load: a record the old version marked failed (or left applying) is settled as done once the running version reached its target; a failed update to a newer version stays failed; this editor's own update waits for its reload", SettleOnLoad);
+        check("auto update banner: the old version's 'installing <v>' message left over a reload is stale once the running version reached <v>, in every language", StaleRunningMessage);
         check("auto update note: 'updated' once in the new version, 'rolled-back' in the old one, nothing while applying or after it was seen", Note);
         check("auto update rollback trigger: an error in a package the update swapped (by its logical Packages/<name>/ path, also on the git route), never before the swap is recorded; an update in flight blocks every other", ErrorScope(project));
         check("auto update record: written and read back with every field and every swapped folder; a missing or broken file reads as none", Record(project));
@@ -115,6 +117,81 @@ internal static class AutoUpdateChecks
         record = new SelfUpdateRecord { From = "0.1.4", To = "0.1.5", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
         Require(AutoUpdateLogic.Settle(record, "0.1.4"));
         Equal(SelfUpdateRecord.PhaseFailed, record.Phase);
+    }
+
+    private static void SettleOnLoad()
+    {
+        // QA 2026-11-08, 0.1.7 -> 0.1.8 (git route): 0.1.7's delayed settle ran during the install and wrote "failed" before the reload.
+        Func<string, SelfUpdateRecord> failed = to => new SelfUpdateRecord { From = "0.1.7", To = to, Route = "git", Phase = SelfUpdateRecord.PhaseFailed, Error = "The install did not finish." };
+        var record = failed("0.1.8");
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.8", false));
+        Equal(SelfUpdateRecord.PhaseApplied, record.Phase);
+        Equal("", record.Error);
+        Equal("updated", AutoUpdateLogic.NoteFor(record, "0.1.8"));
+        Equal("", AutoUpdateLogic.BlockedVersion(record));
+        Require(!AutoUpdateLogic.SettleOnLoad(record, "0.1.8", false));   // settled once; the note is shown once, then "shown"
+
+        // Running past the target (installed by hand since): done, no note about an older step.
+        record = failed("0.1.8");
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.9", false));
+        Equal(SelfUpdateRecord.PhaseShown, record.Phase);
+        Equal(null, AutoUpdateLogic.NoteFor(record, "0.1.9"));
+
+        // Running a hotfix of the target counts as reached.
+        record = failed("0.1.8");
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.8-hotfix.1", false));
+        Equal(SelfUpdateRecord.PhaseShown, record.Phase);
+
+        // A genuinely failed update to a newer version stays failed (and blocked).
+        record = failed("0.1.8");
+        Require(!AutoUpdateLogic.SettleOnLoad(record, "0.1.7", false));
+        Equal(SelfUpdateRecord.PhaseFailed, record.Phase);
+        Equal("0.1.8", AutoUpdateLogic.BlockedVersion(record));
+
+        // An applying record left over a reload: the new version marks it done, also when it is past the target.
+        record = new SelfUpdateRecord { From = "0.1.7", To = "0.1.8", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.8", false));
+        Equal(SelfUpdateRecord.PhaseApplied, record.Phase);
+        record = new SelfUpdateRecord { From = "0.1.7", To = "0.1.8", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.9", false));
+        Equal(SelfUpdateRecord.PhaseShown, record.Phase);
+
+        // The old version, after a reload that kept it: failed as before.
+        record = new SelfUpdateRecord { From = "0.1.7", To = "0.1.8", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(AutoUpdateLogic.SettleOnLoad(record, "0.1.7", false));
+        Equal(SelfUpdateRecord.PhaseFailed, record.Phase);
+
+        // This editor started the update and its reload has not happened yet: the delayed settle leaves it applying.
+        record = new SelfUpdateRecord { From = "0.1.8", To = "0.1.9", Route = "git", Phase = SelfUpdateRecord.PhaseApplying };
+        Require(!AutoUpdateLogic.SettleOnLoad(record, "0.1.8", true));
+        Equal(SelfUpdateRecord.PhaseApplying, record.Phase);
+
+        // A rollback in progress, a rolled-back release, a deferred one and a shown one are not touched; nor a record without a target.
+        foreach (var phase in new[] { SelfUpdateRecord.PhaseRestoring, SelfUpdateRecord.PhaseRolledBack, SelfUpdateRecord.PhaseDeferred, SelfUpdateRecord.PhaseShown })
+        {
+            record = new SelfUpdateRecord { From = "0.1.7", To = "0.1.8", Route = "git", Phase = phase };
+            Require(!AutoUpdateLogic.SettleOnLoad(record, "0.1.8", false));
+            Equal(phase, record.Phase);
+        }
+        record = failed("");
+        Require(!AutoUpdateLogic.SettleOnLoad(record, "0.1.8", false));
+        Require(!AutoUpdateLogic.SettleOnLoad(null, "0.1.8", false));
+    }
+
+    private static void StaleRunningMessage()
+    {
+        var templates = new[] { "Atelier Manager {v}을(를) 받는 중이에요. 끝나면 스크립트를 다시 불러와요.", "Installing Atelier Manager {v}. Scripts reload when it is done.", "Atelier Manager {v}を受け取っています。終わるとスクリプトを再読み込みします。" };
+        foreach (var t in templates)
+        {
+            Require(AutoUpdateLogic.StaleRunningMessage(t.Replace("{v}", "0.1.8"), "0.1.8", templates));
+            Require(AutoUpdateLogic.StaleRunningMessage(t.Replace("{v}", "0.1.8"), "0.1.9", templates));
+            Require(!AutoUpdateLogic.StaleRunningMessage(t.Replace("{v}", "0.1.9"), "0.1.8", templates));   // still on its way
+        }
+        Require(!AutoUpdateLogic.StaleRunningMessage("Installing Atelier Manager 0.1.8. Scripts reload when it is done. ", "0.1.8", templates));
+        Require(!AutoUpdateLogic.StaleRunningMessage("Something else 0.1.8", "0.1.8", templates));
+        Require(!AutoUpdateLogic.StaleRunningMessage("Installing Atelier Manager x. Scripts reload when it is done.", "0.1.8", templates));
+        Require(!AutoUpdateLogic.StaleRunningMessage(null, "0.1.8", templates));
+        Require(!AutoUpdateLogic.StaleRunningMessage("", "0.1.8", templates));
     }
 
     private static void Note()

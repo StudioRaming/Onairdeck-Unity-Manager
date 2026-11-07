@@ -177,6 +177,53 @@ namespace OnAirDeck.UnityManager
             return true;
         }
 
+        /// <summary>
+        /// Settles the record when a domain loads (or a window opens). Before <see cref="Settle"/>: a record still applying or already
+        /// marked failed whose target the running version has reached (equal or newer, <see cref="PackageVersion.Compare"/>) is done:
+        /// "applied" when the running version is the target (its note shows once), "shown" when it is past it. An older Manager's
+        /// delayed settle can run during its own git install, before the reload, and mark that update failed (0.1.7 -> 0.1.8, QA
+        /// 2026-11-08); the new version repairs it here. A failed update to a version newer than the running one stays failed.
+        /// <paramref name="startedHere"/>: this domain started the update and has not reloaded since, so the record is left applying.
+        /// Returns true when it changed.
+        /// </summary>
+        public static bool SettleOnLoad(SelfUpdateRecord record, string running, bool startedHere)
+        {
+            if (record == null) return false;
+            var applying = record.Phase == SelfUpdateRecord.PhaseApplying;
+            if (applying && startedHere && record.From == running) return false;
+            if ((applying || record.Phase == SelfUpdateRecord.PhaseFailed) && PackageVersion.IsExact(record.To) && PackageVersion.IsExact(running)
+                && PackageVersion.Compare(running, record.To) >= 0)
+            {
+                record.Phase = running == record.To ? SelfUpdateRecord.PhaseApplied : SelfUpdateRecord.PhaseShown;
+                record.Error = "";
+                return true;
+            }
+            return Settle(record, running);
+        }
+
+        /// <summary>
+        /// True when <paramref name="message"/> is the "installing &lt;v&gt;" banner (<paramref name="templates"/>: its text in each language,
+        /// "{v}" for the version) of a version the running one has reached. A window's message survives the script reload, so the old
+        /// version's banner would otherwise stay on in the new one.
+        /// </summary>
+        public static bool StaleRunningMessage(string message, string running, IList<string> templates)
+        {
+            if (string.IsNullOrEmpty(message) || templates == null) return false;
+            foreach (var template in templates)
+            {
+                if (string.IsNullOrEmpty(template)) continue;
+                var at = template.IndexOf("{v}", StringComparison.Ordinal);
+                if (at < 0) continue;
+                var head = template.Substring(0, at);
+                var tail = template.Substring(at + 3);
+                if (message.Length <= head.Length + tail.Length) continue;
+                if (!message.StartsWith(head, StringComparison.Ordinal) || !message.EndsWith(tail, StringComparison.Ordinal)) continue;
+                var version = message.Substring(head.Length, message.Length - head.Length - tail.Length);
+                if (PackageVersion.IsExact(version) && PackageVersion.Compare(running ?? "", version) >= 0) return true;
+            }
+            return false;
+        }
+
         /// <summary>The note the running version shows once; null when there is none for <paramref name="running"/>.</summary>
         public static string NoteFor(SelfUpdateRecord record, string running)
         {

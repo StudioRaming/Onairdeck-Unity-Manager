@@ -26,6 +26,7 @@ internal static class PackageChecks
 
         check("package versions: exact form, ranges refused, semver order", VersionRules);
         check("build kinds: preview, beta and hotfix from version or label; a release is offered before a prerelease", BuildKindRules);
+        check("hotfix versions: '-hotfix.<n>' is a stable release above its x.y.z and below the next patch; other suffixes keep semver", HotfixVersionRules);
         check("zip: valid package returns its manifest and extracts", ZipValid);
         check("zip: traversal, rooted, drive and backslash entries fail the whole package", ZipUnsafeEntries);
         check("zip: sanitized names, duplicate-by-case entries and a bad zip fail", ZipOddEntries);
@@ -99,6 +100,38 @@ internal static class PackageChecks
         Equal(0, BuildKinds.IndexOfOffered(new List<BuildKind> { BuildKind.Preview, BuildKind.Beta }, false));
         Equal(-1, BuildKinds.IndexOfOffered(new List<BuildKind>(), false));
         Equal(-1, BuildKinds.IndexOfOffered(null, false));
+    }
+
+    private static void HotfixVersionRules()
+    {
+        // Rank inside one x.y.z: hotfix > release > prerelease; hotfix.<n> orders by n; the next patch is above every hotfix.
+        Require(PackageVersion.Compare("0.1.16-hotfix.1", "0.1.16") > 0);
+        Require(PackageVersion.Compare("0.1.16", "0.1.16-hotfix.1") < 0);
+        Require(PackageVersion.Compare("0.1.16", "0.1.16-beta.1") > 0);
+        Require(PackageVersion.Compare("0.1.16-hotfix.1", "0.1.16-beta.1") > 0);
+        Require(PackageVersion.Compare("0.1.16-hotfix.2", "0.1.16-hotfix.1") > 0);
+        Require(PackageVersion.Compare("0.1.16-hotfix.10", "0.1.16-hotfix.9") > 0);
+        Require(PackageVersion.Compare("0.1.17", "0.1.16-hotfix.9") > 0);
+        Require(PackageVersion.Compare("0.1.17-beta.1", "0.1.16-hotfix.9") > 0);
+        Require(PackageVersion.Compare("0.1.16-hotfix.1", "0.1.15") > 0);
+        Equal(0, PackageVersion.Compare("0.1.16-hotfix.3", "0.1.16-hotfix.3"));
+        // A hotfix is not a prerelease; anything else after '-' still is (a misspelt or bare "hotfix" included).
+        Require(PackageVersion.IsHotfix("0.1.16-hotfix.1") && PackageVersion.IsHotfix("0.1.16-hotfix.0"));
+        Require(!PackageVersion.IsPrerelease("0.1.16-hotfix.1"));
+        foreach (var other in new[] { "0.1.16-hotfix", "0.1.16-Hotfix.1", "0.1.16-hotfix.1.2", "0.1.16-hotfix.01", "0.1.16-hotfix.a", "0.1.16-beta.1", "0.1.16-hotfix-1" })
+        {
+            Require(!PackageVersion.IsHotfix(other));
+            Require(PackageVersion.IsPrerelease(other));
+            Require(PackageVersion.Compare(other, "0.1.16") < 0);
+        }
+        Require(!PackageVersion.IsHotfix("0.1.16") && !PackageVersion.IsHotfix("") && !PackageVersion.IsHotfix(null));
+        // The suffix alone makes the Hotfix chip and the version offerable by default.
+        Equal(BuildKind.Hotfix, BuildKinds.OfPackage("0.1.16-hotfix.1", ""));
+        Equal(BuildKind.Hotfix, BuildKinds.OfPackage("0.1.16-hotfix.1", null));
+        Equal(BuildKind.Prerelease, BuildKinds.OfPackage("0.1.16-hotfix", "Hotfix"));
+        // A Manager self-update to a hotfix of the Manager counts as newer.
+        Require(AutoUpdateLogic.IsNewer("0.1.8-hotfix.1", "0.1.8"));
+        Require(!AutoUpdateLogic.IsNewer("0.1.8", "0.1.8-hotfix.1"));
     }
 
     private static void ZipValid()
