@@ -699,8 +699,11 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// The guard rails: only a path strictly under Assets/ and inside the project, never Assets itself, never a
         /// folder that holds a package.json (or a package.json itself). Returns the normalized relative path.
+        /// <paramref name="ownPackage"/>: the package being installed. A folder whose own package.json names exactly that package is the
+        /// product's old Assets install (an Assets copy of the package), not an external package, so it passes; a package.json in an
+        /// ancestor, or one naming any other package, still refuses the path.
         /// </summary>
-        internal static bool TryGuard(string projectRoot, string raw, out string relative)
+        internal static bool TryGuard(string projectRoot, string raw, out string relative, string ownPackage = null)
         {
             relative = null;
             var text = (raw ?? "").Trim().Replace('\\', '/').Trim('/');
@@ -720,7 +723,7 @@ namespace OnAirDeck.UnityManager
                 if (File.Exists(Path.Combine(ancestor, "package.json"))) return false;
             if (Directory.Exists(full))
             {
-                if (File.Exists(Path.Combine(full, "package.json"))) return false;
+                if (File.Exists(Path.Combine(full, "package.json")) && !NamesPackage(full, ownPackage)) return false;
             }
             else if (File.Exists(full))
             {
@@ -732,6 +735,23 @@ namespace OnAirDeck.UnityManager
             }
             relative = text;
             return true;
+        }
+
+        /// <summary>True when the package.json in <paramref name="folder"/> is readable and its name is exactly <paramref name="package"/>.</summary>
+        internal static bool NamesPackage(string folder, string package)
+        {
+            if (string.IsNullOrEmpty(package)) return false;
+            try
+            {
+                var path = Path.Combine(folder, "package.json");
+                if (!File.Exists(path) || new FileInfo(path).Length > 64 * 1024) return false;
+                var manifest = PackageZip.ParseManifest(File.ReadAllText(path, Encoding.UTF8), false);
+                return manifest != null && string.Equals(manifest.Name, package, StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         /// <summary>True when the path is one of <see cref="OnAirDeckConfig.NeverMoveAssetFolders"/> or inside one.</summary>
@@ -755,7 +775,7 @@ namespace OnAirDeck.UnityManager
         private static void Add(string root, string raw, string product, string source, List<LegacyItem> found, HashSet<string> seen, LegacyProbe owner)
         {
             string relative;
-            if (!TryGuard(root, raw, out relative) || !seen.Add(relative)) return;
+            if (!TryGuard(root, raw, out relative, owner == null ? null : owner.Name) || !seen.Add(relative)) return;
             found.Add(new LegacyItem { Path = relative, Files = CountFiles(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar))), Product = product, Source = source, Owner = owner });
         }
 
@@ -897,7 +917,7 @@ namespace OnAirDeck.UnityManager
                 foreach (var item in plan.Items)
                 {
                     string relative;
-                    if (!TryGuard(root, item.Path, out relative)) throw new PackageInstallException("Refusing to move " + item.Path + ".");
+                    if (!TryGuard(root, item.Path, out relative, item.Owner == null ? null : item.Owner.Name)) throw new PackageInstallException("Refusing to move " + item.Path + ".");
                     if (item.HandOff) throw new PackageInstallException("Refusing to move " + item.Path + ": the product's own installer cleans it up.");
                     if (item.Blocked) throw new PackageInstallException("Refusing to move " + item.Path + ": it is not proven to hold only the old install.");
                     move.Planned.Add(relative);
