@@ -48,47 +48,70 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Writes <paramref name="text"/> to a hidden temp file next to <paramref name="path"/> (Unity skips names that start
         /// with '.'), then swaps it in, so a full disk or an I/O error mid-write leaves the old license whole instead of a
-        /// truncated one. On failure <see cref="SettleFailedSwap"/> decides what the temp file becomes, and the error goes on
-        /// unless the new license ended up in place.
+        /// truncated one. The swap keeps the old file as a hidden backup until the new one is in place: Windows' ReplaceFile can
+        /// move the old file aside and then fail to move the new one in (ERROR_UNABLE_TO_MOVE_REPLACEMENT). On failure
+        /// <see cref="SettleFailedSwap"/> puts the new or the old license back, and a backup left by a failure nothing could
+        /// settle is restored at the next write. The error goes on unless the new license ended up in place.
         /// </summary>
         internal static void WriteFileAtomic(string path, string text)
         {
-            var temp = Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".tmp");
+            var dir = Path.GetDirectoryName(path) ?? "";
+            var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+            var backup = Path.Combine(dir, "." + Path.GetFileName(path) + ".bak");
+            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
             var written = false;
             try
             {
                 File.WriteAllText(temp, text, new UTF8Encoding(false));
                 written = true;
-                if (File.Exists(path)) File.Replace(temp, path, null);
-                else File.Move(temp, path);
+                if (File.Exists(path))
+                {
+                    TryDelete(backup); // a stale one: the license it held is still at path
+                    ReplaceFile(temp, path, backup);
+                    TryDelete(backup);
+                }
+                else MoveFile(temp, path);
             }
             catch
             {
-                if (SettleFailedSwap(temp, path, written)) return;
+                if (SettleFailedSwap(temp, path, backup, written)) return;
                 throw;
             }
         }
 
+        /// <summary>The swap and move <see cref="WriteFileAtomic"/> uses; the headless checks inject failures here.</summary>
+        internal static Action<string, string, string> ReplaceFile = (source, destination, backup) => File.Replace(source, destination, backup);
+        internal static Action<string, string> MoveFile = (source, destination) => File.Move(source, destination);
+
         /// <summary>
-        /// After a failed write or swap: a whole temp file with no license left at <paramref name="path"/> is moved in (Windows'
-        /// ReplaceFile can remove the old file and then fail to move the new one in, ERROR_UNABLE_TO_MOVE_REPLACEMENT, and
-        /// deleting the temp then would lose both); otherwise the temp file is removed. True when the new license is in place.
+        /// After a failed write or swap, with no license left at <paramref name="path"/>: the whole new file is moved in, or else
+        /// the old one from <paramref name="backup"/>. The temp file is removed once a license is in place (or it was never
+        /// whole); a backup that could not be moved back stays for the next write. True when the new license is in place.
         /// </summary>
-        internal static bool SettleFailedSwap(string temp, string path, bool written)
+        internal static bool SettleFailedSwap(string temp, string path, string backup, bool written)
         {
-            try
+            if (!File.Exists(path) && written && File.Exists(temp) && TryMove(temp, path))
             {
-                if (!File.Exists(temp)) return false;
-                if (written && !File.Exists(path))
-                {
-                    File.Move(temp, path);
-                    return true;
-                }
-                File.Delete(temp);
+                TryDelete(backup);
+                return true;
             }
+            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
+            if (File.Exists(path) || !written) TryDelete(temp);
+            return false;
+        }
+
+        private static bool TryMove(string source, string destination)
+        {
+            try { MoveFile(source, destination); return true; }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
+
+        private static void TryDelete(string file)
+        {
+            try { if (File.Exists(file)) File.Delete(file); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return false;
         }
 
         /// <summary>

@@ -52,23 +52,44 @@ internal static class RevalidationChecks
         Require(threw, "a failed write did not report the error");
         Equal("new.c2ln\n", File.ReadAllText(path));
         Directory.Delete(blocker);
-        // The swap removed the old file but left the new one under the temp name: the new one is moved in, not deleted.
+        // Windows' ReplaceFile moved the old file to the backup and then failed to move the new one in
+        // (ERROR_UNABLE_TO_MOVE_REPLACEMENT), through the real WriteFileAtomic.
         var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
-        File.Delete(path);
-        File.WriteAllText(temp, "swapped.c2ln\n");
-        Require(LicenseFile.SettleFailedSwap(temp, path, true), "a whole temp file with no license left was not moved in");
-        Equal("swapped.c2ln\n", File.ReadAllText(path));
-        Require(!File.Exists(temp), "the temp file stayed after it was moved in");
-        // The old license is still there: the temp file goes and the old one stays.
-        File.WriteAllText(temp, "late.c2ln\n");
-        Require(!LicenseFile.SettleFailedSwap(temp, path, true), "a temp file replaced a license that was still there");
-        Equal("swapped.c2ln\n", File.ReadAllText(path));
-        Require(!File.Exists(temp), "the temp file stayed next to the kept license");
-        // A temp file the write did not finish never becomes the license, even with no license left.
-        File.Delete(path);
-        File.WriteAllText(temp, "trunc");
-        Require(!LicenseFile.SettleFailedSwap(temp, path, false), "a half-written temp file was moved in");
-        Require(!File.Exists(path) && !File.Exists(temp), "a half-written temp file was kept");
+        var backup = Path.Combine(dir, "." + Path.GetFileName(path) + ".bak");
+        Action leftNothing = () => Require(!File.Exists(temp) && !File.Exists(backup), "a temp or backup file was left");
+        var realReplace = LicenseFile.ReplaceFile;
+        var realMove = LicenseFile.MoveFile;
+        try
+        {
+            LicenseFile.ReplaceFile = (s, d, b) => { File.Move(d, b); throw new IOException("unable to move replacement"); };
+            // The move after it works: the new license is in place and the write reports success.
+            LicenseFile.WriteFileAtomic(path, "swapped.c2ln\n");
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // The new one cannot be moved in either: the old license comes back from the backup and the error goes on.
+            LicenseFile.MoveFile = (s, d) => { if (s == temp) throw new IOException("busy"); File.Move(s, d); };
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a failed swap did not report the error");
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // Nothing can be moved: no license at the path, but the backup keeps the old one for the next write.
+            LicenseFile.MoveFile = (s, d) => throw new IOException("busy");
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a failed swap did not report the error");
+            Require(!File.Exists(path), "the injected failure did not leave the path empty");
+            Equal("swapped.c2ln\n", File.ReadAllText(backup));
+        }
+        finally
+        {
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.MoveFile = realMove;
+        }
+        // The next write restores the backup first and then swaps as usual.
+        LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
+        Equal("next.c2ln\n", File.ReadAllText(path));
+        leftNothing();
     }
 
     private static string LicenseExp(string user, string licenseId, string itemId, long exp)
