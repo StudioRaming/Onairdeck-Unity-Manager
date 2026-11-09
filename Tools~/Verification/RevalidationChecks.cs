@@ -82,19 +82,32 @@ internal static class RevalidationChecks
             Require(!File.Exists(path), "the injected failure did not leave the path empty");
             Equal("swapped.c2ln\n", File.ReadAllText(backup));
             LicenseFile.MoveFile = realMove;
-            // The editor-load sweep (and every scan) puts it back without a write.
+            // The editor-load sweep (and every scan) puts it back without a write, and clears the unsettled temp file.
             LicenseRevalidation.RestoreBackups(_root);
             Equal("swapped.c2ln\n", File.ReadAllText(path));
-            Require(!File.Exists(backup), "the backup stayed after it was restored");
+            leftNothing();
             // A backup next to a license that is there is left alone by the sweep.
             File.WriteAllText(backup, "stale.c2ln\n");
             LicenseRevalidation.RestoreBackups(_root);
             Equal("swapped.c2ln\n", File.ReadAllText(path));
-            // The next write after a failure that left only the backup restores it first and then swaps as usual.
+            // A stale backup (no temp beside it) next to a license removed on purpose, e.g. a refund, never comes back.
             File.Delete(path);
+            LicenseRevalidation.RestoreBackups(_root);
+            Require(!File.Exists(path), "a stale backup brought a removed license back");
+            // The next write still lands, and clears the stale backup.
             LicenseFile.ReplaceFile = realReplace;
             LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
             Equal("next.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // The next write after an unsettled swap restores the backup first and then swaps as usual.
+            LicenseFile.ReplaceFile = (s, d, b) => { File.Move(d, b); throw new IOException("unable to move replacement"); };
+            LicenseFile.MoveFile = (s, d) => throw new IOException("busy");
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { }
+            Require(!File.Exists(path) && File.Exists(backup) && File.Exists(temp), "the injected failure did not leave an unsettled swap");
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.MoveFile = realMove;
+            LicenseFile.WriteFileAtomic(path, "again.c2ln\n");
+            Equal("again.c2ln\n", File.ReadAllText(path));
             leftNothing();
             // A first write cut off mid-file (disk full) never becomes the license and leaves no temp file.
             File.Delete(path);

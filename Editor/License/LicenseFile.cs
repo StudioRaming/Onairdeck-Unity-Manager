@@ -56,8 +56,7 @@ namespace OnAirDeck.UnityManager
         /// </summary>
         internal static void WriteFileAtomic(string path, string text)
         {
-            var dir = Path.GetDirectoryName(path) ?? "";
-            var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+            var temp = TempFor(path);
             var backup = BackupFor(path);
             RestoreBackup(path);
             var written = false;
@@ -69,9 +68,9 @@ namespace OnAirDeck.UnityManager
                 {
                     TryDelete(backup); // a stale one: the license it held is still at path
                     ReplaceFile(temp, path, backup);
-                    TryDelete(backup);
                 }
                 else MoveFile(temp, path);
+                TryDelete(backup);
             }
             catch
             {
@@ -86,14 +85,29 @@ namespace OnAirDeck.UnityManager
             return Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".bak");
         }
 
+        /// <summary>The hidden temp file <see cref="WriteFileAtomic"/> writes before the swap.</summary>
+        internal static string TempFor(string path)
+        {
+            return Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".tmp");
+        }
+
         /// <summary>
         /// Puts a backup left by a failed swap back at <paramref name="path"/> when no license is there (the runtime check reads
-        /// only <see cref="FileName"/>). Never throws.
+        /// only <see cref="FileName"/>). Only an unsettled swap counts, one whose temp file is still beside it: a backup a delete
+        /// failed to clear next to a license removed on purpose (a refund, a product removal) never comes back. Never throws.
         /// </summary>
         internal static void RestoreBackup(string path)
         {
             var backup = BackupFor(path);
-            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
+            var temp = TempFor(path);
+            if (!File.Exists(path) && File.Exists(backup) && File.Exists(temp) && TryMove(backup, path)) TryDelete(temp);
+        }
+
+        /// <summary>Removes the swap's backup and temp file next to <paramref name="path"/>, when the license itself is removed.</summary>
+        internal static void DeleteSwapFiles(string path)
+        {
+            TryDelete(BackupFor(path));
+            TryDelete(TempFor(path));
         }
 
         /// <summary>The write, swap and move <see cref="WriteFileAtomic"/> uses; the headless checks inject failures here.</summary>
