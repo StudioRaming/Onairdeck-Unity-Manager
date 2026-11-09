@@ -17,7 +17,11 @@ namespace OnAirDeck.UnityManager
     {
         public const string FileName = "onairdeck.license";
 
-        /// <summary>Re-issue when the license expires within this window (it lives 7 days).</summary>
+        /// <summary>
+        /// Re-issue when the license expires within this window. plugin-license issues it for 14 days, and every successful
+        /// re-check (<see cref="LicenseRevalidation.CanRenew"/>) renews it too, so this window only matters for a file the re-check
+        /// has not reached yet.
+        /// </summary>
         public const long RefreshWindowSeconds = 2L * 24 * 60 * 60;
 
         /// <summary>Absolute path of the license for a project-relative product folder.</summary>

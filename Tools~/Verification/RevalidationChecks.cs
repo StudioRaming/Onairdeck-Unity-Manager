@@ -29,6 +29,37 @@ internal static class RevalidationChecks
         check("revalidation: at most MaxPerPass per pass, most overdue first; one request per right", SelectCap);
         check("revalidation pass: the refunded file is removed, the kept file of the same account and an offline answer stay", Pass);
         check("revalidation: the last-checked map round-trips and skips bad lines", CheckedMap);
+        check("revalidation: a license that comes back renews the file (same account and right, never an earlier exp)", Renew);
+    }
+
+    private static string LicenseExp(string user, string licenseId, string itemId, long exp)
+    {
+        var payload = "{\"v\":1,\"iss\":\"onairdeck\",\"client\":\"unity-manager\",\"user_id\":\"" + user + "\",\"item_id\":\"" + itemId
+            + "\",\"product_id\":\"p\"," + (licenseId != null ? "\"license_id\":\"" + licenseId + "\",\"kind\":\"license\"," : "")
+            + "\"iat\":" + (exp - 14 * 86400) + ",\"exp\":" + exp + ",\"nonce\":\"r\"}";
+        return B64(payload) + ".c2ln";
+    }
+
+    private static void Renew()
+    {
+        Reset();
+        Put("Kept Tool", License(User, Kept, ""));
+        Put("Kept Tool/Nested", License(User, Kept, ""));
+        Put("Refunded Line", License(User, null, RefundedItem));
+        var files = LicenseRevalidation.Scan(_root);
+        var kept = files.Find(f => f.LicenseId == Kept);
+        var line = files.Find(f => f.ItemId == RefundedItem);
+        var fresh = LicenseExp(User, Kept, "", Now + 14 * 86400);
+        // Every folder holding the right is renewed; the file's own exp is Now + 6 days.
+        Equal(2, LicenseRevalidation.SameRight(files, kept).FindAll(f => LicenseRevalidation.CanRenew(f, kept, fresh)).Count);
+        Require(LicenseRevalidation.CanRenew(line, line, LicenseExp(User, null, RefundedItem, Now + 14 * 86400)), "an order-line file was not renewed");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(Other, Kept, "", Now + 14 * 86400)), "another account's license replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(User, Offline, "", Now + 14 * 86400)), "another license replaced the file");
+        Require(!LicenseRevalidation.CanRenew(line, line, LicenseExp(User, null, Offline, Now + 14 * 86400)), "another order line replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(User, Kept, "", Now + 86400)), "a license expiring earlier replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, line, fresh), "a file of another right was renewed");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, ""), "an empty answer renewed the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, "not-a-license"), "an unreadable answer renewed the file");
     }
 
     private static string B64(string text)

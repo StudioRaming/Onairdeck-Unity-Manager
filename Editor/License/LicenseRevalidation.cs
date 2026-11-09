@@ -196,6 +196,31 @@ namespace OnAirDeck.UnityManager
             return result;
         }
 
+        /// <summary>
+        /// True when <paramref name="issued"/>, the license plugin-license returned when <paramref name="asked"/> was asked
+        /// again, may replace <paramref name="file"/>: the file holds the same right, the new license names the same account and
+        /// the same right (license_id, or item_id for an order-line file), and it does not expire earlier than the file. A
+        /// successful re-check is then also a renewal, so the file always runs for the server's full lifetime (14 days) from
+        /// the last successful check (terms art.24 para 2). Does not verify the signature; the runtime check does.
+        /// </summary>
+        public static bool CanRenew(RevalidationFile file, RevalidationFile asked, string issued)
+        {
+            if (file == null || asked == null || string.IsNullOrEmpty(issued) || file.Key != asked.Key) return false;
+            string userId, licenseId, itemId;
+            if (!LicenseFile.TryReadPayloadString(issued, "user_id", out userId)
+                || !string.Equals(userId, asked.UserId, StringComparison.OrdinalIgnoreCase)) return false;
+            if (asked.LicenseId.Length > 0)
+            {
+                if (!LicenseFile.TryReadPayloadString(issued, "license_id", out licenseId)
+                    || !string.Equals(licenseId, asked.LicenseId, StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            else if (!LicenseFile.TryReadPayloadString(issued, "item_id", out itemId)
+                || !string.Equals(itemId, asked.ItemId, StringComparison.OrdinalIgnoreCase)) return false;
+            long newExp, oldExp;
+            if (!LicenseFile.TryReadExpiry(issued, out newExp)) return false;
+            return !LicenseFile.TryReadExpiry(file.Text, out oldExp) || newExp >= oldExp;
+        }
+
         private static void StableSortByLast(List<KeyValuePair<long, RevalidationFile>> list)
         {
             var indexed = new List<KeyValuePair<int, KeyValuePair<long, RevalidationFile>>>();
