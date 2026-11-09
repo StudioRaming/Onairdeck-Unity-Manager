@@ -93,7 +93,7 @@ namespace OnAirDeck.UnityManager
         public static string PLoadB { get { return Pick("다시 시도", "Try Again", "もう一度試す"); } }
         public static string DlTitle { get { return Pick("이 PC에서 쓰려면 다른 기기 하나를 빼 주세요", "Remove one other device to use this PC", "このPCで使うには、ほかのデバイスを1台外してください"); } }
         public static string RemoveDev { get { return Pick("이 기기 빼기", "Remove This Device", "このデバイスを外す"); } }
-        public static string DlNote { get { return Pick("뺀 기기는 다음 확인 때(최대 7일) 사용이 멈춰요.", "A removed device stops working at its next check (up to 7 days).", "外したデバイスは、次の確認のとき(最大7日)に使えなくなります。"); } }
+        public static string DlNote { get { return Pick("뺀 기기는 다음 확인 때(최대 14일) 사용이 멈춰요.", "A removed device stops working at its next check (up to 14 days).", "外したデバイスは、次の確認のとき(最大14日)に使えなくなります。"); } }
         public static string ThisTag { get { return Pick("지금 이 PC", "This PC", "このPC"); } }
         public static string DmTitle { get { return Pick("기기 관리", "Manage Devices", "デバイス管理"); } }
         public static string DmSub { get { return Pick("라이선스마다 쓸 수 있는 PC 수가 정해져 있어요. 구매자 본인의 PC만 해당하고(구매자 1명만 사용), 여러 사람이 나눠 쓸 수 없어요.", "Each license has a limit on how many PCs can use it. These are the buyer's own PCs, for one person only, and cannot be shared by several people.", "ライセンスごとに、使えるPCの数が決まっています。購入者本人のPCのみが対象で(購入者1名のみ使用)、複数の人で共有することはできません。"); } }
