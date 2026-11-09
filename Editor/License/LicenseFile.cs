@@ -48,22 +48,47 @@ namespace OnAirDeck.UnityManager
         /// <summary>
         /// Writes <paramref name="text"/> to a hidden temp file next to <paramref name="path"/> (Unity skips names that start
         /// with '.'), then swaps it in, so a full disk or an I/O error mid-write leaves the old license whole instead of a
-        /// truncated one. The temp file is removed on failure and the error goes on.
+        /// truncated one. On failure <see cref="SettleFailedSwap"/> decides what the temp file becomes, and the error goes on
+        /// unless the new license ended up in place.
         /// </summary>
         internal static void WriteFileAtomic(string path, string text)
         {
             var temp = Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".tmp");
+            var written = false;
             try
             {
                 File.WriteAllText(temp, text, new UTF8Encoding(false));
+                written = true;
                 if (File.Exists(path)) File.Replace(temp, path, null);
                 else File.Move(temp, path);
             }
             catch
             {
-                try { if (File.Exists(temp)) File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                if (SettleFailedSwap(temp, path, written)) return;
                 throw;
             }
+        }
+
+        /// <summary>
+        /// After a failed write or swap: a whole temp file with no license left at <paramref name="path"/> is moved in (Windows'
+        /// ReplaceFile can remove the old file and then fail to move the new one in, ERROR_UNABLE_TO_MOVE_REPLACEMENT, and
+        /// deleting the temp then would lose both); otherwise the temp file is removed. True when the new license is in place.
+        /// </summary>
+        internal static bool SettleFailedSwap(string temp, string path, bool written)
+        {
+            try
+            {
+                if (!File.Exists(temp)) return false;
+                if (written && !File.Exists(path))
+                {
+                    File.Move(temp, path);
+                    return true;
+                }
+                File.Delete(temp);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return false;
         }
 
         /// <summary>

@@ -52,6 +52,23 @@ internal static class RevalidationChecks
         Require(threw, "a failed write did not report the error");
         Equal("new.c2ln\n", File.ReadAllText(path));
         Directory.Delete(blocker);
+        // The swap removed the old file but left the new one under the temp name: the new one is moved in, not deleted.
+        var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+        File.Delete(path);
+        File.WriteAllText(temp, "swapped.c2ln\n");
+        Require(LicenseFile.SettleFailedSwap(temp, path, true), "a whole temp file with no license left was not moved in");
+        Equal("swapped.c2ln\n", File.ReadAllText(path));
+        Require(!File.Exists(temp), "the temp file stayed after it was moved in");
+        // The old license is still there: the temp file goes and the old one stays.
+        File.WriteAllText(temp, "late.c2ln\n");
+        Require(!LicenseFile.SettleFailedSwap(temp, path, true), "a temp file replaced a license that was still there");
+        Equal("swapped.c2ln\n", File.ReadAllText(path));
+        Require(!File.Exists(temp), "the temp file stayed next to the kept license");
+        // A temp file the write did not finish never becomes the license, even with no license left.
+        File.Delete(path);
+        File.WriteAllText(temp, "trunc");
+        Require(!LicenseFile.SettleFailedSwap(temp, path, false), "a half-written temp file was moved in");
+        Require(!File.Exists(path) && !File.Exists(temp), "a half-written temp file was kept");
     }
 
     private static string LicenseExp(string user, string licenseId, string itemId, long exp)
