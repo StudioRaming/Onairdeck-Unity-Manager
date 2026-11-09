@@ -29,6 +29,148 @@ internal static class RevalidationChecks
         check("revalidation: at most MaxPerPass per pass, most overdue first; one request per right", SelectCap);
         check("revalidation pass: the refunded file is removed, the kept file of the same account and an offline answer stay", Pass);
         check("revalidation: the last-checked map round-trips and skips bad lines", CheckedMap);
+        check("revalidation: a license that comes back renews the file (same account and right, never an earlier exp)", Renew);
+        check("license file write: swapped in whole, no temp left; a failed write keeps the old file", AtomicWrite);
+    }
+
+    private static void AtomicWrite()
+    {
+        Reset();
+        var path = Put("Atomic Tool", License(User, Kept, ""));
+        var dir = Path.GetDirectoryName(path);
+        LicenseFile.WriteFileAtomic(path, "new.c2ln\n");
+        Equal("new.c2ln\n", File.ReadAllText(path));
+        Equal(1, Directory.GetFiles(dir).Length);
+        var fresh = Path.Combine(dir, "fresh.license");
+        LicenseFile.WriteFileAtomic(fresh, "first.c2ln\n");
+        Equal("first.c2ln\n", File.ReadAllText(fresh));
+        // A temp path that cannot be written (a folder stands in its place): the old file stays as it was.
+        var blocker = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+        Directory.CreateDirectory(blocker);
+        var threw = false;
+        try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (Exception) { threw = true; }
+        Require(threw, "a failed write did not report the error");
+        Equal("new.c2ln\n", File.ReadAllText(path));
+        Directory.Delete(blocker);
+        // Windows' ReplaceFile moved the old file to the backup and then failed to move the new one in
+        // (ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 with a backup named), through the real WriteFileAtomic.
+        var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+        var backup = Path.Combine(dir, "." + Path.GetFileName(path) + ".bak");
+        Action leftNothing = () => Require(!File.Exists(temp) && !File.Exists(backup), "a temp or backup file was left");
+        var realReplace = LicenseFile.ReplaceFile;
+        var realMove = LicenseFile.MoveFile;
+        var realWrite = LicenseFile.WriteText;
+        try
+        {
+            LicenseFile.ReplaceFile = (s, d, b) => { File.Move(d, b); throw new IOException("unable to move replacement"); };
+            // The move after it works: the new license is in place and the write reports success.
+            LicenseFile.WriteFileAtomic(path, "swapped.c2ln\n");
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // The new one cannot be moved in either: the old license comes back from the backup and the error goes on.
+            LicenseFile.MoveFile = (s, d) => { if (s == temp) throw new IOException("busy"); File.Move(s, d); };
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a failed swap did not report the error");
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // Nothing can be moved: no license at the path, but the backup keeps the old one for the next write.
+            LicenseFile.MoveFile = (s, d) => throw new IOException("busy");
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a failed swap did not report the error");
+            Require(!File.Exists(path), "the injected failure did not leave the path empty");
+            Equal("swapped.c2ln\n", File.ReadAllText(backup));
+            LicenseFile.MoveFile = realMove;
+            // The editor-load sweep (and every scan) puts it back without a write, and clears the unsettled temp file.
+            LicenseRevalidation.RestoreBackups(_root);
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // A backup next to a license that is there is left alone by the sweep.
+            File.WriteAllText(backup, "stale.c2ln\n");
+            LicenseRevalidation.RestoreBackups(_root);
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            // A stale backup (no temp beside it) next to a license removed on purpose, e.g. a refund, never comes back.
+            File.Delete(path);
+            LicenseRevalidation.RestoreBackups(_root);
+            Require(!File.Exists(path), "a stale backup brought a removed license back");
+            // A refund removal clears an unsettled swap's backup and temp first, so the sweep cannot bring the license back.
+            File.WriteAllText(path, "refunded.c2ln\n");
+            File.WriteAllText(backup, "older.c2ln\n");
+            File.WriteAllText(temp, "newer.c2ln\n");
+            Require(LicenseFile.DeleteSwapFiles(path), "the swap files of a removed license were not cleared");
+            File.Delete(path);
+            LicenseRevalidation.RestoreBackups(_root);
+            Require(!File.Exists(path), "a removed license came back from its backup");
+            leftNothing();
+            // A backup the removal could not clear never comes back through a later write that fails either.
+            File.WriteAllText(backup, "older.c2ln\n");
+            LicenseFile.WriteText = (f, t) => { File.WriteAllText(f, "tru"); throw new IOException("disk full"); };
+            try { LicenseFile.WriteFileAtomic(path, "late.c2ln\n"); } catch (IOException) { }
+            LicenseFile.WriteText = realWrite;
+            Require(!File.Exists(path), "a failed write restored a removed license from a backup it did not make");
+            File.Delete(backup);
+            // The next write still lands, and clears the stale backup.
+            File.WriteAllText(backup, "stale.c2ln\n");
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
+            Equal("next.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // The next write after an unsettled swap restores the backup first and then swaps as usual.
+            LicenseFile.ReplaceFile = (s, d, b) => { File.Move(d, b); throw new IOException("unable to move replacement"); };
+            LicenseFile.MoveFile = (s, d) => throw new IOException("busy");
+            try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (IOException) { }
+            Require(!File.Exists(path) && File.Exists(backup) && File.Exists(temp), "the injected failure did not leave an unsettled swap");
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.MoveFile = realMove;
+            LicenseFile.WriteFileAtomic(path, "again.c2ln\n");
+            Equal("again.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // A first write cut off mid-file (disk full) never becomes the license and leaves no temp file.
+            File.Delete(path);
+            LicenseFile.WriteText = (f, t) => { File.WriteAllText(f, "tru"); throw new IOException("disk full"); };
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "full.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a cut-off write did not report the error");
+            Require(!File.Exists(path), "a cut-off temp file became the license");
+            leftNothing();
+        }
+        finally
+        {
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.MoveFile = realMove;
+            LicenseFile.WriteText = realWrite;
+        }
+    }
+
+    private static string LicenseExp(string user, string licenseId, string itemId, long exp)
+    {
+        var payload = "{\"v\":1,\"iss\":\"onairdeck\",\"client\":\"unity-manager\",\"user_id\":\"" + user + "\",\"item_id\":\"" + itemId
+            + "\",\"product_id\":\"p\"," + (licenseId != null ? "\"license_id\":\"" + licenseId + "\",\"kind\":\"license\"," : "")
+            + "\"iat\":" + (exp - 14 * 86400) + ",\"exp\":" + exp + ",\"nonce\":\"r\"}";
+        return B64(payload) + ".c2ln";
+    }
+
+    private static void Renew()
+    {
+        Reset();
+        Put("Kept Tool", License(User, Kept, ""));
+        Put("Kept Tool/Nested", License(User, Kept, ""));
+        Put("Refunded Line", License(User, null, RefundedItem));
+        var files = LicenseRevalidation.Scan(_root);
+        var kept = files.Find(f => f.LicenseId == Kept);
+        var line = files.Find(f => f.ItemId == RefundedItem);
+        var fresh = LicenseExp(User, Kept, "", Now + 14 * 86400);
+        // Every folder holding the right is renewed; the file's own exp is Now + 6 days.
+        Equal(2, LicenseRevalidation.SameRight(files, kept).FindAll(f => LicenseRevalidation.CanRenew(f, kept, fresh)).Count);
+        Require(LicenseRevalidation.CanRenew(line, line, LicenseExp(User, null, RefundedItem, Now + 14 * 86400)), "an order-line file was not renewed");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(Other, Kept, "", Now + 14 * 86400)), "another account's license replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(User, Offline, "", Now + 14 * 86400)), "another license replaced the file");
+        Require(!LicenseRevalidation.CanRenew(line, line, LicenseExp(User, null, Offline, Now + 14 * 86400)), "another order line replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, LicenseExp(User, Kept, "", Now + 86400)), "a license expiring earlier replaced the file");
+        Require(!LicenseRevalidation.CanRenew(kept, line, fresh), "a file of another right was renewed");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, ""), "an empty answer renewed the file");
+        Require(!LicenseRevalidation.CanRenew(kept, kept, "not-a-license"), "an unreadable answer renewed the file");
     }
 
     private static string B64(string text)

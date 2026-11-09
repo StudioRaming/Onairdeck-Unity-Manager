@@ -196,7 +196,8 @@ namespace OnAirDeck.UnityManager
         /// After a purchase list refresh: asks plugin-license again for the license files on disk that
         /// <see cref="LicenseRevalidation.Select"/> picks (a right missing from <paramref name="response"/> hourly, every file
         /// every 6 hours) and removes a file when the server says the right is gone (refund, cancel, revoked grant, released
-        /// PC). Any other answer keeps the file until its own exp. Background requests (no X-Atelier-Reactivate). Returns the
+        /// PC). A license that comes back replaces the file (<see cref="LicenseRevalidation.CanRenew"/>), so every successful
+        /// check is a renewal; any other answer keeps the file until its own exp. Background requests (no X-Atelier-Reactivate). Returns the
         /// number of files removed. A rejected session propagates; a second call while one runs returns 0.
         /// </summary>
         public static async Task<int> RevalidateAsync(string sessionToken, PurchasesResponse response)
@@ -229,10 +230,11 @@ namespace OnAirDeck.UnityManager
                 foreach (var job in LicenseRevalidation.Select(files, userId, licenseIds, itemIds, checkedAt, now))
                 {
                     Exception error = null;
+                    LicenseResponse issued = null;
                     try
                     {
-                        if (job.LicenseId.Length > 0) await OnAirDeckApi.RequestSellerLicenseAsync(sessionToken, job.LicenseId);
-                        else await OnAirDeckApi.RequestLicenseAsync(sessionToken, job.ItemId);
+                        if (job.LicenseId.Length > 0) issued = await OnAirDeckApi.RequestSellerLicenseAsync(sessionToken, job.LicenseId);
+                        else issued = await OnAirDeckApi.RequestLicenseAsync(sessionToken, job.ItemId);
                     }
                     catch (SessionExpiredException)
                     {
@@ -244,6 +246,14 @@ namespace OnAirDeck.UnityManager
                     }
                     checkedAt[job.Key] = now;
                     EditorPrefs.SetString(CheckedKey, LicenseRevalidation.FormatChecked(checkedAt));
+                    if (error == null && issued != null)
+                    {
+                        var renewed = false;
+                        foreach (var file in LicenseRevalidation.SameRight(files, job))
+                            if (LicenseRevalidation.CanRenew(file, job, issued.license) && WriteIfUnchanged(file, issued.license)) renewed = true;
+                        if (renewed && job.LicenseId.Length > 0) LicenseRenewalStatus.Succeed(job.LicenseId);
+                        continue;
+                    }
                     if (LicenseRevalidation.Classify(error) != RevalidationAction.Delete) continue;
                     var api = error as ApiException;
                     foreach (var file in LicenseRevalidation.SameRight(files, job))
@@ -262,6 +272,23 @@ namespace OnAirDeck.UnityManager
             }
         }
 
+        /// <summary>Writes the renewed license over the file unless it changed since the scan (another renewal or a removal won).</summary>
+        private static bool WriteIfUnchanged(RevalidationFile file, string license)
+        {
+            try
+            {
+                var path = LicenseFile.PathFor(file.Folder);
+                if (!File.Exists(path) || File.ReadAllText(path, System.Text.Encoding.UTF8) != file.Text) return false;
+                LicenseFile.Write(file.Folder, license);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not renew the license file in " + file.Folder + ": " + e.Message);
+                return false;
+            }
+        }
+
         /// <summary>Removes the file (and its .meta) unless it changed since the scan, e.g. a renewal wrote a fresh license meanwhile.</summary>
         private static bool RemoveIfUnchanged(RevalidationFile file)
         {
@@ -269,6 +296,8 @@ namespace OnAirDeck.UnityManager
             {
                 var path = LicenseFile.PathFor(file.Folder);
                 if (!File.Exists(path) || File.ReadAllText(path, System.Text.Encoding.UTF8) != file.Text) return false;
+                // A backup of the removed right must never be restored: while it cannot be cleared, the file stays until the next pass.
+                if (!LicenseFile.DeleteSwapFiles(path)) return false;
                 if (AssetDatabase.DeleteAsset(file.Folder + "/" + LicenseFile.FileName)) return true;
                 File.Delete(path);
                 if (File.Exists(path + ".meta")) File.Delete(path + ".meta");

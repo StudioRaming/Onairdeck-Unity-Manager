@@ -72,7 +72,7 @@ namespace OnAirDeck.UnityManager
         public static string DlgBatch { get { return Pick("선택한 {n}개를 한 번에 받을까요? 받은 뒤 바로 가져와요. 받으면 환불할 수 없어요.", "Download the {n} selected products at once? They are imported right after the download. You cannot get a refund once downloaded.", "選んだ{n}件をまとめてダウンロードしますか? ダウンロード後すぐにインポートします。ダウンロードすると返金できません。"); } }
         public static string DlgUpdAll { get { return Pick("새 버전이 있는 {n}개를 모두 업데이트할까요? 지금 버전은 자동으로 백업돼요.", "Update all {n} products that have a new version? Current versions are backed up automatically.", "新しいバージョンのある{n}件をすべてアップデートしますか? 今のバージョンは自動でバックアップされます。"); } }
         public static string DlgRemT { get { return Pick("기기 빼기", "Remove Device", "デバイスを外す"); } }
-        public static string DlgRem { get { return Pick("'{name}'을 이 라이선스에서 뺄까요? 뺀 기기는 다음 확인 때(최대 7일) 사용이 멈춰요.", "Remove '{name}' from this license? A removed device stops working at its next check (up to 7 days).", "「{name}」をこのライセンスから外しますか? 外したデバイスは、次の確認のとき(最大7日)に使えなくなります。"); } }
+        public static string DlgRem { get { return Pick("'{name}'을 이 라이선스에서 뺄까요? 뺀 기기는 다음 확인 때(최대 14일) 사용이 멈춰요.", "Remove '{name}' from this license? A removed device stops working at its next check (up to 14 days).", "「{name}」をこのライセンスから外しますか? 外したデバイスは、次の確認のとき(最大14日)に使えなくなります。"); } }
 
         public static string SelfUpdating { get { return Pick("매니저를 업데이트하는 중이에요. 끝나면 Unity가 스크립트를 다시 불러와요.", "Updating the Manager. Unity reloads scripts when it finishes.", "マネージャーをアップデート中です。終わるとUnityがスクリプトを再読み込みします。"); } }
         public static string SelfUpdated { get { return Pick("{v} 버전으로 업데이트했어요.", "Updated to {v}.", "{v} にアップデートしました。"); } }

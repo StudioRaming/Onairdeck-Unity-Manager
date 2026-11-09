@@ -82,9 +82,29 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// Puts back every license under &lt;project&gt;/Assets/StudioRaming_Onairdeck that a failed swap left only as its hidden
+        /// backup (<see cref="LicenseFile.RestoreBackup"/>), so the runtime check finds it again. Runs at editor load (offline
+        /// too) and before every <see cref="Scan"/>. Never throws.
+        /// </summary>
+        public static void RestoreBackups(string projectRoot)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(projectRoot)) return;
+                var root = Path.Combine(projectRoot, Installer.InstallRoot.Replace('/', Path.DirectorySeparatorChar));
+                if (!Directory.Exists(root)) return;
+                foreach (var backup in Directory.GetFiles(root, Path.GetFileName(LicenseFile.BackupFor(LicenseFile.FileName)), SearchOption.AllDirectories))
+                    LicenseFile.RestoreBackup(Path.Combine(Path.GetDirectoryName(backup), LicenseFile.FileName));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        /// <summary>
         /// The license files anywhere under &lt;project&gt;/Assets/StudioRaming_Onairdeck (the folders the runtime check searches,
         /// nested ones included) that name a right this Manager can ask for again: a license_id, or an item_id when there is no
-        /// license_id (the seller's own-product files have neither). Never throws.
+        /// license_id (the seller's own-product files have neither). A license a failed swap left only as its backup is put back
+        /// first (<see cref="RestoreBackups"/>). Never throws.
         /// </summary>
         public static List<RevalidationFile> Scan(string projectRoot)
         {
@@ -95,6 +115,7 @@ namespace OnAirDeck.UnityManager
                 var root = Path.Combine(projectRoot, Installer.InstallRoot.Replace('/', Path.DirectorySeparatorChar));
                 if (!Directory.Exists(root)) return result;
                 var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                RestoreBackups(projectRoot);
                 foreach (var path in Directory.GetFiles(root, LicenseFile.FileName, SearchOption.AllDirectories))
                 {
                     try
@@ -194,6 +215,31 @@ namespace OnAirDeck.UnityManager
             foreach (var file in files)
                 if (file != null && file.Key == asked.Key) result.Add(file);
             return result;
+        }
+
+        /// <summary>
+        /// True when <paramref name="issued"/>, the license plugin-license returned when <paramref name="asked"/> was asked
+        /// again, may replace <paramref name="file"/>: the file holds the same right, the new license names the same account and
+        /// the same right (license_id, or item_id for an order-line file), and it does not expire earlier than the file. A
+        /// successful re-check is then also a renewal, so the file always runs for the server's full lifetime (14 days) from
+        /// the last successful check (terms art.24 para 2). Does not verify the signature; the runtime check does.
+        /// </summary>
+        public static bool CanRenew(RevalidationFile file, RevalidationFile asked, string issued)
+        {
+            if (file == null || asked == null || string.IsNullOrEmpty(issued) || file.Key != asked.Key) return false;
+            string userId, licenseId, itemId;
+            if (!LicenseFile.TryReadPayloadString(issued, "user_id", out userId)
+                || !string.Equals(userId, asked.UserId, StringComparison.OrdinalIgnoreCase)) return false;
+            if (asked.LicenseId.Length > 0)
+            {
+                if (!LicenseFile.TryReadPayloadString(issued, "license_id", out licenseId)
+                    || !string.Equals(licenseId, asked.LicenseId, StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            else if (!LicenseFile.TryReadPayloadString(issued, "item_id", out itemId)
+                || !string.Equals(itemId, asked.ItemId, StringComparison.OrdinalIgnoreCase)) return false;
+            long newExp, oldExp;
+            if (!LicenseFile.TryReadExpiry(issued, out newExp)) return false;
+            return !LicenseFile.TryReadExpiry(file.Text, out oldExp) || newExp >= oldExp;
         }
 
         private static void StableSortByLast(List<KeyValuePair<long, RevalidationFile>> list)

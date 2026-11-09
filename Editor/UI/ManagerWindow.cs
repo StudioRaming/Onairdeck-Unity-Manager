@@ -114,8 +114,11 @@ namespace OnAirDeck.UnityManager
         {
             titleContent = new GUIContent(ManagerText.AppTitle);
             _session = SessionStore.Load();
-            // The runtime license check reads this marker as proof of a signed-in Manager.
-            if (_session != null) SessionMarker.Write(_session.userId); else SessionMarker.Clear();
+            // The runtime license check reads this marker as proof of a signed-in Manager. A saved session that only ran out
+            // locally (30 days, possibly while offline) leaves the marker alone: the license files of that account keep
+            // working until their own exp, which is 14 days from the last successful check (terms art.24 para 2). Sign-out
+            // and a session the server rejects still clear it (ClearSessionState).
+            if (_session != null) SessionMarker.Write(_session.userId);
             _licensesRefreshed = false;
             _entriesDirty = true;
             _linesDirty = true;
