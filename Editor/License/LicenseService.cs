@@ -296,7 +296,8 @@ namespace OnAirDeck.UnityManager
             {
                 var path = LicenseFile.PathFor(file.Folder);
                 if (!File.Exists(path) || File.ReadAllText(path, System.Text.Encoding.UTF8) != file.Text) return false;
-                LicenseFile.DeleteSwapFiles(path); // a backup of the removed right must never be restored
+                // A backup of the removed right must never be restored: while it cannot be cleared, the file stays until the next pass.
+                if (!LicenseFile.DeleteSwapFiles(path)) return false;
                 if (AssetDatabase.DeleteAsset(file.Folder + "/" + LicenseFile.FileName)) return true;
                 File.Delete(path);
                 if (File.Exists(path + ".meta")) File.Delete(path + ".meta");

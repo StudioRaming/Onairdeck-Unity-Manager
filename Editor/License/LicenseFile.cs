@@ -49,7 +49,7 @@ namespace OnAirDeck.UnityManager
         /// Writes <paramref name="text"/> to a hidden temp file next to <paramref name="path"/> (Unity skips names that start
         /// with '.'), then swaps it in, so a full disk or an I/O error mid-write leaves the old license whole instead of a
         /// truncated one. The swap keeps the old file as a hidden backup until the new one is in place: Windows' ReplaceFile can
-        /// move the old file aside and then fail to move the new one in (ERROR_UNABLE_TO_MOVE_REPLACEMENT). On failure
+        /// move the old file aside and then fail to move the new one in (ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 with a backup named). On failure
         /// <see cref="SettleFailedSwap"/> puts the new or the old license back, and a backup left by a failure nothing could
         /// settle is restored by the next write or the next <see cref="LicenseRevalidation.Scan"/>
         /// (<see cref="RestoreBackup"/>). The error goes on unless the new license ended up in place.
@@ -103,11 +103,18 @@ namespace OnAirDeck.UnityManager
             if (!File.Exists(path) && File.Exists(backup) && File.Exists(temp) && TryMove(backup, path)) TryDelete(temp);
         }
 
-        /// <summary>Removes the swap's backup and temp file next to <paramref name="path"/>, when the license itself is removed.</summary>
-        internal static void DeleteSwapFiles(string path)
+        /// <summary>
+        /// Removes the swap's temp and backup files next to <paramref name="path"/> before the license itself is removed. False
+        /// while both are still there: <see cref="RestoreBackup"/> would bring the removed license back, so the caller keeps the
+        /// license and tries again at its next pass.
+        /// </summary>
+        internal static bool DeleteSwapFiles(string path)
         {
-            TryDelete(BackupFor(path));
-            TryDelete(TempFor(path));
+            var temp = TempFor(path);
+            var backup = BackupFor(path);
+            TryDelete(temp);
+            TryDelete(backup);
+            return !(File.Exists(temp) && File.Exists(backup));
         }
 
         /// <summary>The write, swap and move <see cref="WriteFileAtomic"/> uses; the headless checks inject failures here.</summary>

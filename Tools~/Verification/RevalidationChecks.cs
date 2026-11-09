@@ -53,7 +53,7 @@ internal static class RevalidationChecks
         Equal("new.c2ln\n", File.ReadAllText(path));
         Directory.Delete(blocker);
         // Windows' ReplaceFile moved the old file to the backup and then failed to move the new one in
-        // (ERROR_UNABLE_TO_MOVE_REPLACEMENT), through the real WriteFileAtomic.
+        // (ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 with a backup named), through the real WriteFileAtomic.
         var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
         var backup = Path.Combine(dir, "." + Path.GetFileName(path) + ".bak");
         Action leftNothing = () => Require(!File.Exists(temp) && !File.Exists(backup), "a temp or backup file was left");
@@ -94,7 +94,17 @@ internal static class RevalidationChecks
             File.Delete(path);
             LicenseRevalidation.RestoreBackups(_root);
             Require(!File.Exists(path), "a stale backup brought a removed license back");
+            // A refund removal clears an unsettled swap's backup and temp first, so the sweep cannot bring the license back.
+            File.WriteAllText(path, "refunded.c2ln\n");
+            File.WriteAllText(backup, "older.c2ln\n");
+            File.WriteAllText(temp, "newer.c2ln\n");
+            Require(LicenseFile.DeleteSwapFiles(path), "the swap files of a removed license were not cleared");
+            File.Delete(path);
+            LicenseRevalidation.RestoreBackups(_root);
+            Require(!File.Exists(path), "a removed license came back from its backup");
+            leftNothing();
             // The next write still lands, and clears the stale backup.
+            File.WriteAllText(backup, "stale.c2ln\n");
             LicenseFile.ReplaceFile = realReplace;
             LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
             Equal("next.c2ln\n", File.ReadAllText(path));
