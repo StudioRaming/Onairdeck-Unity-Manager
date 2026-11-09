@@ -95,6 +95,8 @@ namespace OnAirDeck.UnityManager
                 var handler = Refreshed;
                 if (handler != null) handler(response);
                 await LicenseService.EnsureLicenseFilesAsync(session.token, response.licenses);
+                // A refunded or revoked right has left the list: its file on disk is asked for again and removed.
+                await LicenseService.RevalidateAsync(session.token, response);
             }
             catch (Exception e)
             {
