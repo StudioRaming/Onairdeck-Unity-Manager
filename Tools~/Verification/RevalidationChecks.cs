@@ -30,6 +30,28 @@ internal static class RevalidationChecks
         check("revalidation pass: the refunded file is removed, the kept file of the same account and an offline answer stay", Pass);
         check("revalidation: the last-checked map round-trips and skips bad lines", CheckedMap);
         check("revalidation: a license that comes back renews the file (same account and right, never an earlier exp)", Renew);
+        check("license file write: swapped in whole, no temp left; a failed write keeps the old file", AtomicWrite);
+    }
+
+    private static void AtomicWrite()
+    {
+        Reset();
+        var path = Put("Atomic Tool", License(User, Kept, ""));
+        var dir = Path.GetDirectoryName(path);
+        LicenseFile.WriteFileAtomic(path, "new.c2ln\n");
+        Equal("new.c2ln\n", File.ReadAllText(path));
+        Equal(1, Directory.GetFiles(dir).Length);
+        var fresh = Path.Combine(dir, "fresh.license");
+        LicenseFile.WriteFileAtomic(fresh, "first.c2ln\n");
+        Equal("first.c2ln\n", File.ReadAllText(fresh));
+        // A temp path that cannot be written (a folder stands in its place): the old file stays as it was.
+        var blocker = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+        Directory.CreateDirectory(blocker);
+        var threw = false;
+        try { LicenseFile.WriteFileAtomic(path, "lost.c2ln\n"); } catch (Exception) { threw = true; }
+        Require(threw, "a failed write did not report the error");
+        Equal("new.c2ln\n", File.ReadAllText(path));
+        Directory.Delete(blocker);
     }
 
     private static string LicenseExp(string user, string licenseId, string itemId, long exp)

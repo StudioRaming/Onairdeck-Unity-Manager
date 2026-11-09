@@ -41,8 +41,29 @@ namespace OnAirDeck.UnityManager
             var folder = Path.GetDirectoryName(path);
             if (!PathSafety.IsInside(folder, path)) throw new Exception("Refusing to write outside " + productFolder);
             Directory.CreateDirectory(folder);
-            File.WriteAllText(path, trimmed + "\n", new UTF8Encoding(false));
+            WriteFileAtomic(path, trimmed + "\n");
             return path;
+        }
+
+        /// <summary>
+        /// Writes <paramref name="text"/> to a hidden temp file next to <paramref name="path"/> (Unity skips names that start
+        /// with '.'), then swaps it in, so a full disk or an I/O error mid-write leaves the old license whole instead of a
+        /// truncated one. The temp file is removed on failure and the error goes on.
+        /// </summary>
+        internal static void WriteFileAtomic(string path, string text)
+        {
+            var temp = Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".tmp");
+            try
+            {
+                File.WriteAllText(temp, text, new UTF8Encoding(false));
+                if (File.Exists(path)) File.Replace(temp, path, null);
+                else File.Move(temp, path);
+            }
+            catch
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                throw;
+            }
         }
 
         /// <summary>
