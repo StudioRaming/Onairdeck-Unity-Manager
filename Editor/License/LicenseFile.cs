@@ -60,6 +60,7 @@ namespace OnAirDeck.UnityManager
             var backup = BackupFor(path);
             RestoreBackup(path);
             var written = false;
+            var swapping = false;
             try
             {
                 WriteText(temp, text);
@@ -67,6 +68,7 @@ namespace OnAirDeck.UnityManager
                 if (File.Exists(path))
                 {
                     TryDelete(backup); // a stale one: the license it held is still at path
+                    swapping = true;
                     ReplaceFile(temp, path, backup);
                 }
                 else MoveFile(temp, path);
@@ -74,7 +76,7 @@ namespace OnAirDeck.UnityManager
             }
             catch
             {
-                if (SettleFailedSwap(temp, path, backup, written)) return;
+                if (SettleFailedSwap(temp, path, backup, written, swapping)) return;
                 throw;
             }
         }
@@ -124,17 +126,19 @@ namespace OnAirDeck.UnityManager
 
         /// <summary>
         /// After a failed write or swap, with no license left at <paramref name="path"/>: the whole new file is moved in, or else
-        /// the old one from <paramref name="backup"/>. The temp file is removed once a license is in place (or it was never
-        /// whole); a backup that could not be moved back stays for <see cref="RestoreBackup"/>. True when the new license is in place.
+        /// the old one from <paramref name="backup"/>, only when this write's own swap (<paramref name="swapping"/>) put it there:
+        /// a backup from before the write may belong to a license removed on purpose. The temp file is removed once a license is
+        /// in place (or it was never whole); a backup that could not be moved back stays for <see cref="RestoreBackup"/>. True
+        /// when the new license is in place.
         /// </summary>
-        internal static bool SettleFailedSwap(string temp, string path, string backup, bool written)
+        internal static bool SettleFailedSwap(string temp, string path, string backup, bool written, bool swapping)
         {
             if (!File.Exists(path) && written && File.Exists(temp) && TryMove(temp, path))
             {
                 TryDelete(backup);
                 return true;
             }
-            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
+            if (swapping && !File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
             if (File.Exists(path) || !written) TryDelete(temp);
             return false;
         }

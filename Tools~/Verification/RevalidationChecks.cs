@@ -103,6 +103,13 @@ internal static class RevalidationChecks
             LicenseRevalidation.RestoreBackups(_root);
             Require(!File.Exists(path), "a removed license came back from its backup");
             leftNothing();
+            // A backup the removal could not clear never comes back through a later write that fails either.
+            File.WriteAllText(backup, "older.c2ln\n");
+            LicenseFile.WriteText = (f, t) => { File.WriteAllText(f, "tru"); throw new IOException("disk full"); };
+            try { LicenseFile.WriteFileAtomic(path, "late.c2ln\n"); } catch (IOException) { }
+            LicenseFile.WriteText = realWrite;
+            Require(!File.Exists(path), "a failed write restored a removed license from a backup it did not make");
+            File.Delete(backup);
             // The next write still lands, and clears the stale backup.
             File.WriteAllText(backup, "stale.c2ln\n");
             LicenseFile.ReplaceFile = realReplace;
