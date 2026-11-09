@@ -51,18 +51,19 @@ namespace OnAirDeck.UnityManager
         /// truncated one. The swap keeps the old file as a hidden backup until the new one is in place: Windows' ReplaceFile can
         /// move the old file aside and then fail to move the new one in (ERROR_UNABLE_TO_MOVE_REPLACEMENT). On failure
         /// <see cref="SettleFailedSwap"/> puts the new or the old license back, and a backup left by a failure nothing could
-        /// settle is restored at the next write. The error goes on unless the new license ended up in place.
+        /// settle is restored by the next write or the next <see cref="LicenseRevalidation.Scan"/>
+        /// (<see cref="RestoreBackup"/>). The error goes on unless the new license ended up in place.
         /// </summary>
         internal static void WriteFileAtomic(string path, string text)
         {
             var dir = Path.GetDirectoryName(path) ?? "";
             var temp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
-            var backup = Path.Combine(dir, "." + Path.GetFileName(path) + ".bak");
-            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
+            var backup = BackupFor(path);
+            RestoreBackup(path);
             var written = false;
             try
             {
-                File.WriteAllText(temp, text, new UTF8Encoding(false));
+                WriteText(temp, text);
                 written = true;
                 if (File.Exists(path))
                 {
@@ -79,14 +80,31 @@ namespace OnAirDeck.UnityManager
             }
         }
 
-        /// <summary>The swap and move <see cref="WriteFileAtomic"/> uses; the headless checks inject failures here.</summary>
+        /// <summary>The hidden backup <see cref="WriteFileAtomic"/> keeps next to <paramref name="path"/> during a swap.</summary>
+        internal static string BackupFor(string path)
+        {
+            return Path.Combine(Path.GetDirectoryName(path) ?? "", "." + Path.GetFileName(path) + ".bak");
+        }
+
+        /// <summary>
+        /// Puts a backup left by a failed swap back at <paramref name="path"/> when no license is there (the runtime check reads
+        /// only <see cref="FileName"/>). Never throws.
+        /// </summary>
+        internal static void RestoreBackup(string path)
+        {
+            var backup = BackupFor(path);
+            if (!File.Exists(path) && File.Exists(backup)) TryMove(backup, path);
+        }
+
+        /// <summary>The write, swap and move <see cref="WriteFileAtomic"/> uses; the headless checks inject failures here.</summary>
+        internal static Action<string, string> WriteText = (file, text) => File.WriteAllText(file, text, new UTF8Encoding(false));
         internal static Action<string, string, string> ReplaceFile = (source, destination, backup) => File.Replace(source, destination, backup);
         internal static Action<string, string> MoveFile = (source, destination) => File.Move(source, destination);
 
         /// <summary>
         /// After a failed write or swap, with no license left at <paramref name="path"/>: the whole new file is moved in, or else
         /// the old one from <paramref name="backup"/>. The temp file is removed once a license is in place (or it was never
-        /// whole); a backup that could not be moved back stays for the next write. True when the new license is in place.
+        /// whole); a backup that could not be moved back stays for <see cref="RestoreBackup"/>. True when the new license is in place.
         /// </summary>
         internal static bool SettleFailedSwap(string temp, string path, string backup, bool written)
         {
@@ -100,11 +118,17 @@ namespace OnAirDeck.UnityManager
             return false;
         }
 
+        /// <summary>Three tries 100 ms apart: an antivirus or indexer holding the file lets go within that.</summary>
         private static bool TryMove(string source, string destination)
         {
-            try { MoveFile(source, destination); return true; }
-            catch (IOException) { return false; }
-            catch (UnauthorizedAccessException) { return false; }
+            for (var attempt = 0; ; attempt++)
+            {
+                try { MoveFile(source, destination); return true; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                if (attempt == 2 || File.Exists(destination) || !File.Exists(source)) return false;
+                System.Threading.Thread.Sleep(100);
+            }
         }
 
         private static void TryDelete(string file)

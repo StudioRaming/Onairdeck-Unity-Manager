@@ -82,9 +82,29 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
+        /// Puts back every license under &lt;project&gt;/Assets/StudioRaming_Onairdeck that a failed swap left only as its hidden
+        /// backup (<see cref="LicenseFile.RestoreBackup"/>), so the runtime check finds it again. Runs at editor load (offline
+        /// too) and before every <see cref="Scan"/>. Never throws.
+        /// </summary>
+        public static void RestoreBackups(string projectRoot)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(projectRoot)) return;
+                var root = Path.Combine(projectRoot, Installer.InstallRoot.Replace('/', Path.DirectorySeparatorChar));
+                if (!Directory.Exists(root)) return;
+                foreach (var backup in Directory.GetFiles(root, Path.GetFileName(LicenseFile.BackupFor(LicenseFile.FileName)), SearchOption.AllDirectories))
+                    LicenseFile.RestoreBackup(Path.Combine(Path.GetDirectoryName(backup), LicenseFile.FileName));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        /// <summary>
         /// The license files anywhere under &lt;project&gt;/Assets/StudioRaming_Onairdeck (the folders the runtime check searches,
         /// nested ones included) that name a right this Manager can ask for again: a license_id, or an item_id when there is no
-        /// license_id (the seller's own-product files have neither). Never throws.
+        /// license_id (the seller's own-product files have neither). A license a failed swap left only as its backup is put back
+        /// first (<see cref="RestoreBackups"/>). Never throws.
         /// </summary>
         public static List<RevalidationFile> Scan(string projectRoot)
         {
@@ -95,6 +115,7 @@ namespace OnAirDeck.UnityManager
                 var root = Path.Combine(projectRoot, Installer.InstallRoot.Replace('/', Path.DirectorySeparatorChar));
                 if (!Directory.Exists(root)) return result;
                 var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                RestoreBackups(projectRoot);
                 foreach (var path in Directory.GetFiles(root, LicenseFile.FileName, SearchOption.AllDirectories))
                 {
                     try

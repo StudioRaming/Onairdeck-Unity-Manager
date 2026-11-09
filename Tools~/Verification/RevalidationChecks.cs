@@ -59,6 +59,7 @@ internal static class RevalidationChecks
         Action leftNothing = () => Require(!File.Exists(temp) && !File.Exists(backup), "a temp or backup file was left");
         var realReplace = LicenseFile.ReplaceFile;
         var realMove = LicenseFile.MoveFile;
+        var realWrite = LicenseFile.WriteText;
         try
         {
             LicenseFile.ReplaceFile = (s, d, b) => { File.Move(d, b); throw new IOException("unable to move replacement"); };
@@ -80,16 +81,36 @@ internal static class RevalidationChecks
             Require(threw, "a failed swap did not report the error");
             Require(!File.Exists(path), "the injected failure did not leave the path empty");
             Equal("swapped.c2ln\n", File.ReadAllText(backup));
+            LicenseFile.MoveFile = realMove;
+            // The editor-load sweep (and every scan) puts it back without a write.
+            LicenseRevalidation.RestoreBackups(_root);
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            Require(!File.Exists(backup), "the backup stayed after it was restored");
+            // A backup next to a license that is there is left alone by the sweep.
+            File.WriteAllText(backup, "stale.c2ln\n");
+            LicenseRevalidation.RestoreBackups(_root);
+            Equal("swapped.c2ln\n", File.ReadAllText(path));
+            // The next write after a failure that left only the backup restores it first and then swaps as usual.
+            File.Delete(path);
+            LicenseFile.ReplaceFile = realReplace;
+            LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
+            Equal("next.c2ln\n", File.ReadAllText(path));
+            leftNothing();
+            // A first write cut off mid-file (disk full) never becomes the license and leaves no temp file.
+            File.Delete(path);
+            LicenseFile.WriteText = (f, t) => { File.WriteAllText(f, "tru"); throw new IOException("disk full"); };
+            threw = false;
+            try { LicenseFile.WriteFileAtomic(path, "full.c2ln\n"); } catch (IOException) { threw = true; }
+            Require(threw, "a cut-off write did not report the error");
+            Require(!File.Exists(path), "a cut-off temp file became the license");
+            leftNothing();
         }
         finally
         {
             LicenseFile.ReplaceFile = realReplace;
             LicenseFile.MoveFile = realMove;
+            LicenseFile.WriteText = realWrite;
         }
-        // The next write restores the backup first and then swaps as usual.
-        LicenseFile.WriteFileAtomic(path, "next.c2ln\n");
-        Equal("next.c2ln\n", File.ReadAllText(path));
-        leftNothing();
     }
 
     private static string LicenseExp(string user, string licenseId, string itemId, long exp)

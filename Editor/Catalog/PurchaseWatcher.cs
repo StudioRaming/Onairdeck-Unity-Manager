@@ -40,6 +40,8 @@ namespace OnAirDeck.UnityManager
             // EditorApplication.focusChanged does not exist in 2021.3, so the editor focus is polled in the update tick.
             _wasActive = UnityEditorInternal.InternalEditorUtility.isApplicationActive;
             EditorApplication.update += Tick;
+            // A license a failed swap left only as its backup comes back at editor load, signed in or not (LicenseFile.WriteFileAtomic).
+            EditorApplication.delayCall += () => LicenseRevalidation.RestoreBackups(PackageInstallService.ProjectRoot);
         }
 
         /// <summary>The window tells when it is open (true in OnEnable, false in OnDisable) so the 5-minute tick runs only then.</summary>
