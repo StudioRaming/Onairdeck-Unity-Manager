@@ -221,8 +221,11 @@ namespace OnAirDeck.UnityManager
                     itemIds = new List<string>();
                     foreach (var item in response.purchases) if (item != null) itemIds.Add(item.item_id);
                 }
-                var checkedAt = LicenseRevalidation.ParseChecked(SessionState.GetString(CheckedKey, ""));
+                // EditorPrefs, not SessionState: an editor restart continues the rotation instead of asking the same files
+                // first again. Keyed by account and right (one map for every project): a right asked from one project waits its
+                // interval in another too, an hour at most when it left the list.
                 var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var checkedAt = LicenseRevalidation.Prune(LicenseRevalidation.ParseChecked(EditorPrefs.GetString(CheckedKey, "")), now);
                 foreach (var job in LicenseRevalidation.Select(files, userId, licenseIds, itemIds, checkedAt, now))
                 {
                     Exception error = null;
@@ -240,7 +243,7 @@ namespace OnAirDeck.UnityManager
                         error = e;
                     }
                     checkedAt[job.Key] = now;
-                    SessionState.SetString(CheckedKey, LicenseRevalidation.FormatChecked(checkedAt));
+                    EditorPrefs.SetString(CheckedKey, LicenseRevalidation.FormatChecked(checkedAt));
                     if (LicenseRevalidation.Classify(error) != RevalidationAction.Delete) continue;
                     var api = error as ApiException;
                     foreach (var file in LicenseRevalidation.SameRight(files, job))

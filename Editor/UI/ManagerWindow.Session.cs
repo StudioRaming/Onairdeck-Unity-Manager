@@ -153,6 +153,8 @@ namespace OnAirDeck.UnityManager
                 PurchaseWatcher.Observe(userId, response);
                 UpdateCheckService.Evaluate(response);
                 await RefreshLicenseFiles(userInitiated);
+                // The window's own load and the Refresh click also remove a file whose right has left the list.
+                await LicenseService.RevalidateAsync(token, response);
             }
             catch (SessionExpiredException e)
             {

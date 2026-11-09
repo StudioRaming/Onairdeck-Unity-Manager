@@ -106,9 +106,13 @@ internal static class RevalidationChecks
         Put("Item File", License(User, null, RefundedItem));
         Put("Own Product", License(User, null, ""));
         Put("Broken", "not a license");
+        // A folder the user moved into a group: the runtime check still finds it, so the re-check must too.
+        Put("Group/Nested Tool", License(User, Kept, ""));
         Directory.CreateDirectory(Path.Combine(_root, "Assets", "StudioRaming_Onairdeck", "Empty"));
+        // A file directly in the install root: the runtime check reads it too.
+        File.WriteAllText(Path.Combine(_root, "Assets", "StudioRaming_Onairdeck", LicenseFile.FileName), License(User, Offline, ""));
         var files = LicenseRevalidation.Scan(_root);
-        Equal(2, files.Count);
+        Equal(4, files.Count);
         var byFolder = new Dictionary<string, RevalidationFile>();
         foreach (var f in files) byFolder[f.Folder] = f;
         var lic = byFolder["Assets/StudioRaming_Onairdeck/Refunded Tool"];
@@ -118,6 +122,9 @@ internal static class RevalidationChecks
         var item = byFolder["Assets/StudioRaming_Onairdeck/Item File"];
         Equal("", item.LicenseId);
         Equal(RefundedItem, item.ItemId);
+        var nested = byFolder["Assets/StudioRaming_Onairdeck/Group/Nested Tool"];
+        Equal(Kept, nested.LicenseId);
+        Equal(Offline, byFolder["Assets/StudioRaming_Onairdeck"].LicenseId);
         Require(LicenseRevalidation.Scan(Path.Combine(_root, "missing")).Count == 0);
         Require(LicenseRevalidation.Scan(null).Count == 0);
     }
@@ -189,6 +196,27 @@ internal static class RevalidationChecks
         foreach (var p in picked) if (p.Key == twin.Key) count++;
         Equal(1, count);
         Equal(2, LicenseRevalidation.SameRight(files, twin).Count);
+
+        // Fifteen held licenses never checked, then a refunded one last in the scan: the refunded one goes first, so the
+        // cap never leaves it behind; the next pass (after the first ten were recorded) takes the remaining held ones.
+        var held = new List<RevalidationFile>();
+        var heldIds = new List<string>();
+        for (var i = 0; i < 15; i++)
+        {
+            var id = "cccccccc-0000-4000-8000-" + i.ToString("D12");
+            held.Add(File_("h" + i, User, id, null));
+            heldIds.Add(id);
+        }
+        var refunded = File_("refunded", User, Refunded, null);
+        held.Add(refunded);
+        var firstPass = LicenseRevalidation.Select(held, User, heldIds, null, null, Now);
+        Equal(LicenseRevalidation.MaxPerPass, firstPass.Count);
+        Require(firstPass[0] == refunded, "the refunded file was not asked first");
+        var rotation = new Dictionary<string, long>();
+        foreach (var f in firstPass) rotation[f.Key] = Now;
+        var secondPass = LicenseRevalidation.Select(held, User, heldIds, null, rotation, Now + 60);
+        Equal(6, secondPass.Count);
+        foreach (var f in secondPass) Require(!rotation.ContainsKey(f.Key), "a file asked a minute ago was asked again");
     }
 
     private static void Pass()
@@ -244,6 +272,13 @@ internal static class RevalidationChecks
         Equal(1, bad.Count);
         Equal(7L, bad["k2"]);
         Equal(0, LicenseRevalidation.ParseChecked(null).Count);
+        // Prune drops what no longer changes a decision: 6 h old or more, or in the future after a clock change.
+        var pruned = LicenseRevalidation.Prune(new Dictionary<string, long>
+        {
+            { "fresh", Now - 60 }, { "old", Now - LicenseRevalidation.AllFilesSeconds }, { "future", Now + 3600 }
+        }, Now);
+        Equal(1, pruned.Count);
+        Require(pruned.ContainsKey("fresh"));
     }
 
     private static void Require(bool condition, string message = "Assertion failed") { if (!condition) throw new Exception(message); }

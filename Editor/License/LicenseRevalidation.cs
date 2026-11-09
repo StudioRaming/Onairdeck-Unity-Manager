@@ -82,8 +82,9 @@ namespace OnAirDeck.UnityManager
         }
 
         /// <summary>
-        /// The license files under &lt;project&gt;/Assets/StudioRaming_Onairdeck that name a right this Manager can ask for again:
-        /// a license_id, or an item_id when there is no license_id (the seller's own-product files have neither). Never throws.
+        /// The license files anywhere under &lt;project&gt;/Assets/StudioRaming_Onairdeck (the folders the runtime check searches,
+        /// nested ones included) that name a right this Manager can ask for again: a license_id, or an item_id when there is no
+        /// license_id (the seller's own-product files have neither). Never throws.
         /// </summary>
         public static List<RevalidationFile> Scan(string projectRoot)
         {
@@ -93,12 +94,17 @@ namespace OnAirDeck.UnityManager
                 if (string.IsNullOrEmpty(projectRoot)) return result;
                 var root = Path.Combine(projectRoot, Installer.InstallRoot.Replace('/', Path.DirectorySeparatorChar));
                 if (!Directory.Exists(root)) return result;
-                foreach (var dir in Directory.GetDirectories(root))
+                var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                foreach (var path in Directory.GetFiles(root, LicenseFile.FileName, SearchOption.AllDirectories))
                 {
                     try
                     {
-                        var path = Path.Combine(dir, LicenseFile.FileName);
-                        if (!File.Exists(path)) continue;
+                        var dirFull = Path.GetFullPath(Path.GetDirectoryName(path));
+                        string folder;
+                        if (string.Equals(dirFull, rootFull, StringComparison.OrdinalIgnoreCase)) folder = Installer.InstallRoot;
+                        else if (dirFull.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                            folder = Installer.InstallRoot + "/" + dirFull.Substring(rootFull.Length + 1).Replace(Path.DirectorySeparatorChar, '/');
+                        else continue;
                         var text = File.ReadAllText(path, Encoding.UTF8);
                         string licenseId, itemId, userId;
                         LicenseFile.TryReadPayloadString(text, "license_id", out licenseId);
@@ -109,7 +115,7 @@ namespace OnAirDeck.UnityManager
                         if (licenseId.Length == 0 && itemId.Length == 0) continue;
                         result.Add(new RevalidationFile
                         {
-                            Folder = Installer.InstallRoot + "/" + Path.GetFileName(dir),
+                            Folder = folder,
                             Text = text,
                             LicenseId = licenseId,
                             ItemId = licenseId.Length > 0 ? "" : itemId,
@@ -132,14 +138,16 @@ namespace OnAirDeck.UnityManager
         /// The files to ask for again now, at most <see cref="MaxPerPass"/>: only files issued to <paramref name="userId"/> (the
         /// server answers for the signed-in account, so another account's file is never judged by it). A file whose right is
         /// missing from the account's list is due after <see cref="OutsideListSeconds"/>, any file after
-        /// <see cref="AllFilesSeconds"/>; never checked in this editor session = due. A null id list means that list was not
-        /// sent, and its files count as listed. Most overdue first.
+        /// <see cref="AllFilesSeconds"/>; never checked = due. A null id list means that list was not sent, and its files count
+        /// as listed. Files missing from the list (a refund or a revoked grant) come first, then the longest unchecked, so a
+        /// refunded file is never left behind the cap by files that are still held.
         /// </summary>
         /// <param name="lastChecked">Key (<see cref="RevalidationFile.Key"/>) to the unix time it was last asked; may be null.</param>
         public static List<RevalidationFile> Select(IList<RevalidationFile> files, string userId, ICollection<string> licenseIds,
             ICollection<string> itemIds, IDictionary<string, long> lastChecked, long nowUnix)
         {
             var due = new List<KeyValuePair<long, RevalidationFile>>();
+            var outside = new HashSet<RevalidationFile>();
             if (files == null || string.IsNullOrEmpty(userId)) return new List<RevalidationFile>();
             var licenses = Lower(licenseIds);
             var items = Lower(itemIds);
@@ -155,9 +163,20 @@ namespace OnAirDeck.UnityManager
                 if (lastChecked == null || !lastChecked.TryGetValue(file.Key, out last)) last = 0;
                 var age = nowUnix - last;
                 if (age >= AllFilesSeconds || (!listed && age >= OutsideListSeconds))
+                {
                     due.Add(new KeyValuePair<long, RevalidationFile>(last, file));
+                    if (!listed) outside.Add(file);
+                }
             }
-            due.Sort((a, b) => a.Key.CompareTo(b.Key));
+            // Stable: equal entries keep the scan order.
+            var ordered = new List<KeyValuePair<long, RevalidationFile>>();
+            foreach (var pair in due) if (outside.Contains(pair.Value)) ordered.Add(pair);
+            var listedDue = new List<KeyValuePair<long, RevalidationFile>>();
+            foreach (var pair in due) if (!outside.Contains(pair.Value)) listedDue.Add(pair);
+            StableSortByLast(ordered);
+            StableSortByLast(listedDue);
+            ordered.AddRange(listedDue);
+            due = ordered;
             var result = new List<RevalidationFile>();
             foreach (var pair in due)
             {
@@ -177,7 +196,33 @@ namespace OnAirDeck.UnityManager
             return result;
         }
 
-        /// <summary>The last-checked map as stored in SessionState: one "key=unix" per line. Bad lines are skipped.</summary>
+        private static void StableSortByLast(List<KeyValuePair<long, RevalidationFile>> list)
+        {
+            var indexed = new List<KeyValuePair<int, KeyValuePair<long, RevalidationFile>>>();
+            for (var i = 0; i < list.Count; i++) indexed.Add(new KeyValuePair<int, KeyValuePair<long, RevalidationFile>>(i, list[i]));
+            indexed.Sort((a, b) =>
+            {
+                var c = a.Value.Key.CompareTo(b.Value.Key);
+                return c != 0 ? c : a.Key.CompareTo(b.Key);
+            });
+            list.Clear();
+            foreach (var pair in indexed) list.Add(pair.Value);
+        }
+
+        /// <summary>
+        /// The map without entries that no longer change a decision (older than <see cref="AllFilesSeconds"/>, or in the future
+        /// after a clock change), so the stored text stays small.
+        /// </summary>
+        public static Dictionary<string, long> Prune(IDictionary<string, long> map, long nowUnix)
+        {
+            var result = new Dictionary<string, long>(StringComparer.Ordinal);
+            if (map == null) return result;
+            foreach (var pair in map)
+                if (nowUnix - pair.Value < AllFilesSeconds && pair.Value <= nowUnix) result[pair.Key] = pair.Value;
+            return result;
+        }
+
+        /// <summary>The last-checked map as stored in EditorPrefs: one "key=unix" per line. Bad lines are skipped.</summary>
         public static Dictionary<string, long> ParseChecked(string text)
         {
             var result = new Dictionary<string, long>(StringComparer.Ordinal);
