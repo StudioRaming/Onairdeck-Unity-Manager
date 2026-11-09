@@ -68,6 +68,8 @@ namespace OnAirDeck.UnityManager
                 PurchaseWatcher.Observe(requestUserId, response);
                 try { await LicenseService.EnsureLicenseFilesAsync(sessionToken, response.licenses); }
                 catch (Exception) { }
+                try { await LicenseService.RevalidateAsync(sessionToken, response); }
+                catch (Exception) { }
                 return true;
             }
             catch (Exception)

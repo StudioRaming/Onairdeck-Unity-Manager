@@ -188,5 +188,94 @@ namespace OnAirDeck.UnityManager
             }
             return refreshed;
         }
+
+        private const string CheckedKey = "OnAirDeck.LicenseRevalidation.Checked";
+        private static bool _revalidating;
+
+        /// <summary>
+        /// After a purchase list refresh: asks plugin-license again for the license files on disk that
+        /// <see cref="LicenseRevalidation.Select"/> picks (a right missing from <paramref name="response"/> hourly, every file
+        /// every 6 hours) and removes a file when the server says the right is gone (refund, cancel, revoked grant, released
+        /// PC). Any other answer keeps the file until its own exp. Background requests (no X-Atelier-Reactivate). Returns the
+        /// number of files removed. A rejected session propagates; a second call while one runs returns 0.
+        /// </summary>
+        public static async Task<int> RevalidateAsync(string sessionToken, PurchasesResponse response)
+        {
+            if (response == null || string.IsNullOrEmpty(sessionToken) || _revalidating) return 0;
+            var userId = CurrentUserId(sessionToken);
+            if (string.IsNullOrEmpty(userId)) return 0;
+            _revalidating = true;
+            var removed = 0;
+            try
+            {
+                var files = LicenseRevalidation.Scan(PackageInstallService.ProjectRoot);
+                if (files.Count == 0) return 0;
+                List<string> licenseIds = null, itemIds = null;
+                if (response.licenses != null)
+                {
+                    licenseIds = new List<string>();
+                    foreach (var entry in response.licenses) if (entry != null) licenseIds.Add(entry.license_id);
+                }
+                if (response.purchases != null)
+                {
+                    itemIds = new List<string>();
+                    foreach (var item in response.purchases) if (item != null) itemIds.Add(item.item_id);
+                }
+                var checkedAt = LicenseRevalidation.ParseChecked(SessionState.GetString(CheckedKey, ""));
+                var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                foreach (var job in LicenseRevalidation.Select(files, userId, licenseIds, itemIds, checkedAt, now))
+                {
+                    Exception error = null;
+                    try
+                    {
+                        if (job.LicenseId.Length > 0) await OnAirDeckApi.RequestSellerLicenseAsync(sessionToken, job.LicenseId);
+                        else await OnAirDeckApi.RequestLicenseAsync(sessionToken, job.ItemId);
+                    }
+                    catch (SessionExpiredException)
+                    {
+                        throw;
+                    }
+                    catch (Exception e)
+                    {
+                        error = e;
+                    }
+                    checkedAt[job.Key] = now;
+                    SessionState.SetString(CheckedKey, LicenseRevalidation.FormatChecked(checkedAt));
+                    if (LicenseRevalidation.Classify(error) != RevalidationAction.Delete) continue;
+                    var api = error as ApiException;
+                    foreach (var file in LicenseRevalidation.SameRight(files, job))
+                    {
+                        if (!RemoveIfUnchanged(file)) continue;
+                        removed++;
+                        Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Removed the license file in " + file.Folder
+                            + ": the server no longer issues it to this account (" + (api != null ? api.Status + " " + api.Code : "refused") + ").");
+                    }
+                }
+                return removed;
+            }
+            finally
+            {
+                _revalidating = false;
+            }
+        }
+
+        /// <summary>Removes the file (and its .meta) unless it changed since the scan, e.g. a renewal wrote a fresh license meanwhile.</summary>
+        private static bool RemoveIfUnchanged(RevalidationFile file)
+        {
+            try
+            {
+                var path = LicenseFile.PathFor(file.Folder);
+                if (!File.Exists(path) || File.ReadAllText(path, System.Text.Encoding.UTF8) != file.Text) return false;
+                if (AssetDatabase.DeleteAsset(file.Folder + "/" + LicenseFile.FileName)) return true;
+                File.Delete(path);
+                if (File.Exists(path + ".meta")) File.Delete(path + ".meta");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning(OnAirDeckConfig.LogPrefix + "Could not remove the license file in " + file.Folder + ": " + e.Message);
+                return false;
+            }
+        }
     }
 }

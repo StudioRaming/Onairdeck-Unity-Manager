@@ -69,6 +69,8 @@
     <Compile Include="../../Editor/Download/ImportReloadHold.cs" />
     <Compile Include="../../Editor/Packages/DependencyResolver.cs" />
     <Compile Include="../../Editor/License/LicenseFilePlan.cs" />
+    <Compile Include="../../Editor/License/LicenseRevalidation.cs" />
+    <Compile Include="RevalidationChecks.cs" />
     <Compile Include="../../Editor/Catalog/PurchaseWatcherLogic.cs" />
     <Compile Include="../../Editor/Api/ApiModels.cs" />
     <Compile Include="../../Editor/Api/DeviceLimitNotice.cs" />

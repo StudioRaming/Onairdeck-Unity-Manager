@@ -60,6 +60,7 @@ internal static class Program
             PurchaseOptionChecks.Run(Check);
             DownloadIntegrityChecks.Run(Check, _project);
             DownloadStateChecks.Run(Check, _project);
+            RevalidationChecks.Run(Check, _project);
         }
         finally
         {
