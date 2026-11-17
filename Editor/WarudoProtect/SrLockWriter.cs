@@ -17,7 +17,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
     /// Only the server's PUBLIC key is here, so this code holds no secret: whoever reads it learns how files are wrapped,
     /// not how to unwrap them. Byte-level reference: Vdesk scripts/warudo-srlock.mjs (same constants, same tests).
     /// OAEP-SHA1 because Mono's RSACryptoServiceProvider only does OAEP with SHA-1; it is sound for key wrapping.
-    /// Streams the whole way (environments are ~700 MB) and checks its own output before it is renamed into place.
+    /// Streams the whole way (backgrounds reach 2.8 GB) and checks its own output before it is renamed into place.
     /// </summary>
     internal static class SrLockWriter
     {
@@ -27,7 +27,11 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         private static readonly byte[] Magic = { (byte)'S', (byte)'R', (byte)'L', (byte)'K' };
         private const byte Version = 2;
         private const int MacLength = 32;
-        private const int BufferSize = 1 << 16;
+        private const int BufferSize = 1 << 20;
+        // Above this, the self-check reads only the last cipher blocks instead of decrypting everything: Mono's managed
+        // AES/SHA-256 made a full re-read of a 2.8 GB background cost ~4 of its ~10 minutes (2026-11-17). The write pass
+        // already MACs exactly the bytes written; the tail check still proves the key, IV and length are consistent.
+        private const long FullVerifyLimit = 256L * 1024 * 1024;
 
         // Wrap key srw1, public half (RSA-2048, base64url). The private half exists only as a server secret.
         private const string Srw1Modulus =
@@ -140,7 +144,8 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                     }
                 }
 
-                Verify(tmp, cek, plainSha);
+                if (plainSize <= FullVerifyLimit) Verify(tmp, cek, plainSha);
+                else VerifyTail(tmp, cek, plainSize);
                 if (File.Exists(outputPath)) File.Delete(outputPath);
                 File.Move(tmp, outputPath);
             }
@@ -198,6 +203,50 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                     while ((read = crypto.Read(buffer, 0, buffer.Length)) > 0) sha.TransformBlock(buffer, 0, read, null, 0);
                     sha.TransformFinalBlock(new byte[0], 0, 0);
                     if (ToHex(sha.Hash) != plainSha) throw new InvalidDataException("self-check: decrypted bytes differ");
+                }
+            }
+        }
+
+        /// <summary>Large files: decrypt only the last cipher block (CBC: its IV is the block before) and check the padding
+        /// gives back exactly plain_size.</summary>
+        private static void VerifyTail(string path, byte[] cek, long plainSize)
+        {
+            byte[] encKey;
+            byte[] macKey;
+            DeriveKeys(cek, out encKey, out macKey);
+            using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
+            {
+                var fixedPart = new byte[9];
+                ReadExactly(file, fixedPart, 9);
+                long bodyStart = 9 + ReadUInt32LE(fixedPart, 5);
+                var headerBytes = new byte[bodyStart - 9];
+                ReadExactly(file, headerBytes, headerBytes.Length);
+                var header = JsonUtility.FromJson<Header>(Encoding.UTF8.GetString(headerBytes));
+                long cipherLength = file.Length - MacLength - bodyStart;
+                if (cipherLength <= 0 || cipherLength % 16 != 0) throw new InvalidDataException("self-check: bad cipher length");
+
+                var iv = new byte[16];
+                if (cipherLength == 16) iv = Convert.FromBase64String(header.iv);
+                else
+                {
+                    file.Position = bodyStart + cipherLength - 32;
+                    ReadExactly(file, iv, 16);
+                }
+                var last = new byte[16];
+                file.Position = bodyStart + cipherLength - 16;
+                ReadExactly(file, last, 16);
+
+                using (Aes aes = NewAes(encKey, iv))
+                {
+                    aes.Padding = PaddingMode.None;
+                    using (ICryptoTransform d = aes.CreateDecryptor())
+                    {
+                        byte[] plain = d.TransformFinalBlock(last, 0, 16);
+                        int pad = plain[15];
+                        if (pad < 1 || pad > 16) throw new InvalidDataException("self-check: bad padding");
+                        for (int i = 16 - pad; i < 16; i++) if (plain[i] != pad) throw new InvalidDataException("self-check: bad padding");
+                        if (cipherLength - pad != plainSize) throw new InvalidDataException("self-check: length mismatch");
+                    }
                 }
             }
         }

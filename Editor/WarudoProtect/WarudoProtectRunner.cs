@@ -9,7 +9,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
     /// <summary>
     /// What happens after a successful WARUDO mod build (called by the UMod hook, WarudoProtectBuildHook) or from the
     /// window's "lock an already built .warudo": looks the mod up in the project's settings and writes &lt;mod&gt;.srlock
-    /// next to the built file. Never throws into the build: every outcome is a log line (and a dialog when interactive).
+    /// next to the built file. Never throws into the build and never blocks it: every outcome is a log line.
     /// </summary>
     internal static class WarudoProtectRunner
     {
@@ -46,8 +46,11 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             }
         }
 
+        /// <summary>The .srlock this editor session wrote last (shown in the protection window).</summary>
+        public static string LastLocked { get; private set; }
+
         /// <summary>Locks <paramref name="builtFile"/> with <paramref name="entry"/>; returns the .srlock path or null.</summary>
-        public static string Lock(string builtFile, WarudoProtectEntry entry, bool showDialog)
+        public static string Lock(string builtFile, WarudoProtectEntry entry, bool notify)
         {
             string mod = Path.GetFileNameWithoutExtension(builtFile);
             if (!SrLockWriter.IsLicenseId((entry.license_id ?? "").Trim()))
@@ -72,16 +75,12 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 return null;
             }
             Debug.Log(WarudoProtectText.Locked(output));
-            if (showDialog && !Application.isBatchMode)
+            LastLocked = output;
+            if (notify && !Application.isBatchMode)
             {
-                // After the build pipeline returns: a modal inside the UMod callback would hold the build open.
-                EditorApplication.delayCall += () =>
-                {
-                    if (EditorUtility.DisplayDialog(WarudoProtectText.DialogTitle, WarudoProtectText.Locked(output), WarudoProtectText.OpenFolder, WarudoProtectText.Ok))
-                    {
-                        EditorUtility.RevealInFinder(output);
-                    }
-                };
+                // Never a modal: one after every build would block the editor (and any scripted build) until clicked
+                // (2026-11-17 test). The protection window shows the result with a folder button instead.
+                EditorApplication.delayCall += () => WarudoProtectWindow.NotifyLocked(output);
             }
             return output;
         }

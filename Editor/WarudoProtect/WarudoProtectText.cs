@@ -43,8 +43,8 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         public static string KindUnknown { get { return Pick("종류를 알 수 없습니다. 보호 창에서 소품/배경/캐릭터를 골라 주세요.", "Unknown kind. Choose prop, environment or character in the protection window.", "種類が不明です。保護ウィンドウで小物/背景/キャラクターを選んでください。"); } }
         public static string Locked(string path) { return Pick("[Atelier] 보호 파일을 만들었습니다: {p}\n판매 파일로는 이 .srlock 만 올리세요. 원본 .warudo 는 올리지 마세요.", "[Atelier] Protected file written: {p}\nUpload only this .srlock as the product file, never the plain .warudo.", "[Atelier] 保護ファイルを作成しました: {p}\n販売ファイルにはこの .srlock だけをアップロードし、元の .warudo はアップロードしないでください。").Replace("{p}", path); }
         public static string Failed(string mod, string why) { return Pick("[Atelier] '{m}' 보호 파일 만들기 실패: {w}", "[Atelier] Could not write the protected file for '{m}': {w}", "[Atelier] '{m}' の保護ファイル作成に失敗: {w}").Replace("{m}", mod).Replace("{w}", why); }
-        public static string DialogTitle { get { return Pick("WARUDO 보호 파일", "WARUDO protected file", "WARUDO 保護ファイル"); } }
+        public static string LockedShort(string file) { return Pick("보호 파일 생성: {f}", "Protected file written: {f}", "保護ファイル作成: {f}").Replace("{f}", file); }
+        public static string LastLocked { get { return Pick("마지막 보호 파일", "Last protected file", "最後の保護ファイル"); } }
         public static string OpenFolder { get { return Pick("폴더 열기", "Open folder", "フォルダーを開く"); } }
-        public static string Ok { get { return Pick("확인", "OK", "OK"); } }
     }
 }

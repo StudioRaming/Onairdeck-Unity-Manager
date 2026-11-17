@@ -27,6 +27,15 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             data = WarudoProtectSettings.Load();
         }
 
+        /// <summary>After a lock: a non-blocking notice on the window if it is open (no modal, no focus steal).</summary>
+        public static void NotifyLocked(string output)
+        {
+            var windows = Resources.FindObjectsOfTypeAll<WarudoProtectWindow>();
+            if (windows.Length == 0) return;
+            windows[0].ShowNotification(new GUIContent(WarudoProtectText.LockedShort(Path.GetFileName(output))));
+            windows[0].Repaint();
+        }
+
         private void OnFocus()
         {
             // A build may have added a mod while the window was open.
@@ -109,6 +118,14 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             if (changed) WarudoProtectSettings.Save(data);
 
             EditorGUILayout.Space();
+            string last = WarudoProtectRunner.LastLocked;
+            if (!string.IsNullOrEmpty(last))
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(WarudoProtectText.LastLocked, last, EditorStyles.wordWrappedLabel);
+                if (GUILayout.Button(WarudoProtectText.OpenFolder, GUILayout.Width(110))) EditorUtility.RevealInFinder(last);
+                EditorGUILayout.EndHorizontal();
+            }
             if (GUILayout.Button(WarudoProtectText.LockExisting)) LockExisting();
         }
 
