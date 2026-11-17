@@ -123,6 +123,23 @@ public class MyToolWindow : EditorWindow
 - Licenses live 7 days and the Manager renews them when its window opens, so a buyer who has not opened the Manager for a week sees `Expired` until they do.
 - This is a client-side check. It stops casual copying between accounts; it cannot stop someone who decompiles and edits your assembly. Keep the check inside the code you care about rather than in a separate script that is easy to delete.
 
+## For sellers: protecting a WARUDO mod (preview)
+
+In a WARUDO mod project (WARUDO SDK, `Warudo/Build Mod`), the Manager can write a protected copy of each build:
+
+1. Open **Window ▸ Atelier WARUDO Protection**. If the window says the build hook is off, press **Turn on the build hook**
+   (adds the `SR_WARUDO_MODTOOL` scripting define for Standalone; with the WARUDO mod tool as a package it is on by itself).
+2. Build once. The mod appears in the window (off). Turn **Protect** on and enter the **license id** from the Atelier seller
+   page. Kind is taken from the output folder (Props / Environments / Characters) unless you pick one.
+3. Every `Warudo/Build Mod` now also writes `<mod>.srlock` next to `<mod>.warudo`. **Upload the `.srlock` as the product
+   file, not the `.warudo`.** An already built `.warudo` can be locked from the window too.
+
+The `.srlock` is the `.warudo` encrypted with a random key; that key is wrapped for OnAirDeck's server together with the
+license id. Only the server's public key is in this package. Buyers open the file in WARUDO through the StudioRaming
+plugin while signed in to the Atelier Manager with that license (the buyer side ships in a later release). Settings are
+kept in `ProjectSettings/AtelierWarudoProtect.json`. Like the license check above, this is client-side protection: it
+stops casual sharing of the file, not a determined attacker.
+
 ## 한국어
 
 ### 설치
