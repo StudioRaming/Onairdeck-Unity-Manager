@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.13]
+
 - **WARUDO protection needs no license id (.srlock v3).** The protected file is no longer bound to a license at build time: the key is wrapped for OnAirDeck's server alone, and the server hands it out with the download to whoever may download that stored file. One build sold in several products (bundles) now opens for the buyers of any of them, and sellers enter nothing: a mod built for the first time is protected automatically (the plain `.warudo` stays next to it). The window loses its license field; files written by the previous preview (v2) must be built again (`SrLockWriter`, `WarudoProtectRunner`, `WarudoProtectWindow`).
 - Verification: compile check with/without the UMod DLLs and pre-2020.2; WARUDO SDK 0.12 project with empty protection settings: one Build Mod wrote a v3 `.srlock` with no license field, unlocked by the reference tool (Vdesk `scripts/warudo-srlock.mjs`) with the server key to the exact build bytes.
 
