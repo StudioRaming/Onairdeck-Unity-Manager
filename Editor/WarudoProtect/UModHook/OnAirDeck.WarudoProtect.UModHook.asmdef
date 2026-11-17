@@ -1,0 +1,31 @@
+{
+    "name": "OnAirDeck.WarudoProtect.UModHook",
+    "references": [
+        "OnAirDeck.UnityManager.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "UMod-BuildEngine.dll",
+        "UMod-BuildPipeline.dll",
+        "UMod-Shared.dll",
+        "UMod-Shared-Editor.dll",
+        "UMod-ModTools.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "SR_WARUDO_MODTOOL"
+    ],
+    "versionDefines": [
+        {
+            "name": "app.warudo.modtool",
+            "expression": "",
+            "define": "SR_WARUDO_MODTOOL"
+        }
+    ],
+    "noEngineReferences": false
+}

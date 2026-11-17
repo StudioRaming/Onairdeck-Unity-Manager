@@ -11,6 +11,8 @@
   (The 2019 path reports CS0618 for isNetworkError/isHttpError because the 2021 DLLs mark them
   obsolete; they are not obsolete on 2019.)
   Another Unity version: -p:UnityManaged="C:/Program Files/Unity/Hub/Editor/<ver>/Editor/Data/Managed/UnityEngine"
+  WARUDO protection hook (Editor/WarudoProtect/UModHook) needs the WARUDO SDK's UMod DLLs; it is left out unless given:
+    dotnet build "-p:UModPlugin=<WARUDO mod project>/Assets/Packages/UMod/Plugin"
 -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -29,6 +31,15 @@
   <ItemGroup>
     <Compile Include="../../Editor/**/*.cs" />
     <Compile Include="../../License/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UModPlugin)' == ''">
+    <Compile Remove="../../Editor/WarudoProtect/UModHook/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UModPlugin)' != ''">
+    <Reference Include="$(UModPlugin)/Editor/UMod-BuildEngine.dll" Private="false" />
+    <Reference Include="$(UModPlugin)/Editor/UMod-BuildPipeline.dll" Private="false" />
+    <Reference Include="$(UModPlugin)/Editor/UMod-Shared-Editor.dll" Private="false" />
+    <Reference Include="$(UModPlugin)/UMod-Shared.dll" Private="false" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="$(UnityManaged)/UnityEngine.CoreModule.dll" Private="false" />
