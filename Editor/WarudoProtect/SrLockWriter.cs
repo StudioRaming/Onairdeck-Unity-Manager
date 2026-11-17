@@ -18,6 +18,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
     /// not how to unwrap them. Byte-level reference: Vdesk scripts/warudo-srlock.mjs (same constants, same tests).
     /// OAEP-SHA1 because Mono's RSACryptoServiceProvider only does OAEP with SHA-1; it is sound for key wrapping.
     /// Streams the whole way (backgrounds reach 2.8 GB) and checks its own output before it is renamed into place.
+    /// Files above SparseThreshold use the "sparse" layout (see the constants); smaller ones are encrypted in full.
     /// </summary>
     internal static class SrLockWriter
     {
@@ -28,10 +29,18 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         private const byte Version = 2;
         private const int MacLength = 32;
         private const int BufferSize = 1 << 20;
-        // Above this, the self-check reads only the last cipher blocks instead of decrypting everything: Mono's managed
-        // AES/SHA-256 made a full re-read of a 2.8 GB background cost ~4 of its ~10 minutes (2026-11-17). The write pass
-        // already MACs exactly the bytes written; the tail check still proves the key, IV and length are consistent.
-        private const long FullVerifyLimit = 256L * 1024 * 1024;
+
+        // Layout "sparse" above this size (spec: Vdesk scripts/warudo-srlock.mjs): the StudioRaming plugin decrypts in
+        // WARUDO with Mono's managed AES (~23 MB/s, HMAC ~41 MB/s measured on a 1.5 GB background), so a fully encrypted
+        // 2.8 GB background would add ~3 minutes to every scene load. Sparse encrypts the head (uMod header, zip entry and
+        // bundle headers), the tail (zip central directory) and a run at the start of every chunk; the rest is copied.
+        public const long SparseThreshold = 64L * 1024 * 1024;
+        public const long SparseHead = 16L * 1024 * 1024;
+        public const long SparseTail = 16L * 1024 * 1024;
+        public const long SparseChunk = 4L * 1024 * 1024;
+        public const long SparseRun = 256L * 1024;
+        private const string CipherFull = "aes-256-cbc+hmac-sha256";
+        private const string CipherSparse = "aes-256-ctr-sparse+hmac-sha256";
 
         // Wrap key srw1, public half (RSA-2048, base64url). The private half exists only as a server secret.
         private const string Srw1Modulus =
@@ -52,11 +61,17 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             public string built_at;
             public long plain_size;
             public string plain_sha256;
+            /// <summary>"full" or "sparse"; files from the first hook (Unity Manager PR #47) have none = full.</summary>
+            public string layout;
             public string cipher;
             public string iv;
             public string wrap_alg;
             public string wrap_kid;
             public string wrap_key;
+            public long sparse_head;
+            public long sparse_tail;
+            public long sparse_chunk;
+            public long sparse_run;
         }
 
         public static bool IsLicenseId(string id)
@@ -93,6 +108,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             string plainSha;
             long plainSize;
             HashFile(inputPath, out plainSha, out plainSize);
+            bool sparse = plainSize > SparseThreshold;
 
             var header = new Header
             {
@@ -105,12 +121,20 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 built_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
                 plain_size = plainSize,
                 plain_sha256 = plainSha,
-                cipher = "aes-256-cbc+hmac-sha256",
+                layout = sparse ? "sparse" : "full",
+                cipher = sparse ? CipherSparse : CipherFull,
                 iv = Convert.ToBase64String(iv),
                 wrap_alg = "rsa-oaep-sha1",
                 wrap_kid = CurrentKid,
                 wrap_key = Convert.ToBase64String(Wrap(cek, licenseId)),
             };
+            if (sparse)
+            {
+                header.sparse_head = SparseHead;
+                header.sparse_tail = SparseTail;
+                header.sparse_chunk = SparseChunk;
+                header.sparse_run = SparseRun;
+            }
             byte[] headerBytes = Encoding.UTF8.GetBytes(JsonUtility.ToJson(header));
 
             string tmp = outputPath + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
@@ -127,16 +151,36 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                         WriteAndMac(output, hmac, fixedPart, fixedPart.Length);
                         WriteAndMac(output, hmac, headerBytes, headerBytes.Length);
 
-                        using (Aes aes = NewAes(encKey, iv))
-                        using (ICryptoTransform encryptor = aes.CreateEncryptor())
-                        using (var tee = new MacTeeStream(output, hmac))
-                        using (var crypto = new CryptoStream(tee, encryptor, CryptoStreamMode.Write))
-                        using (var input = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
+                        if (sparse)
                         {
-                            var buffer = new byte[BufferSize];
-                            int read;
-                            while ((read = input.Read(buffer, 0, buffer.Length)) > 0) crypto.Write(buffer, 0, read);
-                            crypto.FlushFinalBlock();
+                            long[][] ranges = SparseRanges(plainSize, SparseHead, SparseTail, SparseChunk, SparseRun);
+                            using (var ctr = new SparseCtr(encKey, iv))
+                            using (var input = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
+                            {
+                                var buffer = new byte[BufferSize];
+                                long pos = 0;
+                                int read;
+                                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                                {
+                                    ctr.Transform(ranges, pos, buffer, read);
+                                    WriteAndMac(output, hmac, buffer, read);
+                                    pos += read;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            using (Aes aes = NewAes(encKey, iv))
+                            using (ICryptoTransform encryptor = aes.CreateEncryptor())
+                            using (var tee = new MacTeeStream(output, hmac))
+                            using (var crypto = new CryptoStream(tee, encryptor, CryptoStreamMode.Write))
+                            using (var input = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
+                            {
+                                var buffer = new byte[BufferSize];
+                                int read;
+                                while ((read = input.Read(buffer, 0, buffer.Length)) > 0) crypto.Write(buffer, 0, read);
+                                crypto.FlushFinalBlock();
+                            }
                         }
 
                         hmac.TransformFinalBlock(new byte[0], 0, 0);
@@ -144,8 +188,8 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                     }
                 }
 
-                if (plainSize <= FullVerifyLimit) Verify(tmp, cek, plainSha);
-                else VerifyTail(tmp, cek, plainSize);
+                if (sparse) VerifySparseHead(tmp, cek, inputPath, plainSize);
+                else Verify(tmp, cek, plainSha);
                 if (File.Exists(outputPath)) File.Delete(outputPath);
                 File.Move(tmp, outputPath);
             }
@@ -207,47 +251,123 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             }
         }
 
-        /// <summary>Large files: decrypt only the last cipher block (CBC: its IV is the block before) and check the padding
-        /// gives back exactly plain_size.</summary>
-        private static void VerifyTail(string path, byte[] cek, long plainSize)
+        /// <summary>
+        /// Sparse files: the body must have the plain length and its first 1 MB must decrypt to the input's first 1 MB
+        /// (a full re-read would cost minutes on Mono for a large background; the write pass MACs exactly what it wrote).
+        /// </summary>
+        private static void VerifySparseHead(string path, byte[] cek, string inputPath, long plainSize)
         {
             byte[] encKey;
             byte[] macKey;
             DeriveKeys(cek, out encKey, out macKey);
             using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
+            using (var input = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize))
             {
                 var fixedPart = new byte[9];
                 ReadExactly(file, fixedPart, 9);
                 long bodyStart = 9 + ReadUInt32LE(fixedPart, 5);
+                if (file.Length - MacLength - bodyStart != plainSize) throw new InvalidDataException("self-check: sparse length mismatch");
                 var headerBytes = new byte[bodyStart - 9];
                 ReadExactly(file, headerBytes, headerBytes.Length);
                 var header = JsonUtility.FromJson<Header>(Encoding.UTF8.GetString(headerBytes));
-                long cipherLength = file.Length - MacLength - bodyStart;
-                if (cipherLength <= 0 || cipherLength % 16 != 0) throw new InvalidDataException("self-check: bad cipher length");
+                int n = (int)Math.Min(BufferSize, plainSize);
+                var body = new byte[n];
+                ReadExactly(file, body, n);
+                var plain = new byte[n];
+                ReadExactly(input, plain, n);
+                long[][] ranges = SparseRanges(plainSize, header.sparse_head, header.sparse_tail, header.sparse_chunk, header.sparse_run);
+                using (var ctr = new SparseCtr(encKey, Convert.FromBase64String(header.iv))) ctr.Transform(ranges, 0, body, n);
+                if (!FixedTimeEquals(body, plain)) throw new InvalidDataException("self-check: decrypted head differs");
+            }
+        }
 
-                var iv = new byte[16];
-                if (cipherLength == 16) iv = Convert.FromBase64String(header.iv);
+        /// <summary>The encrypted byte ranges [start, end) of a sparse file, merged and sorted (starts are multiples of 16).</summary>
+        internal static long[][] SparseRanges(long plainSize, long head, long tail, long chunk, long run)
+        {
+            var list = new System.Collections.Generic.List<long[]>();
+            Action<long, long> add = (a, b) => { b = Math.Min(b, plainSize); if (b > a) list.Add(new[] { a, b }); };
+            add(0, Math.Min(head, plainSize));
+            for (long c = 0; c < plainSize; c += chunk) add(c, c + run);
+            add(Math.Max(0, plainSize - tail) / 16 * 16, plainSize);
+            list.Sort((x, y) => x[0].CompareTo(y[0]));
+            var merged = new System.Collections.Generic.List<long[]>();
+            foreach (var r in list)
+            {
+                if (merged.Count > 0 && r[0] <= merged[merged.Count - 1][1])
+                {
+                    merged[merged.Count - 1][1] = Math.Max(merged[merged.Count - 1][1], r[1]);
+                }
                 else
                 {
-                    file.Position = bodyStart + cipherLength - 32;
-                    ReadExactly(file, iv, 16);
+                    merged.Add(new[] { r[0], r[1] });
                 }
-                var last = new byte[16];
-                file.Position = bodyStart + cipherLength - 16;
-                ReadExactly(file, last, 16);
+            }
+            return merged.ToArray();
+        }
 
-                using (Aes aes = NewAes(encKey, iv))
+        /// <summary>
+        /// AES-256-CTR over the encrypted ranges only: counter block = iv[0..8] ‖ BE64(offset / 16). Keystream is made in
+        /// batches of counter blocks through one ECB call (a call per 16 bytes is far too slow on Mono).
+        /// </summary>
+        internal sealed class SparseCtr : IDisposable
+        {
+            private const int BatchBlocks = 4096;
+            private readonly Aes aes;
+            private readonly ICryptoTransform ecb;
+            private readonly byte[] nonce = new byte[8];
+            private readonly byte[] counters = new byte[BatchBlocks * 16];
+            private readonly byte[] keystream = new byte[BatchBlocks * 16];
+
+            public SparseCtr(byte[] encKey, byte[] iv)
+            {
+                Buffer.BlockCopy(iv, 0, nonce, 0, 8);
+                aes = Aes.Create();
+                aes.KeySize = 256;
+                aes.Mode = CipherMode.ECB;
+                aes.Padding = PaddingMode.None;
+                aes.Key = encKey;
+                ecb = aes.CreateEncryptor();
+            }
+
+            /// <summary>XOR buf[0..count) (plain offset <paramref name="pos"/>) with the keystream where it lies in a range.</summary>
+            public void Transform(long[][] ranges, long pos, byte[] buf, int count)
+            {
+                long end = pos + count;
+                foreach (long[] r in ranges)
                 {
-                    aes.Padding = PaddingMode.None;
-                    using (ICryptoTransform d = aes.CreateDecryptor())
+                    if (r[1] <= pos) continue;
+                    if (r[0] >= end) break;
+                    long from = Math.Max(r[0], pos);
+                    long to = Math.Min(r[1], end);
+                    long block = from / 16;
+                    int skip = (int)(from % 16);
+                    long at = from;
+                    while (at < to)
                     {
-                        byte[] plain = d.TransformFinalBlock(last, 0, 16);
-                        int pad = plain[15];
-                        if (pad < 1 || pad > 16) throw new InvalidDataException("self-check: bad padding");
-                        for (int i = 16 - pad; i < 16; i++) if (plain[i] != pad) throw new InvalidDataException("self-check: bad padding");
-                        if (cipherLength - pad != plainSize) throw new InvalidDataException("self-check: length mismatch");
+                        long need = to - at + skip;
+                        int blocks = (int)Math.Min(BatchBlocks, (need + 15) / 16);
+                        for (int i = 0; i < blocks; i++)
+                        {
+                            int o = i * 16;
+                            Buffer.BlockCopy(nonce, 0, counters, o, 8);
+                            ulong b = (ulong)(block + i);
+                            for (int k = 0; k < 8; k++) counters[o + 15 - k] = (byte)(b >> (8 * k));
+                        }
+                        ecb.TransformBlock(counters, 0, blocks * 16, keystream, 0);
+                        int usable = (int)Math.Min(blocks * 16 - skip, to - at);
+                        int bufAt = (int)(at - pos);
+                        for (int i = 0; i < usable; i++) buf[bufAt + i] ^= keystream[skip + i];
+                        at += usable;
+                        block += blocks;
+                        skip = 0;
                     }
                 }
+            }
+
+            public void Dispose()
+            {
+                ecb.Dispose();
+                aes.Dispose();
             }
         }
 
