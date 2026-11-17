@@ -12,7 +12,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         /// <summary>The export profile's mod name = the built file's name without ".warudo".</summary>
         public string mod_name;
         public bool enabled;
-        /// <summary>The seller license (Atelier) a buyer must hold to open the file.</summary>
+        /// <summary>Unused since v3 (no license id at build; kept so older settings files still load).</summary>
         public string license_id;
         /// <summary>"auto" (from the output folder: Props / Environments / Characters) or prop, environment, character.</summary>
         public string kind = "auto";

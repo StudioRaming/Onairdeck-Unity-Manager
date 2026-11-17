@@ -125,20 +125,21 @@ public class MyToolWindow : EditorWindow
 
 ## For sellers: protecting a WARUDO mod (preview)
 
-In a WARUDO mod project (WARUDO SDK, `Warudo/Build Mod`), the Manager can write a protected copy of each build:
+In a WARUDO mod project (WARUDO SDK, `Warudo/Build Mod`), the Manager writes a protected copy of each build:
 
-1. Open **Window ▸ Atelier WARUDO Protection**. If the window says the build hook is off, press **Turn on the build hook**
+1. Once per project: if **Window ▸ Atelier WARUDO Protection** says the build hook is off, press **Turn on the build hook**
    (adds the `SR_WARUDO_MODTOOL` scripting define for Standalone; with the WARUDO mod tool as a package it is on by itself).
-2. Build once. The mod appears in the window (off). Turn **Protect** on and enter the **license id** from the Atelier seller
-   page. Kind is taken from the output folder (Props / Environments / Characters) unless you pick one.
-3. Every `Warudo/Build Mod` now also writes `<mod>.srlock` next to `<mod>.warudo`. **Upload the `.srlock` as the product
-   file, not the `.warudo`.** An already built `.warudo` can be locked from the window too.
+2. Build as usual. Every `Warudo/Build Mod` also writes `<mod>.srlock` next to `<mod>.warudo`; a mod built for the first
+   time is protected automatically. **Upload the `.srlock` as the product file, not the `.warudo`.** No license id is needed.
+3. The window lists the mods: turn protection off for one, change its kind (taken from the output folder: Props /
+   Environments / Characters) or its display name, or lock an already built `.warudo`.
 
-The `.srlock` is the `.warudo` encrypted with a random key; that key is wrapped for OnAirDeck's server together with the
-license id. Only the server's public key is in this package. Buyers open the file in WARUDO through the StudioRaming
-plugin while signed in to the Atelier Manager with that license (the buyer side ships in a later release). Settings are
-kept in `ProjectSettings/AtelierWarudoProtect.json`. Like the license check above, this is client-side protection: it
-stops casual sharing of the file, not a determined attacker.
+The `.srlock` is the `.warudo` encrypted with a random key wrapped for OnAirDeck's server; only the server's public key is in
+this package. When a buyer's WARUDO Atelier Manager downloads the file, the server reads the stored file's header and hands
+the key to whoever may download that file, so a build sold in several products (bundles) opens for the buyers of any of
+them. Buyers open it in WARUDO through the StudioRaming plugin while signed in to the Atelier Manager. Settings are kept in
+`ProjectSettings/AtelierWarudoProtect.json`. Like the license check above, this is client-side protection: it stops casual
+sharing of the file, not a determined attacker.
 
 ## 한국어
 

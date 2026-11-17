@@ -32,10 +32,12 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 var entry = WarudoProtectSettings.Find(data, mod);
                 if (entry == null)
                 {
-                    data.entries.Add(new WarudoProtectEntry { mod_name = mod, enabled = false, kind = "auto", title = mod });
+                    // v3 needs no input: a mod built for the first time is protected right away (owner 2026-11-17).
+                    // The plain .warudo stays next to it, so turning protection off later loses nothing.
+                    entry = new WarudoProtectEntry { mod_name = mod, enabled = true, kind = "auto", title = mod };
+                    data.entries.Add(entry);
                     WarudoProtectSettings.Save(data);
                     Debug.Log(WarudoProtectText.NewModRegistered(mod));
-                    return;
                 }
                 if (!entry.enabled) return;
                 Lock(builtFile, entry, true);
@@ -53,11 +55,6 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         public static string Lock(string builtFile, WarudoProtectEntry entry, bool notify)
         {
             string mod = Path.GetFileNameWithoutExtension(builtFile);
-            if (!SrLockWriter.IsLicenseId((entry.license_id ?? "").Trim()))
-            {
-                Debug.LogError(WarudoProtectText.NotReady(mod, WarudoProtectText.BadLicense));
-                return null;
-            }
             string kind = WarudoProtectSettings.ResolveKind(entry, builtFile);
             if (kind == null)
             {
@@ -67,7 +64,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             string output = Path.Combine(Path.GetDirectoryName(builtFile) ?? ".", mod + SrLockWriter.Extension);
             try
             {
-                SrLockWriter.Lock(builtFile, output, entry.license_id, kind, string.IsNullOrEmpty(entry.title) ? mod : entry.title, mod);
+                SrLockWriter.Lock(builtFile, output, kind, string.IsNullOrEmpty(entry.title) ? mod : entry.title, mod);
             }
             catch (Exception e)
             {

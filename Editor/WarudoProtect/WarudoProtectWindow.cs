@@ -81,11 +81,6 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 if (GUILayout.Button(WarudoProtectText.Remove, GUILayout.Width(70))) removeAt = i;
                 EditorGUILayout.EndHorizontal();
 
-                e.license_id = EditorGUILayout.TextField(new GUIContent(WarudoProtectText.LicenseId, WarudoProtectText.LicenseHelp), (e.license_id ?? "").Trim());
-                if (e.enabled && !SrLockWriter.IsLicenseId(e.license_id))
-                {
-                    EditorGUILayout.HelpBox(WarudoProtectText.BadLicense + " " + WarudoProtectText.LicenseHelp, MessageType.Error);
-                }
                 int k = System.Array.IndexOf(KindValues, string.IsNullOrEmpty(e.kind) ? "auto" : e.kind);
                 e.kind = KindValues[EditorGUILayout.Popup(WarudoProtectText.Kind, k < 0 ? 0 : k, kindLabels)];
                 e.title = EditorGUILayout.TextField(WarudoProtectText.Title, e.title ?? "");
@@ -108,7 +103,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 if (GUILayout.Button(WarudoProtectText.AddMod, GUILayout.Width(170)))
                 {
                     string name = newModName.Trim();
-                    data.entries.Add(new WarudoProtectEntry { mod_name = name, enabled = false, kind = "auto", title = name });
+                    data.entries.Add(new WarudoProtectEntry { mod_name = name, enabled = true, kind = "auto", title = name });
                     newModName = "";
                     changed = true;
                 }
@@ -138,11 +133,10 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             var entry = WarudoProtectSettings.Find(data, mod);
             if (entry == null)
             {
-                entry = new WarudoProtectEntry { mod_name = mod, enabled = false, kind = "auto", title = mod };
+                entry = new WarudoProtectEntry { mod_name = mod, enabled = true, kind = "auto", title = mod };
                 data.entries.Add(entry);
                 WarudoProtectSettings.Save(data);
                 Debug.Log(WarudoProtectText.NewModRegistered(mod));
-                return;
             }
             WarudoProtectRunner.Lock(file, entry, true);
         }
