@@ -7,12 +7,15 @@ using UnityEngine;
 namespace OnAirDeck.UnityManager.WarudoProtect
 {
     /// <summary>
-    /// Writes the .srlock v2 container: a built .warudo encrypted so that only an account holding the seller license can
-    /// open it in WARUDO (the StudioRaming plugin decrypts with a key the Atelier Manager gets from the server).
+    /// Writes the .srlock v3 container: a built .warudo encrypted so that only an account allowed to download it can open
+    /// it in WARUDO. Needs no seller input: OnAirDeck's plugin-download reads the header of the stored file it serves and
+    /// hands the key to whoever passes that file's download gate (any product carrying it, its seller, license holders);
+    /// the Atelier Manager stores it and the StudioRaming plugin decrypts.
     ///
-    ///   "SRLK" | 0x02 | uint32 LE headerLength | header (UTF-8 JSON) | AES-256-CBC/PKCS7 ciphertext | HMAC-SHA256 (32)
+    ///   "SRLK" | 0x03 | uint32 LE headerLength | header (UTF-8 JSON) | body | HMAC-SHA256 (32)
     ///   cek = 32 random bytes; encKey = SHA256(cek ‖ "enc"); macKey = SHA256(cek ‖ "mac"); the HMAC covers every byte before it.
-    ///   wrap_key = RSA-OAEP-SHA1(server public key wrap_kid, cek ‖ ascii(lower-case license_id)).
+    ///   wrap_key = RSA-OAEP-SHA1(server public key wrap_kid, cek). Not bound to a license (v2 was): one build can be sold
+    ///   in several products.
     ///
     /// Only the server's PUBLIC key is here, so this code holds no secret: whoever reads it learns how files are wrapped,
     /// not how to unwrap them. Byte-level reference: Vdesk scripts/warudo-srlock.mjs (same constants, same tests).
@@ -26,7 +29,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         public const string CurrentKid = "srw1";
 
         private static readonly byte[] Magic = { (byte)'S', (byte)'R', (byte)'L', (byte)'K' };
-        private const byte Version = 2;
+        private const byte Version = 3;
         private const int MacLength = 32;
         private const int BufferSize = 1 << 20;
 
@@ -54,7 +57,6 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         {
             public int v;
             public string kind;
-            public string license_id;
             public string title;
             public string source_name;
             public string mod_name;
@@ -74,28 +76,14 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             public long sparse_run;
         }
 
-        public static bool IsLicenseId(string id)
-        {
-            if (string.IsNullOrEmpty(id) || id.Length != 36) return false;
-            for (int i = 0; i < 36; i++)
-            {
-                char c = id[i];
-                bool dash = i == 8 || i == 13 || i == 18 || i == 23;
-                if (dash ? c != '-' : !Uri.IsHexDigit(c)) return false;
-            }
-            return true;
-        }
-
         public static bool IsKind(string kind)
         {
             return Array.IndexOf(Kinds, kind) >= 0;
         }
 
         /// <summary>Locks <paramref name="inputPath"/> into <paramref name="outputPath"/> (replaced atomically). Throws on any failure.</summary>
-        public static Header Lock(string inputPath, string outputPath, string licenseId, string kind, string title, string modName)
+        public static Header Lock(string inputPath, string outputPath, string kind, string title, string modName)
         {
-            licenseId = (licenseId ?? "").Trim().ToLowerInvariant();
-            if (!IsLicenseId(licenseId)) throw new ArgumentException("license id is not a seller license id (uuid)");
             if (!IsKind(kind)) throw new ArgumentException("kind must be prop, environment or character");
             if (!IsUMod(inputPath)) throw new InvalidDataException("not a uMod (.warudo) file: " + inputPath);
 
@@ -114,7 +102,6 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             {
                 v = Version,
                 kind = kind,
-                license_id = licenseId,
                 title = string.IsNullOrEmpty(title) ? Path.GetFileNameWithoutExtension(inputPath) : title,
                 source_name = Path.GetFileName(inputPath),
                 mod_name = string.IsNullOrEmpty(modName) ? Path.GetFileNameWithoutExtension(inputPath) : modName,
@@ -126,7 +113,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
                 iv = Convert.ToBase64String(iv),
                 wrap_alg = "rsa-oaep-sha1",
                 wrap_kid = CurrentKid,
-                wrap_key = Convert.ToBase64String(Wrap(cek, licenseId)),
+                wrap_key = Convert.ToBase64String(Wrap(cek)),
             };
             if (sparse)
             {
@@ -371,15 +358,12 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             }
         }
 
-        private static byte[] Wrap(byte[] cek, string licenseId)
+        private static byte[] Wrap(byte[] cek)
         {
-            var payload = new byte[32 + 36];
-            Buffer.BlockCopy(cek, 0, payload, 0, 32);
-            Encoding.ASCII.GetBytes(licenseId, 0, 36, payload, 32);
             using (var rsa = new RSACryptoServiceProvider())
             {
                 rsa.ImportParameters(new RSAParameters { Modulus = FromBase64Url(Srw1Modulus), Exponent = FromBase64Url(Srw1Exponent) });
-                return rsa.Encrypt(payload, true); // true = OAEP (SHA-1)
+                return rsa.Encrypt(cek, true); // true = OAEP (SHA-1)
             }
         }
 

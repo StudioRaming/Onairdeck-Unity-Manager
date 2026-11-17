@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **WARUDO protection needs no license id (.srlock v3).** The protected file is no longer bound to a license at build time: the key is wrapped for OnAirDeck's server alone, and the server hands it out with the download to whoever may download that stored file. One build sold in several products (bundles) now opens for the buyers of any of them, and sellers enter nothing: a mod built for the first time is protected automatically (the plain `.warudo` stays next to it). The window loses its license field; files written by the previous preview (v2) must be built again (`SrLockWriter`, `WarudoProtectRunner`, `WarudoProtectWindow`).
+- Verification: compile check with/without the UMod DLLs and pre-2020.2; WARUDO SDK 0.12 project with empty protection settings: one Build Mod wrote a v3 `.srlock` with no license field, unlocked by the reference tool (Vdesk `scripts/warudo-srlock.mjs`) with the server key to the exact build bytes.
+
 - **Large WARUDO builds use the "sparse" .srlock layout.** Above 64 MB (backgrounds), the protected file encrypts the first 16 MB, the last 16 MB and the first 256 KB of every 4 MB with AES-256-CTR and copies the rest, under the same HMAC and wrapped key. Buyers decrypt in WARUDO on Mono's managed AES (~23 MB/s measured), where a fully encrypted 2.8 GB background would add about 3 minutes to every scene load. Smaller files stay fully encrypted. The self-check of a sparse file decrypts its first 1 MB against the build. Locking a 2.8 GB background in the editor went from 252 s to 128 s (`SrLockWriter`).
 - Verification: compile check with and without the UMod DLLs and on the pre-2020.2 path; a 2.8 GB background locked by the editor unlocked by the reference tool (Vdesk `scripts/warudo-srlock.mjs`) to the same SHA-256; a file from the first hook (no layout field) still unlocks.
 
