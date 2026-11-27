@@ -134,6 +134,7 @@ namespace OnAirDeck.UnityManager
         public static string MAcctDev { get { return Pick("기기 관리", "Manage Devices", "デバイス管理"); } }
         public static string MAcctLang { get { return Pick("언어", "Language", "言語"); } }
         public static string MAcctWeb { get { return Pick("웹사이트", "Website", "ウェブサイト"); } }
+        public static string MAcctGuide { get { return Pick("사용 가이드", "User Guide", "使い方ガイド"); } }
         public static string MAcctOut { get { return Pick("로그아웃", "Sign Out", "ログアウト"); } }
         public static string RefreshTip { get { return Pick("새로고침", "Refresh", "更新"); } }
         public static string SellerShort { get { return Pick("모든 판매자", "All Sellers", "すべての販売者"); } }

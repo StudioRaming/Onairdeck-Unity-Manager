@@ -20,6 +20,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
         public static string HookOff { get { return Pick("빌드 훅이 아직 꺼져 있습니다.", "The build hook is not active yet.", "ビルドフックはまだ無効です。"); } }
         public static string HookOn { get { return Pick("빌드 훅 켜짐: Build Mod 가 끝날 때마다 보호 파일을 만듭니다.", "Build hook active: every Build Mod writes the protected file.", "ビルドフック有効: Build Mod のたびに保護ファイルを作成します。"); } }
         public static string EnableHook { get { return Pick("빌드 훅 켜기 (스크립트 다시 컴파일)", "Turn on the build hook (recompiles scripts)", "ビルドフックを有効にする(スクリプト再コンパイル)"); } }
+        public static string Guide { get { return Pick("가이드 보기", "Open the guide", "ガイドを見る"); } }
         public static string Mods { get { return Pick("모드", "Mods", "モッド"); } }
         public static string NoMods { get { return Pick("아직 등록된 모드가 없습니다. 한 번 빌드하면 자동으로 목록에 올라옵니다.", "No mods yet. A build adds its mod here automatically.", "まだモッドがありません。一度ビルドすると自動で追加されます。"); } }
         public static string Protect { get { return Pick("보호", "Protect", "保護"); } }

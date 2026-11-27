@@ -14,6 +14,10 @@ namespace OnAirDeck.UnityManager
         /// https://onairdeck.com). Links the server sends (product_url) keep their own host.
         /// </summary>
         public const string WebsiteUrl = "https://atelier.io.kr";
+        /// <summary>The user guide of this Manager on the website.</summary>
+        public const string GuideUrl = WebsiteUrl + "/atelier-manager/guide/unity";
+        /// <summary>The seller guide's section on protecting a WARUDO build.</summary>
+        public const string WarudoProtectGuideUrl = WebsiteUrl + "/atelier-manager/guide/sell-warudo#protect";
         public const string FunctionsUrl = "https://pxxhdnsqezitxlkievhf.supabase.co/functions/v1";
         public const string PublishableKey = "sb_publishable_SdtMMXg2e0zHhubDu1SLxw_0zbQgv4-";
 

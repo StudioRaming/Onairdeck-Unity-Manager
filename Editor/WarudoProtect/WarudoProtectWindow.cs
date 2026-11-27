@@ -47,6 +47,7 @@ namespace OnAirDeck.UnityManager.WarudoProtect
             if (data == null) data = WarudoProtectSettings.Load();
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(WarudoProtectText.Intro, MessageType.Info);
+            if (GUILayout.Button(WarudoProtectText.Guide, EditorStyles.linkLabel)) Application.OpenURL(OnAirDeckConfig.WarudoProtectGuideUrl);
 
             if (!WarudoProtectHookState.UModPresent)
             {
