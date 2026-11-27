@@ -100,6 +100,7 @@ namespace OnAirDeck.UnityManager
                 menu.AddItem(new GUIContent(ManagerText.MAcctLang + "/" + names[i]), current == i, () => SRLanguage.Set(lang, ManagerText.LanguageKey));
             }
             menu.AddItem(new GUIContent(ManagerText.MAcctWeb), false, () => Application.OpenURL(OnAirDeckConfig.WebsiteUrl));
+            menu.AddItem(new GUIContent(ManagerText.MAcctGuide), false, () => Application.OpenURL(OnAirDeckConfig.GuideUrl));
             menu.AddSeparator("");
             menu.AddItem(new GUIContent(ManagerText.MAcctOut), false, () => Defer(SignOut));
             menu.ShowAsContext();
